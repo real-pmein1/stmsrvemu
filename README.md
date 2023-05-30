@@ -1,11 +1,7 @@
-# stmemu
-123
+# Stm Server Emulator
+Source code for the server emulator for clients 2004-2011
 
-test
-=======
+Compile on Python 2.7 x86-32 if you want to run/build from source using:
 
-
-
-
-Test 2 Adding after latest change
+python.exe -m PyInstaller -F -i source-content.ico emulator.py
 
