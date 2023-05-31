@@ -1,4 +1,4 @@
-#shefben/cystfaceman fork info:
+# shefben/cystfaceman fork info:
 I am using this fork to integrate all packets and services that have been found through reverse engineering.
 The point is to hopefully one day have a complete steam network for the 2004-2008 clients that allow game authentication
 game registration, and other things.
