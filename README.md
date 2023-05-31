@@ -4,11 +4,16 @@ The point is to hopefully one day have a complete steam network for the 2004-200
 game registration, and other things.
 
 some other changes i hope to make are as followed:
-  -Replaced user's .py file with a mysql database
-  -Create a php script to query the database and also add/remove users and also add / remove subscriptions
-  -Get tracker/friends server working for all steam versions
-  -Get steam v2 (2003) working properly
-  -Add Packets to allow for outside server's to be added to directoryserver list (like having multiple content server's that can automatically add to the directoryserver list)
+  
++ Replaced user's .py file with a mysql database
+  
++ Create a php script to query the database and also add/remove users and also add / remove subscriptions
+  
++ Get tracker/friends server working for all steam versions
+  
++ Get steam v2 (2003) working properly
+  
++ Add Packets to allow for outside server's to be added to directoryserver list (like having multiple content server's that can automatically add to the directoryserver list)
 
 
 # Stm Server Emulator
