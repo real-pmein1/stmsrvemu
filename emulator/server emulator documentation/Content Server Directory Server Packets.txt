@@ -1,0 +1,43 @@
+Content server directory Server Packets:
+
+format of packets (from client to server) (taken from https://habr.com/en/articles/269061/):
+1 byte — 0x00;
+2 bytes of command specification (\x00\x00 or \x01\x00);
+4 bytes — ID of the requested archive;
+4 bytes — version of the requested archive;
+2 bytes - the maximum number of servers in the response;
+4 bytes - region;
+4 bytes - 0xFF.
+
+
+(Family: 0x00000002 aka 0x02000000)
+Command:
+	find best public content server's	
+Send to server:
+	0x03
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all public content server's
+Send to server:
+	0x0000
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find public content server's with appid
+Send to server:
+	0x0001
+Expected Response:
+	ip's or unknown error	
+
+
+Added 2005 packets:
+
+Command:
+	find all content server control status server's
+Send to server:
+	(unknown)
+Expected Response:
+	(unknown)	

@@ -1,0 +1,41 @@
+All servers commands:
+
+Basic connection action:
+Establish a connection
+Submit request type
+Receive handshake
+Receive your external IP address from the server if this is a request to the Config Server
+If the connection is not confirmed, exit
+Send request buffer size
+Sending a request
+Accept response size
+We accept the answer
+
+Command:
+	connect and verify protocol
+send to server:
+	(unknown)
+expected response:
+	(notsure, 0 = success?), if no response, protocol version not supported by <server type>
+
+
+SendClientContentAuthRequest
+ticket granting server (auth server..?) commands:
+
+Command:
+	Request Content Ticket
+Send to server:
+	0xA0 +tgt +authenticator +payload
+Expected Response:
+	0 = success + content ticket
+
+
+unknown server used commands:
+
+Command:
+	'internal' get encrypted userid ticket to send to appserver
+Send to server:
+	0xC0 +tga +authenticator with payload
+Expected Response:
+	(unknown)
+

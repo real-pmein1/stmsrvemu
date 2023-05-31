@@ -1,0 +1,217 @@
+Directory Server Commands:
+(Family: 0x00000003)
+Command:
+	find master client authentication servers
+Send to server:
+	0x00
+Expected Response:
+	ip's or unknown error
+
+Command:
+	Find master administration authentication server 
+Send to server:
+	0x01
+Expected Response:
+	ip's or unknown error
+
+Command:
+	find master administration billing bridge server
+Send to server:
+	0x11
+Expected Response:
+	ip's or unknown error
+
+Command:
+	find master administration config administration server
+Send to server:
+	0x02
+Expected Response:
+	ip's or unknown error
+	
+Command:
+	find master global transaction manager server
+Send to server:
+	0x08
+Expected Response:
+	ip's or unknown error
+
+Command:
+	find master administration log processing administration server
+Send to server:
+	0x16
+Expected Response:
+	ip's or unknown error
+
+Command:
+	find all client authentication server's
+	**virtual steam server note: account retrieve server address**
+Send to server:
+	0x12
+Expected Response:
+	ip's or unknown error
+
+Command:
+	find all administration authentication server's
+Send to server:
+	0x13
+Expected Response:
+	ip's or unknown error
+	
+Command:
+	find all client configuration servers
+Send to server:
+	0x03
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all server configuration servers
+Send to server:
+	0x04
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all system status server's
+Send to server:
+	0x09
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all remote file harvest servers
+Send to server:
+	0xA0
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all CSDS Content Server
+Send to server:
+	0x05
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all CSDS find content servers (??)
+Send to server:
+	0x06
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Find all VCDS Validation (New valve cdkey Authentication)
+Send to server:
+	0xB0
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all hl master server's
+Send to server:
+	0x0F
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Find all Friends Server's
+Send to server:
+	0x10
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all MCS Content Administration Server's
+Send to server:
+	0xC0
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Find all MCS Master Public Content Server's
+Send to server:
+	0xD0
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Find All MCS Master Client Content Server's
+Send to server:
+	0xE0
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Find all CSER Server's
+Send to server:
+	0x14
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Find all Log Processing Server's
+Send to server:
+	0x15
+Expected Response:
+	ip's or unknown error	
+
+
+Added 2005 Packets:
+
+Command:
+	find all BRS server's
+Send to server:
+	0x1D
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find  all CSER Administration server's
+Send to server:
+	0x17
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all hl2master server's
+Send to server:
+	0x18
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all VTS Administration server
+Send to server:
+	0x1B
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find all validate user id ticket servers
+Send to server:
+	0x07
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find proxy client authentication server's
+Send to server:
+	**this function just redirects to the find all client authentication server commands**
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find slave client authentication server's
+**virtual steam server note:
+	// seems 2 master auth server too with content server first**
+Send to server:
+	0x1c
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	find ragdoll kungfu master servers **found in virtual steam server**
+Send to server:
+	0x1E
+Expected Response:
+	ip's or unknown error	

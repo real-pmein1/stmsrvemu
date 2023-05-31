@@ -1,0 +1,100 @@
+Config server commands:
+Family: 0x00000003UL
+
+Command:
+	get client config / version blob
+	i.e. first blob request
+Send to server:
+	0x01
+Expected Response:
+	refer to first/second blob thread on discord for this packet.
+
+Command:
+	request latest contentdescriptioncb
+Send to server:
+	0x02	
+Expected Response:
+	cdr blob size as 4 bytes followed by the cdr blob
+	
+Command:
+	update CDR
+	**from old steamserver emu from csmania**
+Send to server:
+	0x09, the request is followed 
+	by 20 bytes of the SHA-1 hash for the existing file
+	(or 0x00 if it does not exist)
+Expected Response:
+	"\x00\x00\x00\x01\x31\x2d\x00\x00\x00\x01\x2c" + 4 byte size of cdr + cdr blob
+
+Command:
+	get steam instance rsa public key
+Send to server:
+	0x04
+Expected Response:
+	2 byte header size + "\x30\x81\x9d\x30\x0d\x06\x09\x2a\x86\x48 
+					 \x86\xf7\x0d\x01\x01\x01\x05\x00\x03\x81
+					 \x8b\x00\x30\x81\x87\x02\x81\x81\x00"
+	+ (4byte size key header = {networkey header length + key + 3 bytes})
+	+ networkkey+\x02\x01\x11
+
+
+****Note: these are from virtual steam server 
+and I believe that these are incorrect for this server and belong with public content server**
+
+Command:
+	(Unknown)
+	**From virtual steam server**
+Send to Server:
+	0x05
+Response:
+	0 = successful, > 0 = unknown?
+
+Command:
+	(Unknown)
+	**From virtual steam server**
+Send to Server:
+	0x06
+Response:
+	0 = successful, > 0 = unknown?
+
+Command:
+	(Unknown)
+	**From virtual steam server**
+Send to Server:
+	0x07
+Response:
+	\x00\x01\x31\x2d\x00\x00\x00\x01\x2c
+
+***end virtual steam server only packets***
+
+
+Added 2005 Packets:
+
+
+Command:
+	get current auth failsafe mode
+Send to server:
+	(unknown)
+Expected Response:
+	(unknown)
+	
+Command:
+	get current billing failsafe mode
+Send to server:
+	(unknown)
+Expected Response:
+	(unknown)
+	
+Command:
+	get current content failsafe mode
+Send to server:
+	(unknown)
+Expected Response:
+	(unknown)
+	
+Command:
+	get current steam3 login percent
+Send to server:
+	(unknown)
+Expected Response:
+	(unknown)	
