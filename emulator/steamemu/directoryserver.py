@@ -25,8 +25,8 @@ class directoryserver(threading.Thread):
             msg = self.socket.recv_withlen()
             command = msg[0]
             log.debug(binascii.b2a_hex(command))
-            if command == "\x00" : # send out auth server for a specific username
-                log.info(clientid + "Sending out specific auth server: " + binascii.b2a_hex(command))
+            if command == "\x00" || command == "\x12": # send out Client Authentication Server
+                log.info(clientid + "Sending out specific Client Authentication server: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
@@ -161,6 +161,10 @@ class directoryserver(threading.Thread):
                 log.info(clientid + "Sending out list of VTS Administration Master Servers")
                 bin_ip = steam.encodeIP(("0.0.0.0", "27049"))
                 reply = struct.pack(">H", 1) + bin_ip
+            elif command == "\x07" : # validate user id ticket  master server
+                log.info(clientid + "Sending out list of Validate UserID Ticket Master Servers")
+                bin_ip = steam.encodeIP(("0.0.0.0", "27051"))
+                reply = struct.pack(">H", 1) + bin_ip
             else :
                 log.info(clientid + "Invalid/not implemented command: " + binascii.b2a_hex(msg))
                 reply = "\x00\x00"
@@ -172,7 +176,7 @@ class directoryserver(threading.Thread):
             msg = self.socket.recv_withlen()
             command = msg[0]
             log.debug(binascii.b2a_hex(command))
-            if command == "\x00" and len(msg) == 5 : # send out auth server for a specific username
+            if command == "\x00" and len(msg) == 5  || command == "\x0b" : # send out auth server for a specific username
                 log.info(clientid + "Sending out auth server for a specific username: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
@@ -203,16 +207,6 @@ class directoryserver(threading.Thread):
                         bin_ip = steam.encodeIP((self.config["public_ip"], self.config["contlist_server_port"]))
                 else :
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["contlist_server_port"]))
-                reply = struct.pack(">H", 1) + bin_ip
-            elif command == "\x0b" : # send out auth server for a specific username
-                log.info(clientid + "Sending out auth server for a specific username: " + binascii.b2a_hex(command))
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
-                else :
-                    bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x0f" : # hl master server
                 log.info(clientid + "Requesting HL Master Servers")
@@ -264,10 +258,16 @@ class directoryserver(threading.Thread):
                     if self.config["public_ip"] != "0.0.0.0" :
                         if clientid.startswith(globalvars.servernet) : #seems 2 master auth server too with content server first
                             bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
+                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                         else :
                             bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
+                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
                     else :
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
+                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                     reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x1e" : # rdkf master server
                 log.info(clientid + "Requesting RDKF Master Server")
