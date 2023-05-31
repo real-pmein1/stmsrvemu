@@ -104,16 +104,16 @@ class directoryserver(threading.Thread):
                     if self.config["public_ip"] != "0.0.0.0" :
                         if clientid.startswith(globalvars.servernet) : #seems 2 master auth server too with content server first
                             bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
-                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                            bin_ip += steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                            bin_ip += steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                         else :
                             bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
-                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
-                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                            bin_ip += steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                            bin_ip += steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
                     else :
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                        bin_ip += steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                        bin_ip += steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                     reply = struct.pack(">H", 1) + bin_ip
 
             elif command == "\x01" : # administration authentication master server
