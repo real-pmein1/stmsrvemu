@@ -18,13 +18,13 @@ class directoryserver(threading.Thread):
         #print("Client ID is: " + clientid)
         msg = self.socket.recv(4)
         log.debug(binascii.b2a_hex(msg))
-        if msg == "\x00\x00\x00\x01" || msg == "\x00\x00\x00\x02":
+        if msg == "\x00\x00\x00\x01" or msg == "\x00\x00\x00\x02":
             self.socket.send("\x01")
 
             msg = self.socket.recv_withlen()
             command = msg[0]
             log.debug(binascii.b2a_hex(command))
-            if command == "\x00" || command == "\x12": # send out Client Authentication Server
+            if command == "\x00" or command == "\x12": # send out Client Authentication Server
                 log.info(clientid + "Sending out specific Client Authentication server: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
@@ -44,7 +44,7 @@ class directoryserver(threading.Thread):
                 else :
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["conf_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
-            elif command == "\x06" || command == "\x05" : # send out content list servers
+            elif command == "\x06" or command == "\x05" : # send out content list servers
                 log.info(clientid + "Sending out list of content list servers")
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
@@ -164,7 +164,7 @@ class directoryserver(threading.Thread):
                 log.info(clientid + "Sending out list of MCS Content Administration Master Servers")
                 bin_ip = steam.encodeIP(("0.0.0.0", "27041"))
                 reply = struct.pack(">H", 1) + bin_ip
-            elif command == "\xD0" || command == "\xE0" : # all MCS Master Public Content master server
+            elif command == "\xD0" or command == "\xE0" : # all MCS Master Public Content master server
                 log.info(clientid + "Sending out list of MCS Master Public Content Master Servers")
                 bin_ip = steam.encodeIP(("0.0.0.0", "27042"))
                 reply = struct.pack(">H", 1) + bin_ip
