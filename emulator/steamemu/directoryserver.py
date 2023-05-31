@@ -34,7 +34,7 @@ class directoryserver(threading.Thread):
                 else :
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
-            elif command == "\x03" : # send out config servers
+            elif command == "\x03" : # send out Configuration Servers
                 log.info(clientid + "Sending out list of Configuration Servers")
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
