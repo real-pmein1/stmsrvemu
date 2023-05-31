@@ -16,16 +16,14 @@ class directoryserver(threading.Thread):
         log.info(clientid + "Connected to Directory Server")
         
         #print("Client ID is: " + clientid)
-
+        msg = self.socket.recv(4)
+        log.debug(binascii.b2a_hex(msg))
         if msg == "\x00\x00\x00\x01" || msg == "\x00\x00\x00\x02":
             self.socket.send("\x01")
 
             msg = self.socket.recv_withlen()
             command = msg[0]
             log.debug(binascii.b2a_hex(command))
-            if msg == "\x00\x00\x00\x02"
-                msg = self.socket.recv(4)
-                log.debug(binascii.b2a_hex(msg)) 
             if command == "\x00" || command == "\x12": # send out Client Authentication Server
                 log.info(clientid + "Sending out specific Client Authentication server: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
