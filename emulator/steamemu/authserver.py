@@ -133,12 +133,12 @@ class authserver(threading.Thread):
                         times = steam.unixtime_to_steamtime(currtime) + steam.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = steam.aes_encrypt(key, outerIV, subheader)
-                        #if self.config["tgt_version"] == "1" :
-                        if globalvars.tgt_version == "1" :
+                        if self.config["tgt_version"] == "1" :
+                        #if globalvars.tgt_version == "1" :
                             subheader_encrypted = "\x00\x01" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                             log.debug(clientid + "TGT Version: 1") #v2 Steam
-                        #elif self.config["tgt_version"] == "2" :
-                        elif globalvars.tgt_version == "2" :
+                        elif self.config["tgt_version"] == "2" :
+                        #elif globalvars.tgt_version == "2" :
                             subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                             log.debug(clientid + "TGT Version: 2") #v3 Steam
                         else :
@@ -214,12 +214,12 @@ class authserver(threading.Thread):
                     times = steam.unixtime_to_steamtime(currtime) + steam.unixtime_to_steamtime(currtime + (60*60*24*28))
                     subheader = innerkey + steamid + servers + times
                     subheader_encrypted = steam.aes_encrypt(key, outerIV, subheader)
-                    #if self.config["tgt_version"] == "1" :
-                    if globalvars.tgt_version == "1" :
+                    if self.config["tgt_version"] == "1" :
+                    #if globalvars.tgt_version == "1" :
                         subheader_encrypted = "\x00\x01" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                         log.debug(clientid + "TGT Version: 1") #v2 Steam
-                    #elif self.config["tgt_version"] == "2" :
-                    elif globalvars.tgt_version == "2" :
+                    elif self.config["tgt_version"] == "2" :
+                    #elif globalvars.tgt_version == "2" :
                         subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                         log.debug(clientid + "TGT Version: 2") #v3 Steam
                     else :
