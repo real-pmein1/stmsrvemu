@@ -387,6 +387,10 @@ class udplistener(threading.Thread):
                     print("Received unknown stats - INOP")
                 elif globalvars.data.startswith("k") : #6b
                     print("Received app usage stats - INOP")
+                elif globalvars.data.startswith("g") : 
+                    print("Received Survey Response - INOP")
+                    #serversocket.sendto("h", globalvars.addr)
+                    serversocket.sendto('\x00\x00', globalvars.addr)             
                 else :
                     print("Unknown CSER command: %s" % globalvars.data)
             elif self.port == 27014 :
