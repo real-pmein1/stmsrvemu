@@ -1,12 +1,19 @@
-import sys
-import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile
-
+import myimports
+import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, zlib, sys
+import os.path, ast, csv
+from Crypto.PublicKey import RSA
+from Crypto.Hash import SHA
+from Crypto.Cipher import AES
 import struct #for int to byte conversion
-
 import steam
+import csclient
+import encryption, utilities, globalvars, emu_socket
 import dirs
 import steamemu.logger
 import globalvars
+import steamemu.logger
+import blob_utilities
+from steamemu.config import read_config
 
 from steamemu.converter import convertgcf
 from steamemu.config import read_config
@@ -138,8 +145,8 @@ else :
     f.close()
     if firstblob_bin[0:2] == "\x01\x43":
         firstblob_bin = zlib.decompress(firstblob_bin[20:])
-    firstblob_unser = steam.blob_unserialize(firstblob_bin)
-    firstblob = steam.blob_dump(firstblob_unser)
+    firstblob_unser = blob_utilities.blob_unserialize(firstblob_bin)
+    firstblob = blob_utilities.blob_dump(firstblob_unser)
 
 firstblob_list = firstblob.split("\n")
 steam_hex = firstblob_list[2][25:41]
