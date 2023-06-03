@@ -8,7 +8,7 @@ from steamemu.config import read_config
 
 config = read_config()
 
-class cserserver(threading.Thread):
+class harvestserver(threading.Thread):
     serversocket = None
 
     def __init__(self, host, port):

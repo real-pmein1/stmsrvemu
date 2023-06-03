@@ -1,3 +1,4 @@
+import myimports
 import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, csv
 import os
 import steam
@@ -84,7 +85,7 @@ class cserserver(threading.Thread):
                 f.write("\n")
                 f.write(",".join(vallist))
                 f.close()
-                log.info(clientid + "Received client stats")
+                log.info(clientid + "Received steam client stats")
         elif data.startswith("c"):  # 63
             message = binascii.b2a_hex(data)
             keylist = ["Unknown1", "Unknown2", "ModuleName", "FileName", "CodeFile", "ThrownAt",
@@ -220,10 +221,9 @@ class cserserver(threading.Thread):
             """
             self.socket.sendto("\xFF\xFF\xFF\xFF\x71\x01", address)
         elif data.startswith("i"):  # 69
-            log.info("Received game statistics - INOP")
-
+            log.info("Received unknown stats - INOP")
         elif data.startswith("k"):  # 6b
-            log.info("Received app usage stats - INOP")
+            log.info("Received game statistics stats - INOP")
         elif data.startswith("m"):
             """	// C2M_PHONEHOME
                 //	u8( C2M_PHONEHOME_PROTOCOL_VERSION )
@@ -247,7 +247,7 @@ class cserserver(threading.Thread):
             """ // M2C_ACKPHONEHOME details
                 //	u8(connection allowed (bool))
                 //  u32(sessionid)
-            """0x00000141
+            """
             self.socket.sendto("\xFF\xFF\xFF\xFF\x6E\x01", address) #random session id, 321 
         elif data.startswith("g"):  # survey response
             len = struct.unpack("<H", data[1:3])[0]
