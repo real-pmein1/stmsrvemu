@@ -4,10 +4,30 @@ import steam
 import config
 import steamemu.logger
 import globalvars
-from Crypto.Cipher import AES
 from steamemu.config import read_config
 
 config = read_config()
+
+class IceKey(object):
+    def __init__(self, key):
+        self.key = key
+
+    def decrypt(self, block):
+        key = self.key
+
+        x = struct.unpack('>LL', block.ljust(8, '\x00'))
+        delta = 0x9e3779b9
+        sum = (delta * 16) & 0xffffffff
+
+        for i in range(16):
+            x = list(x)
+            x[1] -= ((x[0] << 4) + key[2]) ^ (x[0] + sum) ^ ((x[0] >> 5) + key[3])
+            x[1] &= 0xffffffff
+            x[0] -= ((x[1] << 4) + key[0]) ^ (x[1] + sum) ^ ((x[1] >> 5) + key[1])
+            x[0] &= 0xffffffff
+            sum -= delta
+
+        return struct.pack('>LL', x[0], x[1])
 
 class cserserver(threading.Thread):
     serversocket = None
@@ -102,6 +122,10 @@ class cserserver(threading.Thread):
                 log.info(clientid + "Received client crash report")
             except Exception as e:
                 log.debug(clientid + "Failed to receive client crash report: " + str(e))
+                #d =  message type
+                #then 1 = request denied, invalid message protocol
+                #2 = server accepts minidump, so client will send it now
+                
         elif data.startswith("q"):  # 71
             CSER_ICE_KEY_q = bytearray([0x36, 0xAF, 0xA5, 0x05, 0x4C, 0xFB, 0x1D, 0x71])
             CSER_ICE_KEY_q = CSER_ICE_KEY_q.ljust(16, b'\x00')  # Pad with zeros to make it 16 bytes
@@ -180,21 +204,84 @@ class cserserver(threading.Thread):
                 del aes
                 del decrypted
                 del debug"""
+            self.socket.sendto("\xFF\xFF\xFF\xFF\x72\x01", address) # 72 = r command and the next byte is a bool, ok = 1, bad = 0
         
         elif data.startswith("a"):  # 61
             log.info("Received app download stats - INOP")
-        elif data.startswith("o"):  # 61
-            log.info("Received app download stats - INOP")
+        elif data.startswith("o"):
+            log.info("Received bug report - INOP")
+            """ // M2C_ACKBUGREPORT details
+		//	u8(protocol okay (bool))
+		//	u8(BR_NO_FILES or BR_REQEST_FILES )
+		//  iff BR_REQEST_FILES then add:
+		//    u32(harvester ip address)
+		//	  u16(harvester port #)
+		//	  u32(upload context id)
+            """
+            self.socket.sendto("\xFF\xFF\xFF\xFF\x71\x01", address)
         elif data.startswith("i"):  # 69
-            log.info("Received unknown stats - INOP")
+            log.info("Received game statistics - INOP")
+
         elif data.startswith("k"):  # 6b
             log.info("Received app usage stats - INOP")
+        elif data.startswith("m"):
+            """	// C2M_PHONEHOME
+                //	u8( C2M_PHONEHOME_PROTOCOL_VERSION )
+                //	u32( sessionid ) or 0 to request a new sessionid
+                //  u16(encryptedlength)
+                //  remainder = encrypteddata:
+		// u8 corruption id == 1
+		//  string build unique id
+		//  string computername
+		//	string username
+		//  string gamedir
+		//  float( enginetimestamp )
+		//  u8 messagetype:
+		//    1:  engine startup 
+		//    2:  engine shutdown
+		//    3:  map started + mapname
+		//    4:  map finished + mapname
+		//	string( mapname )
+            """
+            log.info("Received Phone Home- INOP")
+            """ // M2C_ACKPHONEHOME details
+                //	u8(connection allowed (bool))
+                //  u32(sessionid)
+            """0x00000141
+            self.socket.sendto("\xFF\xFF\xFF\xFF\x6E\x01", address) #random session id, 321 
         elif data.startswith("g"):  # survey response
-            CSER_ICE_KEY_g = bytearray([0x1B, 0xC8, 0x0D, 0x0E, 0x53, 0x2D, 0xB8, 0x36])
-            CSER_ICE_KEY_g = CSER_ICE_KEY_g.ljust(16, b'\x00')  # Pad with zeros to make it 16 bytes
-            aes_g = AES.new(str(CSER_ICE_KEY_g), AES.MODE_ECB)
-            log.info("Received Survey Response (no actions taken)")
-            self.socket.sendto("\xFF\xFF\xFF\xFF\x68\x01",address)
+            len = struct.unpack("<H", data[1:3])[0]
+            sentData = data[3:]
+
+            """decrypted = bytearray(len)
+
+            ice = IceKey([0x1B, 0xC8, 0x0D, 0x0E, 0x53, 0x2D, 0xB8, 0x36])
+
+            num_blocks = len // 8
+            remaining_bytes = len % 8
+
+            for ind in range(num_blocks):
+                block_in = sentData[8 * ind:8 * ind + 8]
+                block_out = ice.decrypt(block_in)
+                decrypted[8 * ind:8 * ind + 8] = block_out
+
+            if remaining_bytes > 0:
+                block_in = sentData[num_blocks * 8:].ljust(8, '\x00')
+                block_out = ice.decrypt(block_in)[:remaining_bytes]
+                decrypted[num_blocks * 8:] = block_out
+
+            print decrypted
+            # Save decrypted data to a file
+            ip_address = address[0]
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            filename = "clientstats/{}.{}.hwsurvey.txt".format(ip_address, timestamp)
+
+            with open(filename, "w") as f:
+                f.write(decrypted)"""
+           #remove the following 2 lines when decryption is figured out
+            with open(filename, "w") as f:
+                f.write(sentData)
+            self.socket.sendto("\xFF\xFF\xFF\xFF\x68\x01\x00\x00\x00"+"thank you\n\0", address)
         else:
             log.info("Unknown CSER command: %s" % data)
 

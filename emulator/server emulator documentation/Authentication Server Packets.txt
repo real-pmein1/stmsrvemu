@@ -175,6 +175,13 @@ Expected Response:
 	0 = success, 1 = protocol out of date, 2 = auth server not master (removes auth server from list)
 	> 2 = unknown
 
+Command:
+	Create Account
+Send to server:
+	(unknown command code) 
+	rsa encrypted aes sessionkey and payload
+Expected Response:
+	0 = success, 1 = account name already used, 2 = illegal characters in account name, 3 = illegal characters in email
 
 Added 2005 Packets:
 

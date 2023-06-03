@@ -21,6 +21,7 @@ from steamemu.friends import friendserver
 from steamemu.vttserver import vttserver
 from steamemu.trackerserver import trackerserver
 from steamemu.cserserver import cserserver
+from steamemu.harvestserver import harvestserver
 
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
@@ -251,6 +252,11 @@ cserlistener = cserserver(serverip, 27013)
 cserthread = threading.Thread(target=cserlistener.start)
 cserthread.start()
 log.info("CSER Server listening on port 27013")
+time.sleep(0.2)
+harvestlistener = harvestserver(serverip, 27055)
+harvestthread = threading.Thread(target=harvestlistener.start)
+harvestthread.start()
+log.info("MiniDump Harvest Server listening on port 27055")
 time.sleep(0.2)
 hlmasterlistener = masterhl(serverip, 27010)
 hlmasterthread = threading.Thread(target=hlmasterlistener.start)

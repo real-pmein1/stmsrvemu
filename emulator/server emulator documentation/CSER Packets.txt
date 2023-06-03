@@ -102,6 +102,7 @@ Command:
 	Hardware survey
 Sent to server:
 	'g'						<- single byte
+-----encrypted payload-----
 Expected from server to client:
-	none? 0x00? most likely 'h'
+	'h'						<- example: "\xFF\xFF\xFF\xFF\x68\x01"
 

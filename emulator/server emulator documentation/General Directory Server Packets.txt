@@ -79,7 +79,7 @@ Expected Response:
 	ip's or unknown error	
 
 Command:
-	find all remote file harvest servers
+	find all remote file harvest servers (minidump harvesting server)
 Send to server:
 	0xA0
 Expected Response:

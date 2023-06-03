@@ -32,6 +32,27 @@ Send to server:
 Expected Response:
 	ip's or unknown error	
 
+Command:
+	find best cellid csds
+Send to server:
+	0x19
+	//packet structure:
+	//U32 - command 0x19
+	//1 byte - 0x00
+	//1 byte - 0x00
+	//1 byte - always 1
+	//U32
+	//U32
+	//U16
+	//U32
+	//U32 - 0xffffffff
+	//U32
+Expected Response:
+	//u16 - number of content servers
+	//--next, loop according to number of servers--
+	//u32 - 
+	//gap - 6 bytes 0x00??
+	//gap - 6 bytes 0x00??
 
 Added 2005 packets:
 
