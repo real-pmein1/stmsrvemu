@@ -1,25 +1,9 @@
 import binascii, socket, struct, zlib, os, sys, logging
-from Crypto.PublicKey import RSA
-from Crypto.Hash import SHA
-from Crypto.Cipher import AES
-
+import steam
+import utilities
 
 from steamemu.config import read_config
 config = read_config()
-
-def decodeIP(string) :
-    (oct1, oct2, oct3, oct4, port) = struct.unpack("<BBBBH", string)
-    ip = "%d.%d.%d.%d" % (oct1, oct2, oct3, oct4)
-    return ip, port
-
-
-def encodeIP((ip, port)) :
-    if type(port) == str :
-        port = int(port)
-    oct = ip.split(".")
-    string = struct.pack("<BBBBH", int(oct[0]), int(oct[1]), int(oct[2]), int(oct[3]), port)
-    return string
-
 
 class ImpSocket :
     "improved socket class - this is REALLY braindead because the socket class doesn't let me override some methods, so I have to build from scratch"

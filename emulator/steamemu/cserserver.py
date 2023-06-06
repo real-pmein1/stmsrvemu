@@ -1,13 +1,12 @@
 import myimports
 import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, csv
 import os
-import steam
+import utilities
 import config
 import steamemu.logger
 import globalvars
-from steamemu.config import read_config
+import serverlist_utilities
 
-config = read_config()
 
 class IceKey(object):
     def __init__(self, key):
@@ -31,15 +30,22 @@ class IceKey(object):
         return struct.pack('>LL', x[0], x[1])
 
 class cserserver(threading.Thread):
-    serversocket = None
-
     def __init__(self, host, port):
         #threading.Thread.__init__(self)
         self.host = host
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        serversocket = self.socket
-
+        
+       # Start the thread for dir registration heartbeat, only
+        thread2 = threading.Thread(target=self.heartbeat_thread)
+        thread2.daemon = True
+        thread2.start()
+        
+    def heartbeat_thread(self):       
+        while True:
+            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "cserserver", globalvars.peer_password )
+            time.sleep(1800) # 30 minutes
+            
     def start(self):
         
         self.socket.bind((self.host, self.port))

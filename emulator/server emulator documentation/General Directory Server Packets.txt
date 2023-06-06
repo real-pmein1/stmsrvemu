@@ -215,3 +215,6 @@ Send to server:
 	0x1E
 Expected Response:
 	ip's or unknown error	
+
+
+

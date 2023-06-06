@@ -55,6 +55,12 @@ Expected Response:
 	//gap - 6 bytes 0x00??
 
 Added 2005 packets:
+Command:
+	content server control status server
+Send to server:
+	(unknown)
+Expected Response:
+	(unknown)	
 
 Command:
 	find all content server control status server's

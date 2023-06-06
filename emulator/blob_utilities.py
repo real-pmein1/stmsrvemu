@@ -1,21 +1,8 @@
-import myimports
-import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, zlib, sys
+import binascii, ConfigParser, zlib, sys
 import os.path, ast, csv, struct, utilities
 
-def sortfunc(x, y) :
-
-    if len(x) == 4 and x[2] == "\x00" :
-        if len(y) == 4 and y[2] == "\x00" :
-            numx = struct.unpack("<L", x)[0]
-            numy = struct.unpack("<L", y)[0]
-            return cmp(numx, numy)
-        else :
-            return -1
-    else :
-        if len(y) == 4 and y[2] == "\x00" :
-            return 1
-        else :
-            return cmp(x, y)
+import dirs, globalvars
+from Steam2.package import Package
 
 def blob_dump(blob, spacer = "") :
 
@@ -23,7 +10,7 @@ def blob_dump(blob, spacer = "") :
     spacer2 = spacer + "    "
 
     blobkeys = blob.keys()
-    blobkeys.sort(sortfunc)
+    blobkeys.sort(utilities.sortfunc)
     first = True
     for key in blobkeys :
 

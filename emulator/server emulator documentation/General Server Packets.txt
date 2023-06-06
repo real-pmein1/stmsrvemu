@@ -42,7 +42,7 @@ ticket granting server (auth server..?) commands:
 Command:
 	Request Content Ticket
 Send to server:
-	0xA0 or 0x0a? +tgt +authenticator +payload
+	0x0a +tgt +authenticator +payload
 Expected Response:
 	0 = success + content ticket
 
@@ -51,22 +51,6 @@ unknown server used commands:
 command 1:
 	client recieves this before it sends request below
 recv from server:
-	u16 - ?
-	u32 - ?
-	gap (variable size, array that holds m_AESEncryptedPayloadandNetworkIOBuffer is 260 bytes large)
-
-
-Command 2:
-	response to above packet
-Send to server:
-	u32 			-size
-	u8  			-0xC0 or 0x0c? +tga +authenticator with payload
-	u32
-	u32
-	u32
-	<variable size> -data from extractgap  previous from previous recieved message
-Expected Response:
-	(unknown)
 
 
 userid validation command:
@@ -83,4 +67,5 @@ recv from server:
 
 
 
-	
+	validation context state
+0 = TValidationContext::eFree
