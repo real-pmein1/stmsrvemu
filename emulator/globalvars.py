@@ -17,6 +17,7 @@ hl2serverlist = list(xrange(10000))
 hl2challengenum = 0
 tracker = 0
 tgt_version = "2"
+validation_port = 0
 
 ip_addresses = (
 "69.28.148.250",
