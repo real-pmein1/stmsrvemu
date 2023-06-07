@@ -11,7 +11,7 @@ from steamemu.contentserver import contentserver
 from steamemu.authserver import authserver
 from steamemu.masterhl import masterhl
 from steamemu.masterhl2 import masterhl2
-from steamemu.friends import friendserver
+from steamemu.messages import messagesserver
 from steamemu.vttserver import vttserver
 from steamemu.trackerserver import trackerserver
 from steamemu.cserserver import cserserver
@@ -162,17 +162,13 @@ trackerlistener = trackerserver(globalvars.serverip, 27014)
 trackerthread = threading.Thread(target=trackerlistener.start)
 trackerthread.start()
 log.info("[2004-2007] Tracker Server listening on port 27014") #old 2004 tracker/friends CHAT SERVER
+globalvars.tracker = 1
 time.sleep(0.2)
 
-if config["tracker_ip"] == "0.0.0.0" :
-    friendslistener = friendserver(globalvars.serverip, 27017)
-    friendsthread = threading.Thread(target=friendslistener.start)
-    friendsthread.start()
-    globalvars.tracker = 0
-    log.info("[2007+] Friends Server listening on port 27017")
-else :
-    globalvars.tracker = 1
-    log.info("Connected to [2007+] Friends")
+messageslistener = messagesserver(globalvars.serverip, 27017)
+messagesthread = threading.Thread(target=messageslistener.start)
+messagesthread.start()
+log.info("Client Messaging Server listening on port 27017")
 time.sleep(0.2)
 
 configlistener = listener(config["conf_server_port"], configserver, config)
