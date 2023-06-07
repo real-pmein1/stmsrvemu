@@ -1,0 +1,71 @@
+All servers packets:
+
+The ConectToServer function is used to establish a connection to a server in the SteamV2 network. It follows a specific process to send a query to the server and receive a response.
+
+Parameters:
+
+Addr: The address of the server to connect to (byte size: TSockAddr).
+QUERY: The query data to send to the server (byte size: variable).
+QSize: The size of the query data (byte size: uint32).
+Command: The command data to send to the server (byte size: pByte).
+CSize: The size of the command data (byte size: uint32).
+ReplySize: A variable to store the size of the reply data (byte size: variable, output parameter).
+Returns:
+
+The reply data received from the server. Returns NULL on failure.
+
+Process:
+
+Initialize necessary variables.
+Create a socket object.
+Connect the socket to the specified server address.
+If the connection fails, exit the function.
+Set a timeout for the socket.
+Send the query data to the server.
+Receive a response from the server indicating acceptance or rejection.
+If the server is a configuration server, receive the destination IP address from the server.
+If the server rejects the connection, exit the function.
+Convert the command size to a specific format.
+Send the converted command size to the server.
+Convert the command size again.
+Send the command data to the server.
+Set up a callback function for handling loading events.
+Receive the reply data from the server with the specified size.
+Free the socket object.
+Return the received reply data.
+
+
+
+SendClientContentAuthRequest
+ticket granting server (auth server..?) commands:
+
+Command:
+	Request Content Ticket
+Send to server:
+	0x0a +tgt +authenticator +payload
+Expected Response:
+	0 = success + content ticket
+
+these two go together:
+unknown server used commands:
+command 1:
+	client recieves this before it sends request below
+recv from server:
+
+
+userid validation command:
+	does not appear to relate to any recieved packets
+recv from server:
+	u16
+	u16
+	gap 			
+	variable data	- byte size 0x10 
+	u16
+	u16			- size for next variable data
+	variable data
+
+
+
+
+	validation context state
+0 = TValidationContext::eFree
