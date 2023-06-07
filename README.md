@@ -7,12 +7,12 @@ python.exe -m PyInstaller -F -i source-content.ico emulator.py
 
 
 ### Credits
-+ pmein1 - Latest changes and current support
++ pmein1 - Developer and support
++ cystface-man - Developer and provided descriptions of CCDB records and service packet information
 + Dormine - Original python poc emulator code and updates
 + Tane - Original app update code
 + steamCooker - Help with some of the intricacies of the Steam services
 + GenoKirby - Provided description of section 5 of the SADB
-+ cystface-man - Provided descriptions of CCDB records and service packet information
 
 
 ### shefben/cystfaceman fork info:
