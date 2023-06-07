@@ -26,4 +26,4 @@ some other changes i hope to make are as followed:
 + Create a php script to query the database and also add/remove users and also add / remove subscriptions
 + Get tracker/friends server working for all steam versions
 + Get steam v2 (2003) working properly
-+ Add Packets to allow for outside server's to be added to directoryserver list (like having multiple content server's that can automatically add to the directoryserver list)
++ Add Packets to allow for outside server's to be added to directoryserver list (like having multiple content servers that can automatically add to the directoryserver list)
