@@ -198,7 +198,7 @@ time.sleep(0.2)
 
 vttlistener2 = listener("27047", vttserver, config)
 vttlistener2.start()
-log.info("Valve CyberCafe server listening on port 27047")
+log.info("Valve CyberCafe Server listening on port 27047")
 time.sleep(0.2)
 
 if config["sdk_ip"] != "0.0.0.0" :
