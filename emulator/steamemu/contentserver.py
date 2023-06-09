@@ -627,7 +627,7 @@ class contentserver(threading.Thread):
                     app_id, version = file_name.split('_')
                     version = version.rstrip('.manifest')
                     
-                    add_app(contentserver_info, app_id, version)
+                    add_app(contentserver_info, int(app_id), int(version))
                     # Append app ID and version to app_list
                     #app_list.append((int(app_id), int(version)))
     

@@ -102,8 +102,11 @@ def unpack_contentserver_info(enc_buffer):
     applist_data = buffer[info_size:]
 
     # Read the applist without unpacking
-    unpacked_applist = list(applist_data)
-    
+    #unpacked_applist = list(applist_data)
+        # Read the applist and convert it to a list of tuples
+    unpacked_applist = [(struct.unpack(">I", applist_data[i:i+4])[0], struct.unpack(">I", applist_data[i+4:i+8])[0]) for i in range(0, len(applist_data), 8)]
+
+
     unpacked_info = ContentServerInfo(ip_address, port, region, timestamp)
     unpacked_info.applist = unpacked_applist
 

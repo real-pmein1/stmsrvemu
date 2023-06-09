@@ -170,15 +170,15 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        servers = binascii.b2a_hex("7F0000019A697F0000019A69")
+                        bin_ip = utilities.encodeIP((globalvars.serverip, config["validation_port"]))
+                        servers = bin_ip + bin_ip
+                        #servers = binascii.b2a_hex("7F0000019A697F0000019A69")
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
-                        #if self.config["tgt_version"] == "1" :
                         if globalvars.tgt_version == "1" :
                             subheader_encrypted = "\x00\x01" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                             log.debug(clientid + "TGT Version: 1") #v2 Steam
-                        #elif self.config["tgt_version"] == "2" :
                         elif globalvars.tgt_version == "2" :
                             subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                             log.debug(clientid + "TGT Version: 2") #v3 Steam
@@ -251,15 +251,14 @@ class authserver(threading.Thread):
                     currtime = time.time()
                     outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                     steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                    servers = binascii.b2a_hex("7F000001699a7F000001699a")
+                    bin_ip = utilities.encodeIP((globalvars.serverip, config["validation_port"]))
+                    servers = bin_ip + bin_ip
                     times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                     subheader = innerkey + steamid + servers + times
                     subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
-                    #if self.config["tgt_version"] == "1" :
                     if globalvars.tgt_version == "1" :
                         subheader_encrypted = "\x00\x01" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                         log.debug(clientid + "TGT Version: 1") #v2 Steam
-                    #elif self.config["tgt_version"] == "2" :
                     elif globalvars.tgt_version == "2" :
                         subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                         log.debug(clientid + "TGT Version: 2") #v3 Steam
@@ -292,6 +291,7 @@ class authserver(threading.Thread):
                     log.info(clientid + "Change password")
                     clientsocket.send("\x01")
                 else :
+                    print(binascii.b2a_hex(command[3:]))
                     log.info(clientid + "Ticket login")
                     clientsocket.send("\x01")
             elif len(command) == 1 :

@@ -22,6 +22,22 @@ def encodeIP((ip, port)) :
     string = struct.pack("<BBBBH", int(oct[0]), int(oct[1]), int(oct[2]), int(oct[3]), port)
     return string
 
+def convert_to_network_format(ip_address, port):
+    # Convert IP address to network format
+    ip_bytes = socket.inet_aton(ip_address)
+
+    # Convert port to network format
+    port_hex = struct.pack('<H', port)
+
+    # Combine IP and port hex values
+    result = ip_bytes + port_hex
+
+    # Convert to string representation
+    result_str = ''.join('{:02x}'.format(ord(byte)) for byte in result)
+
+    return result_str
+
+
 def convert_ip_port(ip_address, port):
     # Convert IP address to 4-byte hex string
     ip_bytes = socket.inet_aton(ip_address)

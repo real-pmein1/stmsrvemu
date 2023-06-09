@@ -44,6 +44,7 @@ class contentlistserver(threading.Thread):
             threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
 
     def handle_client(self, clientsocket, address):
+        global contentserver_list
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server Directory Server ")
         
@@ -66,6 +67,9 @@ class contentlistserver(threading.Thread):
                     clientsocket.close()
                     log.info(clientid + "Disconnected from Content Server Directory Server")
                     return
+                #for appid, version in unpacked_serverinfo.applist:
+                    #print("App ID:", appid)
+                    #print("Version:", version)
                 contentserver_list.append(unpacked_serverinfo)
                 clientsocket.send("\x01")
                 log.info(unpacked_serverinfo.region + " " +clientid + "Added to Content Server Directory Server")
@@ -111,14 +115,12 @@ class contentlistserver(threading.Thread):
                     reply = struct.pack(">H", 0)  # Default reply value if no matching server is found
                     i = 0
                     for contentserver_info in contentserver_list:
-                        if contentserver_info.region == region:
-                            for app_info in contentserver_info.applist:
-                                app_id, app_version = app_info
-                                if app_id == appnum and app_version == version:
-                                    i = i + 1
-                                    bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port))
-                                    reply = struct.pack(">H", i) + "\x00\x00\x00\x00" + bin_ip + bin_ip
-                                    break
+
+                            if int(app_id) == appnum and int(app_version) == version:
+                                i = i + 1
+                                bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port))
+                                reply = struct.pack(">H", i) + "\x00\x00\x00\x00" + bin_ip + bin_ip
+                                break
                     if self.config["sdk_ip"] != "0.0.0.0" :
                         log.info("%sHanding off to SDK server for app %s %s" % (clientid, appnum, version))
                         bin_ip = utilities.encodeIP((self.config["sdk_ip"], self.config["sdk_port"]))
