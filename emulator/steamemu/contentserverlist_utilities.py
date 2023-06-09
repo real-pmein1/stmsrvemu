@@ -1,6 +1,6 @@
 import time, logging
 import struct
-import utilities, socket, datetime
+import utilities, socket, datetime, globalvars
 import steamemu.logger
 
 from config import read_config
@@ -69,14 +69,14 @@ def send_heartbeat(contentserver_info):
     ip_address = contentserver_info.ip_address.encode('utf-8')
     port = contentserver_info.port
     region = contentserver_info.region.encode('utf-8')
-    timestamp = contentserver_info.timestamp.encode('utf-8')
+    timestamp = str(contentserver_info.timestamp).encode('utf-8')
 
     applist_length = len(contentserver_info.applist)
     packed_applist = struct.pack('!I', applist_length)
 
     for app in contentserver_info.applist:
         app_id, version = app
-        packed_applist += struct.pack('!II', app_id, version)
+        packed_applist += struct.pack('!II', int(app_id), int(version))
 
     packed_info = contentserver_info_structure.pack(ip_address, port, region, timestamp, len(packed_applist))
 
@@ -127,7 +127,7 @@ def heartbeat(encrypted_buffer):
         if confirmation != "\x01" : # lets try again...
             heartbeat(ip, port, server_type, key)
     else :
-        log.warning(server_type + "Failed to register server to Content Server Directory Server ")
+        log.warning("Content Server failed to register server to Content Server Directory Server ")
         
     # Close the socket
     sock.close()
@@ -151,7 +151,7 @@ def remove_from_dir(encrypted_buffer):
         if confirmation != "\x01" : # lets try again...
             remove_from_dir(ip, port, server_type, key)
     else:
-        log.warning(server_type + "Failed to register server to Content Server Directory Server ")
+        log.warning("Content Server failed to register server to Content Server Directory Server ")
         
     # Close the socket
     sock.close()

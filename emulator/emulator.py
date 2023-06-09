@@ -18,8 +18,8 @@ from steamemu.cserserver import cserserver
 from steamemu.harvestserver import harvestserver
 from steamemu.validationserver import validationserver
 from steamemu.administrationservers import administrationservers
-from steamemu.miscserver import miscserver
-from steamemu.logstatusserver import logstatusserver
+from steamemu.miscservers import miscservers
+from steamemu.logstatusservers import logstatusservers
 
 def watchkeyboard():
     while True:
@@ -42,7 +42,8 @@ globalvars.emuversion = str(config["emu_version"])
 #set the ip and port for id ticket validation server
 globalvars.validation_ip = config["validation_ip"]
 globalvars.validation_port = int(config["validation_server_port"])
-    
+globalvars.cs_region = config["cs_region"]
+
 #check for a peer_password, otherwise generate one
 new_password = utilities.check_peerpassword()
 

@@ -19,7 +19,8 @@ from Steam2.checksum3 import Checksum3
 from gcf_to_storage import gcf2storage
 from time import sleep
 from Crypto.Hash import SHA
-from contentserver_info import add_app, ContentServerInfo, send_removal, send_heartbeat
+from contentserverlist_utilities import add_app, ContentServerInfo, send_removal, send_heartbeat
+
 log = logging.getLogger("contentsrv")
 app_list = []
 class contentserver(threading.Thread):
@@ -30,8 +31,8 @@ class contentserver(threading.Thread):
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
-        self.contentserver_info = ContentServerInfo(globalvars.serverip, int(self.port), globalvars.region, 0)
-        parse_manifest_files(self.contentserver_info)
+        self.contentserver_info = ContentServerInfo(globalvars.serverip, int(self.port), globalvars.cs_region, 0)
+        self.parse_manifest_files(self.contentserver_info)
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
@@ -609,7 +610,7 @@ class contentserver(threading.Thread):
         return encrypted_data
     
     def create_remove_contentserver_packet(self, ip, port, region, key):
-        packet = "\x2f" + utilities.encrypt(utilities.encodeIP((ip, port)) + region), key)
+        packet = "\x2f" + utilities.encrypt(utilities.encodeIP((ip, port)) + region, key)
         return packet
     
     def parse_manifest_files(self, contentserver_info):
@@ -623,7 +624,7 @@ class contentserver(threading.Thread):
                     app_id, version = file_name.split('_')
                     version = version.rstrip('.manifest')
                     
-                    add_app(contentserver_info, app_id, version):
+                    add_app(contentserver_info, app_id, version)
                     # Append app ID and version to app_list
                     #app_list.append((int(app_id), int(version)))
     

@@ -21,6 +21,7 @@ validation_ip = 0
 validation_port = 0
 emuversion = "0"
 is_masterdir = 1
+cs_region = "us"
 
 ip_addresses = (
 "69.28.148.250",

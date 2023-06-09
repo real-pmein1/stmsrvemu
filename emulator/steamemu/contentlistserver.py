@@ -169,8 +169,8 @@ class contentlistserver(threading.Thread):
     def get_server_info_by_type(self, applist={}, region=""):
         if not applist and not region:
             return [server_info for server_info in contentserver_list]
-        elif not region
-            return [server_info for server_info in contentserver_list if server_info.applist == applist]
+        #elif region is ""
+            #return [server_info for server_info in contentserver_list if server_info.applist == applist]
         else:
             return [server_info for server_info in contentserver_list if server_info.applist == applist and server_info.region == region]
 

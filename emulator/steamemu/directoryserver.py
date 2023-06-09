@@ -11,10 +11,11 @@ import socket as pysocket
 from serverlist_utilities import heartbeat
 
 server_list = []
-log = ""
+log = logging.getLogger("masterdirsrv")
 
 class directoryserver(threading.Thread):
     global server_list
+    global log
     
     def __init__(self, port, config):
         threading.Thread.__init__(self)
@@ -23,7 +24,7 @@ class directoryserver(threading.Thread):
         self.socket = emu_socket.ImpSocket()
  
         if globalvars.is_masterdir == 1 :
-            log = logging.getLogger("masterdirsrv")
+            
             #add ourself to the serverlist as a directoryserver type, with a 0'd timestamp to indicate that it cannot be removed
             self.add_server_info(globalvars.serverip, self.config["dir_server_port"], "masterdirsrv", "0000-00-00 00:00:00")
         else:
@@ -197,27 +198,27 @@ class directoryserver(threading.Thread):
             #The 5 servers below use 2 temporary udp and tcp ports for capturing the data, either 27021 or 27022    
             elif command == "\x15" : # Log Processing Server's master server
                 log.info(clientid + "Sending out list of Log Processing Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27021"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27021")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x09" : # system status master server
                 log.info(clientid + "Sending out list of System Status Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27021"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27021")))
                 reply = struct.pack(">H", 1) + bin_ip
                      
             elif command == "\x1D" : # BRS master server (Billing Bridge server?)
                 log.info(clientid + "Sending out list of BRS Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27022"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27022")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x08" : # global transaction manager master server
                 log.info(clientid + "Sending out list of Global Transaction Manager Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27022"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27022")))
                 reply = struct.pack(">H", 1) + bin_ip
                                
             elif command == "\x04" : # server configuration  master server
                 log.info(clientid + "Sending out list of Server Configuration Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27022"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27022")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             # Everything below this line is for 'administration' servers.
@@ -225,42 +226,42 @@ class directoryserver(threading.Thread):
             # but we believe that these are only queried from a internal valve steam network administration tool
             elif command == "\x01" : # administration authentication master server
                 log.info(clientid + "Sending out list of Administration Authentication Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x11" : # administration billing bridge master server
                 log.info(clientid + "Sending out list of Administration Billing Bridge Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x02" : # administration configuration master server
                 log.info(clientid + "Sending out list of Administration Configuration Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                               
             elif command == "\x16" : # administration log processing master server
                 log.info(clientid + "Sending out list of Administration Log Processing Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x13" : # administration authentication master server
                 log.info(clientid + "Sending out list of Administration Authentication Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                                 
             elif command == "\x0C" : # MCS Content Administration  master server
                 log.info(clientid + "Sending out list of MCS Content Administration Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x17" : # CSER Administration master server
                 log.info(clientid + "Sending out list of CSER Administration Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             elif command == "\x1B" : # VTS (validation ticket server) Administration master server
                 log.info(clientid + "Sending out list of VTS Administration Master Servers")
-                bin_ip = utilities.encodeIP((globalvars.serverip, "27023"))
+                bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip
                 
             else :
