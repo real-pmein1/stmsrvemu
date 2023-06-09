@@ -5,6 +5,7 @@ Compile on Python 2.7 x86-32 if you want to run/build from source using:
 
 python.exe -m PyInstaller -F -i source-content.ico emulator.py
 
+> *Please note the code is constant work-in-progress and might not compile or operate correctly, please use the release zip for full functionality*
 
 ### Credits
 + pmein1 - Developer and support
