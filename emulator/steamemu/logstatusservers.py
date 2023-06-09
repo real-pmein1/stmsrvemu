@@ -60,4 +60,4 @@ class logstatusservers(threading.Thread):
             
             log.warning("Unknown message: " + binascii.b2a_hex(msg))
             
-            #log.info(clientid + "Disconnected from Administration Server")
+            #log.info(clientid + "Disconnected from Log & Status Server")

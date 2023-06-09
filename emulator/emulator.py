@@ -117,7 +117,7 @@ authserver(int(config["auth_server_port"]), config).start()
 log.info("Steam Master Authentication Server listening on port " + str(config["auth_server_port"]))
 time.sleep(0.5)
 
-validationserver(int(config["validation_server_port"]), config).start()
+validationserver("27034", config).start()
 log.info("Steam User ID Validation Server listening on port " + str(config["validation_server_port"]))
 time.sleep(0.5)
 
@@ -140,7 +140,6 @@ time.sleep(0.2)
 administrationservers("27023", config).start()
 log.info("Valve Administration servers listening on port 27023 TCP & UDP")
 time.sleep(0.2)
-
 
 if config["sdk_ip"] != "0.0.0.0" :
     log.info("Steamworks SDK Content Server configured on port " + str(config["sdk_port"]))

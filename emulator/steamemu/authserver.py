@@ -52,7 +52,7 @@ class authserver(threading.Thread):
         server_string = utilities.convert_ip_port(str(self.config['validation_ip']),int(self.config['validation_port']))
         final_srvstring = server_string + server_string
         #this is the ticket granting servers 1 and 2 both with 2byte port after address bytes
-        servers = binascii.b2a_hex("7F000001699a7F000001699a") #server_string + server_string)
+        servers = binascii.b2a_hex("7F0000019A697F0000019A69") #server_string + server_string)
         
         #need to figure out a way to assign steamid's.  hopefully with mysql
         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
@@ -170,7 +170,7 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        servers = binascii.b2a_hex("7F000001699a7F000001699a")
+                        servers = binascii.b2a_hex("7F0000019A697F0000019A69")
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
