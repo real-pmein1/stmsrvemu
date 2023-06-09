@@ -170,7 +170,7 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        servers = binascii.b2a_hex(final_srvstring)
+                        servers = binascii.b2a_hex("7F000001699a7F000001699a")
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
@@ -251,7 +251,7 @@ class authserver(threading.Thread):
                     currtime = time.time()
                     outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                     steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                    servers = binascii.b2a_hex(final_srvstring)
+                    servers = binascii.b2a_hex("7F000001699a7F000001699a")
                     times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                     subheader = innerkey + steamid + servers + times
                     subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
