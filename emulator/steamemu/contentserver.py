@@ -1,13 +1,16 @@
-import threading, logging, struct, binascii, os.path, zlib, os, socket, shutil
-
-from Crypto.Hash import SHA
-
+import threading, logging, struct, binascii, os.path, zlib, os,  shutil
 import utilities
 import blob_utilities
 import storage_utilities
 import encryption
 import config
 import globalvars
+import emu_socket
+import time
+import serverlist_utilities
+import contentserverlist_utilities
+import steamemu.logger
+from Crypto.Hash import SHA
 from Steam2.manifest import *
 from Steam2.neuter import neuter
 from Steam2.manifest2 import Manifest2
@@ -15,28 +18,50 @@ from Steam2.checksum2 import Checksum2
 from Steam2.checksum3 import Checksum3
 from gcf_to_storage import gcf2storage
 from time import sleep
-
+from Crypto.Hash import SHA
+from contentserver_info import add_app, ContentServerInfo, send_removal, send_heartbeat
+log = logging.getLogger("contentsrv")
+app_list = []
 class contentserver(threading.Thread):
-    def __init__(self, (socket, address), config) :
+    global app_list
+    
+    def __init__(self, port, config):
         threading.Thread.__init__(self)
-        self.socket = socket
-        self.address = address
+        self.port = int(port)
         self.config = config
+        self.socket = emu_socket.ImpSocket()
+        self.contentserver_info = ContentServerInfo(globalvars.serverip, int(self.port), globalvars.region, 0)
+        parse_manifest_files(self.contentserver_info)
+        thread2 = threading.Thread(target=self.heartbeat_thread)
+        thread2.daemon = True
+        thread2.start()
 
-    def run(self):
-        log = logging.getLogger("contentsrv")
-        clientid = str(self.address) + ": "
+    def heartbeat_thread(self):       
+        while True:
+            send_heartbeat(self.contentserver_info)
+            time.sleep(1800) # 30 minutes
+            
+    def run(self):        
+        self.socket.bind((globalvars.serverip, self.port))
+        self.socket.listen(5)
+
+        while True:
+            (clientsocket, address) = self.socket.accept()
+            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
+
+    def handle_client(self, clientsocket, address):
+        clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server")
 
-        msg = self.socket.recv(4)
+        msg = clientsocket.recv(4)
 
         if len(msg) == 0 :
             log.info(clientid + "Got simple handshake. Closing connection.")
         elif msg == "\x00\x00\x00\x02" or msg == "\x00\x00\x00\x03" : #x02 for 2012
             log.info(clientid + "Package mode entered")
-            self.socket.send("\x01")
+            clientsocket.send("\x01")
             while True :
-                msg = self.socket.recv_withlen()
+                msg = clientsocket.recv_withlen()
 
                 if not msg :
                     log.info(clientid + "no message received")
@@ -45,7 +70,7 @@ class contentserver(threading.Thread):
                 command = struct.unpack(">L", msg[:4])[0]
 
                 if command == 2 :
-                    self.socket.send("\x00\x00\x00\x02")
+                    clientsocket.send("\x00\x00\x00\x02")
                     break
 
                 elif command == 3 :
@@ -95,7 +120,7 @@ class contentserver(threading.Thread):
 
                         reply = struct.pack('>LL', len(signature), len(signature)) + signature
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                     else :
                         if self.config["public_ip"] != "0.0.0.0" :
@@ -127,8 +152,8 @@ class contentserver(threading.Thread):
 
                         reply = struct.pack('>LL', len(file), len(file))
 
-                        self.socket.send( reply )
-                        self.socket.send(file, False)
+                        clientsocket.send( reply )
+                        clientsocket.send(file, False)
 
                 else :
                     log.warning(clientid +"invalid Command")
@@ -140,16 +165,16 @@ class contentserver(threading.Thread):
             storagesopen = 0
             storages = {}
 
-            self.socket.send("\x01") # this should just be the handshake
+            clientsocket.send("\x01") # this should just be the handshake
 
             while True :
 
-                command = self.socket.recv_withlen()
+                command = clientsocket.recv_withlen()
 
                 if command[0] == "\x00" :
 
                     if len(command) == 10 :
-                        self.socket.send("\x01")
+                        clientsocket.send("\x01")
                         break
                     elif len(command) > 1 :
                         log.info("Banner message: " + binascii.b2a_hex(command))
@@ -158,9 +183,9 @@ class contentserver(threading.Thread):
 
                         reply = struct.pack(">cH", "\x01", len(url)) + url
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
                     else :
-                        self.socket.send("")
+                        clientsocket.send("")
                         
                 elif command[0] == "\x02" :
 
@@ -284,13 +309,13 @@ class contentserver(threading.Thread):
                         #log.info(clientid + "Client has matching checksum for secondblob")
                         #log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
 
-                        #self.socket.send("\x00\x00\x00\x00")
+                        #clientsocket.send("\x00\x00\x00\x00")
 
                     #else :
                     #log.info(clientid + "Client didn't match our checksum for secondblob")
                     log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
 
-                    self.socket.send_withlen(blob, False)
+                    clientsocket.send_withlen(blob, False)
 
                 elif command[0] == "\x09" or command[0] == "\x0a" : #09 is used by early clients without a ticket
 
@@ -300,7 +325,7 @@ class contentserver(threading.Thread):
                         #log.error(clientid + "Not logged in")
 
                         #reply = struct.pack(">LLc", connid, messageid, "\x01")
-                        #self.socket.send(reply)
+                        #clientsocket.send(reply)
 
                         #break
 
@@ -315,7 +340,7 @@ class contentserver(threading.Thread):
                         log.error("Application not installed! %d %d" % (app, version))
 
                         reply = struct.pack(">LLc", connid, messageid, "\x01")
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                         break
 
@@ -372,7 +397,7 @@ class contentserver(threading.Thread):
                         log.error("Manifest doesn't match requested file: (%s, %s) (%s, %s)" % (app, version, manifest_appid, manifest_verid))
 
                         reply = struct.pack(">LLc", connid, messageid, "\x01")
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                         break
                     
@@ -392,11 +417,11 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcLL", connid, messageid, "\x00", storageid, checksum)
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                 elif command[0] == "\x01" :
 
-                    self.socket.send("")
+                    clientsocket.send("")
                     break
 
                 elif command[0] == "\x03" :
@@ -409,7 +434,7 @@ class contentserver(threading.Thread):
 
                     log.info(clientid + "Closing down storage %d" % storageid)
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                 elif command[0] == "\x04" :
 
@@ -421,11 +446,11 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcL", storageid, messageid, "\x00", len(manifest))
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                     reply = struct.pack(">LLL", storageid, messageid, len(manifest))
 
-                    self.socket.send(reply + manifest, False)
+                    clientsocket.send(reply + manifest, False)
 
                 elif command[0] == "\x05" :
                     log.info(clientid + "Sending app update information")
@@ -480,10 +505,10 @@ class contentserver(threading.Thread):
 
                     if count == 0:
                         reply = struct.pack(">LLcL", storageid, messageid, "\x01", 0)
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
                     else:
                         reply = struct.pack(">LLcL", storageid, messageid, "\x02", count)
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
                         
                         changedFilesTmp = []
                         for fileid in changedFiles:
@@ -491,8 +516,8 @@ class contentserver(threading.Thread):
                         updatefiles = "".join(changedFilesTmp)
                         
                         reply = struct.pack(">LL", storageid, messageid)
-                        self.socket.send(reply)
-                        self.socket.send_withlen(updatefiles)
+                        clientsocket.send(reply)
+                        clientsocket.send_withlen(updatefiles)
                     
                 elif command[0] == "\x06" :
 
@@ -518,11 +543,11 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcL", storageid, messageid, "\x00", len(file))
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                     reply = struct.pack(">LLL", storageid, messageid, len(file))
 
-                    self.socket.send(reply + file, False)
+                    clientsocket.send(reply + file, False)
 
                 elif command[0] == "\x07" :
 
@@ -532,36 +557,96 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcLL", storageid, messageid, "\x00", len(chunks), filemode)
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                     for chunk in chunks :
 
                         reply = struct.pack(">LLL", storageid, messageid, len(chunk))
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                         reply = struct.pack(">LLL", storageid, messageid, len(chunk))
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
-                        self.socket.send(chunk, False)
+                        clientsocket.send(chunk, False)
 
                 elif command[0] == "\x08" :
 
                     log.warning("08 - Invalid Command!")
-                    self.socket.send("\x01")
+                    clientsocket.send("\x01")
 
                 else :
 
                     log.warning(binascii.b2a_hex(command[0]) + " - Invalid Command!")
-                    self.socket.send("\x01")
+                    clientsocket.send("\x01")
 
                     break
         elif msg == "\x03\x00\x00\x00" :
             log.info(clientid + "Unknown mode entered")
-            self.socket.send("\x00")
+            clientsocket.send("\x00")
         else :
             log.warning("Invalid Command: " + binascii.b2a_hex(msg))
 
-        self.socket.close()
+        clientsocket.close()
         log.info(clientid + "Disconnected from Content Server")
+        
+    def create_add_contentserver_packet(self, server_info, peer_password):
+        # Pack the server_info into a buffer
+        ip_bytes = utilities.encodeIP(server_info.ip)
+        packed_data = struct.pack(">4sH16s", ip_bytes, server_info.port, server_info.region)
+        numofapps = len(server_info.applist)
+        # Pack the applist size into the buffer
+        packed_data += struct.pack(">I", numofapps)
+
+        # Pack the applist into the buffer
+        for app in server_info.applist:
+            packed_data += struct.pack(">ii", app['appid'], app['version'])
+
+        # Encrypt the packed data using peer_password
+        encrypted_data = utilities.encrypt(packed_data, peer_password)
+
+        return encrypted_data
+    
+    def create_remove_contentserver_packet(self, ip, port, region, key):
+        packet = "\x2f" + utilities.encrypt(utilities.encodeIP((ip, port)) + region), key)
+        return packet
+    
+    def parse_manifest_files(self, contentserver_info):
+        # Define the locations to search for '.manifest' files
+        locations = ['files/cache/', self.config["v2manifestdir"], self.config["manifestdir"]]
+
+        for location in locations:
+            for file_name in os.listdir(location):
+                if file_name.endswith('.manifest'):
+                    # Extract app ID and version from the file name
+                    app_id, version = file_name.split('_')
+                    version = version.rstrip('.manifest')
+                    
+                    add_app(contentserver_info, app_id, version):
+                    # Append app ID and version to app_list
+                    #app_list.append((int(app_id), int(version)))
+    
+def heartbeat(buffer):
+    mastercsd_ipport = config["mastercsd_server_ipport"]
+    mastercsd_ip, mastercsd_port = mastercsd_ipport.split(":")
+    
+    contentsock = pysocket.socket(pysocket.AF_INET, pysocket.SOCK_STREAM)
+    contentsock.connect((str(mastercsd_ip), int(mastercsd_port))) # Connect the socket to master csd server
+
+    data = "\x00\x4f\x7b\x11"
+    contentsock.send(data) # Send the 'im a csd server packet' packet
+    
+    response = contentsock.recv(1) # wait for a reply
+    
+    if response == '\x01':
+        contentsock.send(buffer)
+        confirmation = contentsock.recv(1) # wait for a reply
+        
+        if confirmation != "\x01" : # lets try again...
+            heartbeat(buffer)
+    else :
+        log.warning(server_type + "Failed to register server to Content Server Directory Server")
+        
+    # Close the socket
+    contentsock.close()

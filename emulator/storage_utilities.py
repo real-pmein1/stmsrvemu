@@ -1,4 +1,3 @@
-import myimports
 import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, zlib, sys
 import os.path, ast, csv, struct
 

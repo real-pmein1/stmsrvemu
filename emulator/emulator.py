@@ -1,8 +1,8 @@
 import threading, logging, time, os, os.path, msvcrt
 import utilities, globalvars, emu_socket
-
+import steamemu.logger
+import python_check
 from steamemu.config import read_config
-from steamemu.config import save_config_value
 from steamemu.converter import convertgcf
 from steamemu.directoryserver import directoryserver
 from steamemu.configserver import configserver
@@ -11,56 +11,42 @@ from steamemu.contentserver import contentserver
 from steamemu.authserver import authserver
 from steamemu.masterhl import masterhl
 from steamemu.masterhl2 import masterhl2
-from steamemu.friends import friendserver
+from steamemu.messages import messagesserver
 from steamemu.vttserver import vttserver
 from steamemu.trackerserver import trackerserver
 from steamemu.cserserver import cserserver
 from steamemu.harvestserver import harvestserver
+from steamemu.validationserver import validationserver
+from steamemu.administrationservers import administrationservers
+from steamemu.miscserver import miscserver
+from steamemu.logstatusserver import logstatusserver
 
-import python_check
+def watchkeyboard():
+    while True:
+        if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
+            os._exit(0)
+# Create a thread and start running the watchkeyboard function
+keyboard_thread = threading.Thread(target=watchkeyboard)
+keyboard_thread.daemon = True  # Set the thread as a daemon to exit when the main thread exits
+keyboard_thread.start()
+
 # Check the Python version
 python_check.check_python_version()
 
-
-new_password = 0
-
-
-from steamemu.config import read_config
 config = read_config()
 
-class listener(threading.Thread):
-    def __init__(self, port, serverobject, config):
-        self.port = int(port)
-        self.serverobject = serverobject  
-        self.config = config.copy()
-        self.config["port"] = port
-        threading.Thread.__init__(self)
+#Set is dir server slave or master
+globalvars.is_masterdir = int(config["is_masterdir"])
+#Set emulator version
+globalvars.emuversion = str(config["emu_version"])
+#set the ip and port for id ticket validation server
+globalvars.validation_ip = config["validation_ip"]
+globalvars.validation_port = int(config["validation_server_port"])
+    
+#check for a peer_password, otherwise generate one
+new_password = utilities.check_peerpassword()
 
-    def run(self):
-        serversocket = emu_socket.ImpSocket()
-        serversocket.bind((config["server_ip"], self.port))
-        serversocket.listen(5)
-
-        #print "TCP Server Listening on port " + str(self.port)
-
-        while True :
-            (clientsocket, address) = serversocket.accept()
-            self.serverobject((clientsocket, address), self.config).start();
-
-#this checks if there is a peer password, if not itll generate one
-if "peer_password" in config and config["peer_password"]:
-    # The peer_password is present and not empty
-    globalvars.peer_password = config["peer_password"]
-else:
-    # The peer_password is missing or empty
-    # Generate a new password
-    globalvars.peer_password = utilities.generate_password()
-
-    # Save the new password to the config file
-    save_config_value("peer_password", globalvars.peer_password)
-    new_password = 1
-
-print("Steam 2004-2011 Server Emulator v0.60")
+print("Steam 2004-2011 Server Emulator v" + globalvars.emuversion)
 print("=====================================")
 print
 print("**************************")
@@ -73,150 +59,97 @@ print
 log = logging.getLogger('emulator')
 log.info("...Starting Steam Server...\n")
 
-if config["server_ip"].startswith("10.") :
-    globalvars.servernet = "('10."
-elif config["server_ip"].startswith("172.16.") :
-    globalvars.servernet = "('172.16."
-elif config["server_ip"].startswith("172.17.") :
-    globalvars.servernet = "('172.17."
-elif config["server_ip"].startswith("172.18.") :
-    globalvars.servernet = "('172.18."
-elif config["server_ip"].startswith("172.19.") :
-    globalvars.servernet = "('172.19."
-elif config["server_ip"].startswith("172.20.") :
-    globalvars.servernet = "('172.20."
-elif config["server_ip"].startswith("172.21.") :
-    globalvars.servernet = "('172.21."
-elif config["server_ip"].startswith("172.22.") :
-    globalvars.servernet = "('172.22."
-elif config["server_ip"].startswith("172.23.") :
-    globalvars.servernet = "('172.23."
-elif config["server_ip"].startswith("172.24.") :
-    globalvars.servernet = "('172.24."
-elif config["server_ip"].startswith("172.25.") :
-    globalvars.servernet = "('172.25."
-elif config["server_ip"].startswith("172.26.") :
-    globalvars.servernet = "('172.26."
-elif config["server_ip"].startswith("172.27.") :
-    globalvars.servernet = "('172.27."
-elif config["server_ip"].startswith("172.28.") :
-    globalvars.servernet = "('172.28."
-elif config["server_ip"].startswith("172.29.") :
-    globalvars.servernet = "('172.29."
-elif config["server_ip"].startswith("172.30.") :
-    globalvars.servernet = "('172.30."
-elif config["server_ip"].startswith("172.31.") :
-    globalvars.servernet = "('172.31."
-elif config["server_ip"].startswith("192.168.") :
-    globalvars.servernet = "('192.168."
+#check local ip and set globalvars.serverip
+utilities.checklocalipnet()
 
-#set serverip for the servers to use, depends on which config option is used.
-if ("server_ip" not in config or not config["server_ip"]) and ("public_ip" not in config or not config["public_ip"]):
-    globalvars.serverip = "127.0.0.1"
-elif "server_ip" in config and config["server_ip"]:
-    globalvars.serverip = config["server_ip"]
-else:
-    globalvars.serverip = config["public_ip"]
-
-#call this function to edit the steam.exe and set the steam_/steamui_/hldsut_/lhldsut_ verstion number variables.
+#call this function to call the neuter stuff.
 utilities.initialise()
 time.sleep(0.2)
 
 #launch directoryserver first so servers can heartbeat the moment they launch
-if "is_masterdir" in config :
+if globalvars.is_masterdir == 1 :
     log.info("Steam Master General Directory Server listening on port " + str(config["dir_server_port"]))
-    
-    if config["is_masterdir"] == "0" :
-        log.info("Steam Slave General Directory Server listening on port " + str(config["dir_server_port"]))
 else:
-    log.info("Steam Master General Directory Server listening on port " + str(config["dir_server_port"]))
-dirlistener = listener(config["dir_server_port"], directoryserver, config)
-dirlistener.start()
-time.sleep(0.8) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
+    log.info("Steam Slave General Directory Server listening on port " + str(config["dir_server_port"]))
+    
+directoryserver(int(config["dir_server_port"]), config).start()
+time.sleep(1.0) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
 
-cserlistener = cserserver(globalvars.serverip, 27013)
-cserthread = threading.Thread(target=cserlistener.start)
-cserthread.start()
+threading.Thread(target=cserserver(globalvars.serverip, 27013).start).start()
 log.info("CSER Server listening on port 27013")
-time.sleep(0.2)
+time.sleep(0.5)
 
-harvestlistener = harvestserver(globalvars.serverip, 27055)
-harvestthread = threading.Thread(target=harvestlistener.start)
-harvestthread.start()
+threading.Thread(target=harvestserver(globalvars.serverip, 27055).start).start()
 log.info("MiniDump Harvest Server listening on port 27055")
-time.sleep(0.2)
+time.sleep(0.5)
 
-hlmasterlistener = masterhl(globalvars.serverip, 27010)
-hlmasterthread = threading.Thread(target=hlmasterlistener.start)
-hlmasterthread.start()
+threading.Thread(target=masterhl(globalvars.serverip, 27010).start).start()
 log.info("Master HL1 Server listening on port 27010")
-time.sleep(0.2)
+time.sleep(0.5)
 
-hl2masterlistener = masterhl2(globalvars.serverip, 27011)
-hl2masterthread = threading.Thread(target=hl2masterlistener.start)
-hl2masterthread.start()
+threading.Thread(target=masterhl2(globalvars.serverip, 27011).start).start()
 log.info("Master HL2 Server listening on port 27011")
-time.sleep(0.2)
+time.sleep(0.5)
 
-trackerlistener = trackerserver(globalvars.serverip, 27014)
-trackerthread = threading.Thread(target=trackerlistener.start)
-trackerthread.start()
+threading.Thread(target=trackerserver(globalvars.serverip, 27014).start).start()
 log.info("[2004-2007] Tracker Server listening on port 27014") #old 2004 tracker/friends CHAT SERVER
+globalvars.tracker = 1
+time.sleep(0.5)
+
+threading.Thread(target=messagesserver(globalvars.serverip, 27017).start).start()
+log.info("Client Messaging Server listening on port 27017")
 time.sleep(0.2)
 
-if config["tracker_ip"] == "0.0.0.0" :
-    friendslistener = friendserver(globalvars.serverip, 27017)
-    friendsthread = threading.Thread(target=friendslistener.start)
-    friendsthread.start()
-    globalvars.tracker = 0
-    log.info("[2007+] Friends Server listening on port 27017")
-else :
-    globalvars.tracker = 1
-    log.info("Connected to [2007+] Friends")
-time.sleep(0.2)
-
-configlistener = listener(config["conf_server_port"], configserver, config)
-configlistener.start()
+configserver(int(config["conf_server_port"]), config).start()
 log.info("Steam Config Server listening on port " + str(config["conf_server_port"]))
-time.sleep(0.2)
+time.sleep(0.5)
 
-contentlistlistener = listener(config["csds_port"], contentlistserver, config)
-contentlistlistener.start()
-log.info("Steam Content Server Directory Server listening on port " + str(config["csds_port"]))
-time.sleep(0.2)
+contentlistserver(int(config["csd_server_port"]), config).start()
+log.info("Steam Content Server Directory Server listening on port " + str(config["csd_server_port"]))
+time.sleep(0.5)
 
-contentlistener = listener(config["content_server_port"], contentserver, config)
-contentlistener.start()
+contentserver(int(config["content_server_port"]), config).start()
 log.info("Steam Content Server listening on port " + str(config["content_server_port"]))
-time.sleep(0.2)
+time.sleep(0.5)
 
-authlistener = listener(config["auth_server_port"], authserver, config)
-authlistener.start()
+authserver(int(config["auth_server_port"]), config).start()
 log.info("Steam Master Authentication Server listening on port " + str(config["auth_server_port"]))
-time.sleep(0.2)
+time.sleep(0.5)
 
-vttlistener = listener("27046", vttserver, config)
-vttlistener.start()
+validationserver(int(config["validation_server_port"]), config).start()
+log.info("Steam User ID Validation Server listening on port " + str(config["validation_server_port"]))
+time.sleep(0.5)
+
+vttserver("27046", config).start()
 log.info("Valve Time Tracking Server listening on port 27046")
 time.sleep(0.2)
 
-vttlistener2 = listener("27047", vttserver, config)
-vttlistener2.start()
+vttserver("27047", config).start()
 log.info("Valve CyberCafe server listening on port 27047")
 time.sleep(0.2)
+
+logstatusservers("27021", config).start()
+log.info("Valve Log & Status servers listening on port 27021 TCP & UDP")
+time.sleep(0.2)
+
+miscservers("27022", config).start()
+log.info("Valve MISC servers listening on port 27022 TCP & UDP")
+time.sleep(0.2)
+
+administrationservers("27023", config).start()
+log.info("Valve Administration servers listening on port 27023 TCP & UDP")
+time.sleep(0.2)
+
 
 if config["sdk_ip"] != "0.0.0.0" :
     log.info("Steamworks SDK Content Server configured on port " + str(config["sdk_port"]))
     time.sleep(0.2)
     
-log.info("Steam Server ready.")
-#authlistener.join()
+log.info("Steam Servers are ready.")
 
 if new_password == 1 :
-    log.info("New Peer Password Generated: " + peer_password)
+    log.info("New Peer Password Generated: \033[1;33m{}\033[0m".format(globalvars.peer_password))
     log.info("Make sure to give this password to any servers that may want to add themselves to your network!")
 
 print("Press Escape to exit...")
-while True:
-    if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
-        os._exit(0)
+

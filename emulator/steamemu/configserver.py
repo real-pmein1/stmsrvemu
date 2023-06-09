@@ -1,44 +1,53 @@
-import threading, logging, struct, binascii, socket, zlib, os, shutil, time
-
-from Crypto.Hash import SHA
-
+import threading, logging, struct, binascii, zlib, os, shutil, time
+import socket as pysocket
 import utilities
 import blob_utilities
 import encryption
 import config
 import globalvars
+import emu_socket
+import steamemu.logger
 import serverlist_utilities
 
-class configserver(threading.Thread):
-    def __init__(self, (socket, address), config) :
-        threading.Thread.__init__(self)
-        self.socket = socket
-        self.address = address
-        self.config = config
+from Crypto.Hash import SHA
+
+log = logging.getLogger("confsrv")
         
-        # Start the thread for dir registration heartbeat, only
+class configserver(threading.Thread):
+    def __init__(self, port, config):
+        threading.Thread.__init__(self)
+        self.port = int(port)
+        self.config = config
+        self.socket = emu_socket.ImpSocket()
+        
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
-        
+
     def heartbeat_thread(self):       
-        while True: 
-            serverlist_utilities.heartbeat(globalvars.serverip, self.config["conf_server_port"], "configserver", globalvars.peer_password )
+        while True:
+            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "configserver", globalvars.peer_password )
             time.sleep(1800) # 30 minutes
             
-    def run(self):
-        log = logging.getLogger("confsrv")
+    def run(self):        
+        self.socket.bind((globalvars.serverip, self.port))
+        self.socket.listen(5)
 
-        clientid = str(self.address) + ": "
+        while True:
+            (clientsocket, address) = self.socket.accept()
+            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
+
+    def handle_client(self, clientsocket, address):
+        clientid = str(address) + ": "
 
         log.info(clientid + "Connected to Config Server")
 
-        command = self.socket.recv(4)
+        command = clientsocket.recv(4)
 
         if command == "\x00\x00\x00\x03" or command == "\x00\x00\x00\x02" :
-            self.socket.send("\x01" + socket.inet_aton(self.address[0]))
+            clientsocket.send("\x01" + pysocket.inet_aton(address[0]))
 
-            command = self.socket.recv_withlen()
+            command = clientsocket.recv_withlen()
 
             if len(command) == 1 :
 
@@ -72,7 +81,7 @@ class configserver(threading.Thread):
                         globalvars.tgt_version = "2" #config file states 2 as default
                         log.debug(clientid + "TGT version set to 2")
 
-                    self.socket.send_withlen(blob)
+                    clientsocket.send_withlen(blob)
 
                 elif command == "\x04" :
                     log.info(clientid + "sending network key")
@@ -88,20 +97,20 @@ class configserver(threading.Thread):
 
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                 elif command == "\x05" :
                     log.info(clientid + "confserver command 5, unknown, sending zero reply")
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
 
                 elif command == "\x06" :
                     log.info(clientid + "confserver command 6, unknown, sending zero reply")
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
 
                 elif command == "\x07" :
                     log.info(clientid + "Sending out list of Content Servers")
 
-                    #self.socket.send(binascii.a2b_hex("0001312d000000012c"))
+                    #clientsocket.send(binascii.a2b_hex("0001312d000000012c"))
         
                     if self.config["public_ip"] != "0.0.0.0" :
                         if clientid.startswith(globalvars.servernet) :
@@ -112,20 +121,20 @@ class configserver(threading.Thread):
                         bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
                     reply = struct.pack(">H", 1) + bin_ip
                     
-                    self.socket.send_withlen(reply)
+                    clientsocket.send_withlen(reply)
 
                 elif command == "\x08" :
                     log.info(clientid + "confserver command 8, unknown, sending zero reply")
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
 
                 else :
                     log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command))
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
 
             elif command[0] == "\x02" or command[0] == "\x09":
             
                 if command[0] == "\x09" :
-                    self.socket.send(binascii.a2b_hex("00000001312d000000012c"))
+                    clientsocket.send(binascii.a2b_hex("00000001312d000000012c"))
 
                 if os.path.isfile("files/cache/secondblob.bin") :
                     f = open("files/cache/secondblob.bin", "rb")
@@ -253,13 +262,13 @@ class configserver(threading.Thread):
                     log.info(clientid + "Client has matching checksum for secondblob")
                     log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
 
-                    self.socket.send("\x00\x00\x00\x00")
+                    clientsocket.send("\x00\x00\x00\x00")
 
                 else :
                     log.info(clientid + "Client didn't match our checksum for secondblob")
                     log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
 
-                    self.socket.send_withlen(blob, False)
+                    clientsocket.send_withlen(blob, False)
 
             else :
                 log.info(clientid + "Invalid message: " + binascii.b2a_hex(command))
@@ -267,6 +276,6 @@ class configserver(threading.Thread):
         else :
             log.info(clientid + "Invalid head message: " + binascii.b2a_hex(command))
 
-        self.socket.close()
+        clientsocket.close()
 
         log.info (clientid + "disconnected from Config Server")

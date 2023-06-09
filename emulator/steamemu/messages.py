@@ -6,7 +6,7 @@ import steamemu.logger
 import globalvars
 import serverlist_utilities
 
-class friendserver(threading.Thread):
+class messagesserver(threading.Thread):
 
     def __init__(self, host, port):
         #threading.Thread.__init__(self)
@@ -21,7 +21,7 @@ class friendserver(threading.Thread):
         
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "friendsserver", globalvars.peer_password )
+            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "messagesserver", globalvars.peer_password )
             time.sleep(1800) # 30 minutes
             
     def start(self):
@@ -35,9 +35,9 @@ class friendserver(threading.Thread):
             threading.Thread(target=self.process_packet, args=(data, address)).start()
 
     def process_packet(self, data, address):
-        log = logging.getLogger("friendsrv")
+        log = logging.getLogger("msgsrv")
         clientid = str(config["server_ip"]) + ": "
-        log.info(clientid + "Connected to Friends Server")
+        log.info(clientid + "Connected to Message Server")
         log.debug(clientid + ("Received message: %s, from %s" % (data, address)))
 
         message = binascii.b2a_hex(data)
@@ -106,5 +106,5 @@ class friendserver(threading.Thread):
                 friendsreqdata = friendsrecdata[16:]
                 friendsreqheader = friendsrecheader
         #self.socket.close()
-        log.info (clientid + "Disconnected from Friends Server")         
+        log.info (clientid + "Disconnected from Message Server")         
 

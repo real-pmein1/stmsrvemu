@@ -1,9 +1,12 @@
-import time
+import time, logging
 import struct
 import utilities, socket
+import steamemu.logger
 
 from config import read_config
 config = read_config()
+
+log = logging.getLogger("serverlist_utils")
 
 def create_add_server_packet(ip, port, server_type, key):
     packet = "\x1c" + utilities.encrypt(utilities.encodeIP((ip, port)) + struct.pack("16s", server_type.encode("utf-8")), key)

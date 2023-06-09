@@ -1,50 +1,72 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast
-
-from Crypto.Hash import SHA
-
+import threading, logging, struct, binascii, time, ipaddress, os.path, ast
 import utilities
 import blob_utilities
 import encryption
+import emu_socket
 import config
+import steamemu.logger
 import globalvars
 import serverlist_utilities
+import socket as pysocket
+
+from Crypto.Hash import SHA
+
+log = logging.getLogger("authsrv")
 
 class authserver(threading.Thread):
-    def __init__(self, (socket, address), config) :
+    def __init__(self, port, config):
         threading.Thread.__init__(self)
-        self.socket = socket
-        self.address = address
+        self.port = int(port)
         self.config = config
+        self.socket = emu_socket.ImpSocket()
         
-        # Start the thread for dir registration heartbeat, only
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
-        
+
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.config["auth_server_port"], "authserver", globalvars.peer_password )
+            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "authserver", globalvars.peer_password )
             time.sleep(1800) # 30 minutes
             
-    def run(self):
-        log = logging.getLogger("authsrv")
+    def run(self):        
+        self.socket.bind((globalvars.serverip, self.port))
+        self.socket.listen(5)
 
-        clientid = str(self.address) + ": "
+        while True:
+            (clientsocket, address) = self.socket.accept()
+            server_thread = threading.Thread(target=self.handle_client, args=(clientsocket, address))
+            server_thread.start()
 
+    def handle_client(self, clientsocket, address):
+
+        # Convert IP address to packed 32-bit binary format
+        ip_packed = pysocket.inet_aton(self.config['validation_ip'])
+        port = self.config['validation_port']
+        # Combine IP address and port into a single hex string
+        port_hex = struct.pack('!H', int(port)).encode('hex')
+        server_string = ip_packed+port_hex+ip_packed+port_hex
+        #this is the ticket granting servers 1 and 2 both with 2byte port after address bytes
+        servers = binascii.b2a_hex(server_string)
+        #need to figure out a way to assign steamid's.  hopefully with mysql
+        steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
+        
+        clientid = str(address) + ": "
+        
         log.info(clientid + "Connected to Auth Server")
 
-        command = self.socket.recv(13)
+        command = clientsocket.recv(13)
         
         log.debug(":" + binascii.b2a_hex(command[1:5]) + ":")
         log.debug(":" + binascii.b2a_hex(command) + ":")
 
         if command[1:5] == "\x00\x00\x00\x04" or command[1:5] == "\x00\x00\x00\x01" or command[1:5] == "\x00\x00\x00\x02" :
 
-            self.socket.send("\x00" + socket.inet_aton(self.address[0]))
-            log.debug((str(socket.inet_aton(self.address[0]))))
-            log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
+            clientsocket.send("\x00" + pysocket.inet_aton(address[0]))
+            log.debug((str(pysocket.inet_aton(address[0]))))
+            log.debug((str(pysocket.inet_ntoa(pysocket.inet_aton(address[0])))))
 
-            command = self.socket.recv_withlen()
+            command = clientsocket.recv_withlen()
 
             if len(command) > 1 and len(command) < 256 :
             
@@ -92,18 +114,18 @@ class authserver(threading.Thread):
                     blocked = binascii.b2a_hex(userblob['\x0c\x00\x00\x00'])
                     if blocked == "0001" :
                         log.info(clientid + "Blocked user: " + username)
-                        self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
-                        command = self.socket.recv_withlen()
+                        clientsocket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                        command = clientsocket.recv_withlen()
                         steamtime = utilities.unixtime_to_steamtime(time.time())
                         tgt_command = "\x04" #BLOCKED
                         padding = "\x00" * 1222
                         ticket_full = tgt_command + steamtime + padding
-                        self.socket.send(ticket_full)
+                        clientsocket.send(ticket_full)
                     else :
                         personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
                         print(personalsalt)
-                        self.socket.send(personalsalt) #NEW SALT PER USER
-                        command = self.socket.recv_withlen()
+                        clientsocket.send(personalsalt) #NEW SALT PER USER
+                        command = clientsocket.recv_withlen()
                         key = userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16]
                         #print(binascii.b2a_hex(key))
                         IV = command[0:16]
@@ -142,7 +164,6 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
@@ -167,20 +188,20 @@ class authserver(threading.Thread):
                     
                         steamtime = utilities.unixtime_to_steamtime(time.time())
                         ticket_full = tgt_command + steamtime + "\x00\xd2\x49\x6b\x00\x00\x00\x00" + struct.pack(">L", len(ticket_signed)) + ticket_signed
-                        self.socket.send(ticket_full)
+                        clientsocket.send(ticket_full)
                 elif legacyblocked == 1 :
                     log.warning(clientid + "Blocked legacy user: " + username)
-                    self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                    clientsocket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
                     steamtime = utilities.unixtime_to_steamtime(time.time())
                     tgt_command = "\x04" #BLOCKED
                     padding = "\x00" * 1222
                     ticket_full = tgt_command + steamtime + padding
-                    self.socket.send(ticket_full)
+                    clientsocket.send(ticket_full)
                 elif legacyuser == 1 :
                     log.warning("Legacy user: " + username)
                 
-                    self.socket.send("\x01\x23\x45\x67\x89\xab\xcd\xef") # salt - OLD
-                    command = self.socket.recv_withlen()
+                    clientsocket.send("\x01\x23\x45\x67\x89\xab\xcd\xef") # salt - OLD
+                    command = clientsocket.recv_withlen()
 
                     key = SHA.new("\x01\x23\x45\x67" + users[username] + "\x89\xab\xcd\xef").digest()[:16]
                     #print(binascii.b2a_hex(key))
@@ -222,8 +243,6 @@ class authserver(threading.Thread):
                     blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
                     currtime = time.time()
                     outerIV = binascii.a2b_hex("92183129534234231231312123123353")
-                    steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                    servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
                     times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                     subheader = innerkey + steamid + servers + times
                     subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
@@ -248,24 +267,24 @@ class authserver(threading.Thread):
                     
                     steamtime = utilities.unixtime_to_steamtime(time.time())
                     ticket_full = tgt_command + steamtime + "\x00\xd2\x49\x6b\x00\x00\x00\x00" + struct.pack(">L", len(ticket_signed)) + ticket_signed
-                    self.socket.send(ticket_full)
+                    clientsocket.send(ticket_full)
                 else :
                     log.info(clientid + "Unknown user: " + username)
-                    self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                    clientsocket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
                     steamtime = utilities.unixtime_to_steamtime(time.time())
                     tgt_command = "\x01"
                     padding = "\x00" * 1222
                     ticket_full = tgt_command + steamtime + padding
-                    self.socket.send(ticket_full)
+                    clientsocket.send(ticket_full)
 
             elif len(command) >= 256 :
                 #print(binascii.b2a_hex(command[0:3]))
                 if binascii.b2a_hex(command[0:3]) == "100168" :
                     log.info(clientid + "Change password")
-                    self.socket.send("\x01")
+                    clientsocket.send("\x01")
                 else :
                     log.info(clientid + "Ticket login")
-                    self.socket.send("\x01")
+                    clientsocket.send("\x01")
             elif len(command) == 1 :
                 if command == "\x1d" :
                     log.info(clientid + "command: query account name already in use")
@@ -274,9 +293,9 @@ class authserver(threading.Thread):
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
-                    reply = self.socket.recv_withlen()
+                    reply = clientsocket.recv_withlen()
                 
                     RSAdata = reply[2:130]
                     datalength = struct.unpack(">L", reply[130:134])[0]
@@ -299,12 +318,12 @@ class authserver(threading.Thread):
                     username_str = username.rstrip('\x00')
                     #print(len(username_str))
                     if (os.path.isfile("files/users/" + username_str + ".py")) :
-                        self.socket.send("\x01")#not working
+                        clientsocket.send("\x01")#not working
                     else :
-                        self.socket.send("\x00")
+                        clientsocket.send("\x00")
                 elif command == "\x22" :
                     log.info(clientid + "command: Check email")
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
                 elif command == "\x01" :
                     log.info(clientid + "command: Create user")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
@@ -312,9 +331,9 @@ class authserver(threading.Thread):
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
-                    reply = self.socket.recv_withlen()
+                    reply = clientsocket.recv_withlen()
                 
                     RSAdata = reply[2:130]
                     datalength = struct.unpack(">L", reply[130:134])[0]
@@ -354,15 +373,15 @@ class authserver(threading.Thread):
                         userblobfile.write("user_registry = ")
                         userblobfile.write(str(plainblob_fixed))
                     
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
                 elif command == "\x0e" :
                     log.info(clientid + "command: Lost password - username check")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-                    reply = self.socket.recv_withlen()
+                    clientsocket.send(reply)
+                    reply = clientsocket.recv_withlen()
                 
                     RSAdata = reply[2:130]
                     datalength = struct.unpack(">L", reply[130:134])[0]
@@ -383,17 +402,17 @@ class authserver(threading.Thread):
                     usernamechk = blobdict['\x01\x00\x00\x00']
                     username_str = usernamechk.rstrip('\x00')
                     if os.path.isfile("files/users/" + username_str + ".py") :
-                        self.socket.send("\x00")
+                        clientsocket.send("\x00")
                     else :
-                        self.socket.send("\x01")
+                        clientsocket.send("\x01")
                 elif command == "\x0f" :
                     log.info(clientid + "command: Lost password - reset")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-                    reply = self.socket.recv_withlen()
+                    clientsocket.send(reply)
+                    reply = clientsocket.recv_withlen()
                 
                     RSAdata = reply[2:130]
                     datalength = struct.unpack(">L", reply[130:134])[0]
@@ -420,8 +439,8 @@ class authserver(threading.Thread):
                     #print(userblob)
                     personalsalt = userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00']
                     #print(personalsalt)
-                    self.socket.send(personalsalt) #NEW SALT PER USER
-                    reply2 = self.socket.recv_withlen()
+                    clientsocket.send(personalsalt) #NEW SALT PER USER
+                    reply2 = clientsocket.recv_withlen()
                 
                     RSAdata = reply2[2:130]
                     datalength = struct.unpack(">L", reply2[130:134])[0]
@@ -450,9 +469,9 @@ class authserver(threading.Thread):
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
-                    reply = self.socket.recv_withlen()
+                    reply = clientsocket.recv_withlen()
                 
                     RSAdata = reply[2:130]
                     datalength = struct.unpack(">L", reply[130:134])[0]
@@ -470,14 +489,14 @@ class authserver(threading.Thread):
                     plaintext = plaintext[0:plaintext_length]
                     #print blob_utilities.blob_unserialize(plaintext)
                 
-                    self.socket.send("\x00")
+                    clientsocket.send("\x00")
             else :
                 log.warning(clientid + "Invalid command length: " + str(len(command)))
 
         else :
-            data = self.socket.recv(65535)
+            data = clientsocket.recv(65535)
             log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command[1:5]))
             log.warning(clientid + "Extra data:", binascii.b2a_hex(data))
 
-        self.socket.close()
+        clientsocket.close()
         log.info(clientid + "Disconnected from Auth Server")

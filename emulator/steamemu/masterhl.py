@@ -5,6 +5,7 @@ import config
 import steamemu.logger
 import globalvars
 import serverlist_utilities
+import steamemu.logger
 
 class masterhl(threading.Thread):
     def __init__(self, host, port):

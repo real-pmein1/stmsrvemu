@@ -1,4 +1,3 @@
-import myimports
 import binascii, ConfigParser, threading, logging, time, os, shutil, zipfile, tempfile, zlib, os.path, ast, csv, sys, struct, socket
 import emu_socket
 from steamemu.config import read_config

@@ -1,4 +1,3 @@
-import myimports
 import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, csv
 import os
 import utilities
@@ -6,7 +5,6 @@ import config
 import steamemu.logger
 import globalvars
 import serverlist_utilities
-
 
 class IceKey(object):
     def __init__(self, key):

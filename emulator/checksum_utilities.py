@@ -1,6 +1,6 @@
-import myimports
 import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, zlib, sys
 import os.path, ast, csv, struct
+import dirs
 
 from steamemu.config import read_config
 config = read_config()
