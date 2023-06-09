@@ -1,14 +1,9 @@
-
-from Crypto.PublicKey import RSA
 from steamemu.config import read_config
 config = read_config()
 
-
-peer_password = ""
 converting = "0"
 checksum_temp_file = 0
 servernet = "0."
-serverip = ""
 udpdata = ""
 udpaddr = ""
 hl1serverlist = list(xrange(10000))

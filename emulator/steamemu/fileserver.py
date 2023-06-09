@@ -2,10 +2,7 @@ import threading, logging, struct, binascii, os.path, zlib, os, socket, shutil
 
 from Crypto.Hash import SHA
 
-import utilities
-import blob_utilities
-import storage_utilities
-import encryption
+import steam
 import config
 import globalvars
 from Steam2.manifest import *
@@ -16,7 +13,7 @@ from Steam2.checksum3 import Checksum3
 from gcf_to_storage import gcf2storage
 from time import sleep
 
-class contentserver(threading.Thread):
+class fileserver(threading.Thread):
     def __init__(self, (socket, address), config) :
         threading.Thread.__init__(self)
         self.socket = socket
@@ -24,9 +21,9 @@ class contentserver(threading.Thread):
         self.config = config
 
     def run(self):
-        log = logging.getLogger("contentsrv")
+        log = logging.getLogger("filesrv")
         clientid = str(self.address) + ": "
-        log.info(clientid + "Connected to Content Server")
+        log.info(clientid + "Connected to File Server")
 
         msg = self.socket.recv(4)
 
@@ -91,7 +88,7 @@ class contentserver(threading.Thread):
                         file = f.read()
                         f.close()
 
-                        signature = encryption.rsa_sign_message(encryption.network_key_sign, file)
+                        signature = steam.rsa_sign_message(steam.network_key_sign, file)
 
                         reply = struct.pack('>LL', len(signature), len(signature)) + signature
 
@@ -192,7 +189,7 @@ class contentserver(threading.Thread):
                         
                         execdict = {}
                         execfile("files/2ndcdr.py", execdict)
-                        blob = blob_utilities.blob_serialize(execdict["blob"])
+                        blob = steam.blob_serialize(execdict["blob"])
                     
                         if blob[0:2] == "\x01\x43" :
                             blob = zlib.decompress(blob[20:])
@@ -227,8 +224,8 @@ class contentserver(threading.Thread):
                     
                         if blob[0:2] == "\x01\x43":
                             blob = zlib.decompress(blob[20:])
-                        blob2 = blob_utilities.blob_unserialize(blob)
-                        blob3 = blob_utilities.blob_dump(blob2)
+                        blob2 = steam.blob_unserialize(blob)
+                        blob3 = steam.blob_dump(blob2)
                         file = "blob = " + blob3
                     
                         for (search, replace, info) in globalvars.replacestringsCDR :
@@ -244,7 +241,7 @@ class contentserver(threading.Thread):
                     
                         execdict = {}
                         exec(file, execdict)
-                        blob = blob_utilities.blob_serialize(execdict["blob"])
+                        blob = steam.blob_serialize(execdict["blob"])
                     
                         h = open("files/secondblob.bin", "wb")
                         h.write(blob)
@@ -310,7 +307,7 @@ class contentserver(threading.Thread):
                     connid = pow(2,31) + connid
 
                     try :
-                        s = storage_utilities.Storage(app, self.config["storagedir"], version)
+                        s = steam.Storage(app, self.config["storagedir"], version)
                     except Exception :
                         log.error("Application not installed! %d %d" % (app, version))
 
@@ -512,7 +509,7 @@ class contentserver(threading.Thread):
 
                     # hack to rip out old sig, insert new
                     file = file[0:-128]
-                    signature = encryption.rsa_sign_message(encryption.network_key_sign, file)
+                    signature = steam.rsa_sign_message(steam.network_key_sign, file)
 
                     file = file + signature
 
@@ -564,4 +561,4 @@ class contentserver(threading.Thread):
             log.warning("Invalid Command: " + binascii.b2a_hex(msg))
 
         self.socket.close()
-        log.info(clientid + "Disconnected from Content Server")
+        log.info(clientid + "Disconnected from File Server")

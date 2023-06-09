@@ -1,13 +1,10 @@
-import threading, logging, struct, binascii, socket, zlib, os, shutil, time
+import threading, logging, struct, binascii, socket, zlib, os, shutil
 
 from Crypto.Hash import SHA
 
-import utilities
-import blob_utilities
-import encryption
+import steam
 import config
 import globalvars
-import serverlist_utilities
 
 class configserver(threading.Thread):
     def __init__(self, (socket, address), config) :
@@ -15,17 +12,7 @@ class configserver(threading.Thread):
         self.socket = socket
         self.address = address
         self.config = config
-        
-        # Start the thread for dir registration heartbeat, only
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
-        
-    def heartbeat_thread(self):       
-        while True: 
-            serverlist_utilities.heartbeat(globalvars.serverip, self.config["conf_server_port"], "configserver", globalvars.peer_password )
-            time.sleep(1800) # 30 minutes
-            
+
     def run(self):
         log = logging.getLogger("confsrv")
 
@@ -51,7 +38,7 @@ class configserver(threading.Thread):
                         f.close()
                         execdict = {}
                         execfile("files/1stcdr.py", execdict)
-                        blob = blob_utilities.blob_serialize(execdict["blob"])
+                        blob = steam.blob_serialize(execdict["blob"])
                     else :
                         f = open("files/firstblob.bin", "rb")
                         blob = f.read()
@@ -59,8 +46,8 @@ class configserver(threading.Thread):
                         firstblob_bin = blob
                         if firstblob_bin[0:2] == "\x01\x43":
                             firstblob_bin = zlib.decompress(firstblob_bin[20:])
-                        firstblob_unser = blob_utilities.blob_unserialize(firstblob_bin)
-                        firstblob = blob_utilities.blob_dump(firstblob_unser)
+                        firstblob_unser = steam.blob_unserialize(firstblob_bin)
+                        firstblob = steam.blob_dump(firstblob_unser)
                         
                     firstblob_list = firstblob.split("\n")
                     steamui_hex = firstblob_list[3][25:41]
@@ -84,7 +71,7 @@ class configserver(threading.Thread):
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
 
-                    signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
+                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
 
                     reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
 
@@ -92,34 +79,38 @@ class configserver(threading.Thread):
 
                 elif command == "\x05" :
                     log.info(clientid + "confserver command 5, unknown, sending zero reply")
+
                     self.socket.send("\x00")
 
                 elif command == "\x06" :
                     log.info(clientid + "confserver command 6, unknown, sending zero reply")
+
                     self.socket.send("\x00")
 
                 elif command == "\x07" :
-                    log.info(clientid + "Sending out list of Content Servers")
+                    log.info(clientid + "Sending out list of file servers")
 
                     #self.socket.send(binascii.a2b_hex("0001312d000000012c"))
         
                     if self.config["public_ip"] != "0.0.0.0" :
                         if clientid.startswith(globalvars.servernet) :
-                            bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
+                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
                         else :
-                            bin_ip = utilities.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
+                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
                     else:
-                        bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
+                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
                     reply = struct.pack(">H", 1) + bin_ip
                     
                     self.socket.send_withlen(reply)
 
                 elif command == "\x08" :
                     log.info(clientid + "confserver command 8, unknown, sending zero reply")
+
                     self.socket.send("\x00")
 
                 else :
                     log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command))
+
                     self.socket.send("\x00")
 
             elif command[0] == "\x02" or command[0] == "\x09":
@@ -155,7 +146,7 @@ class configserver(threading.Thread):
                     
                     execdict = {}
                     execfile("files/2ndcdr.py", execdict)
-                    blob = blob_utilities.blob_serialize(execdict["blob"])
+                    blob = steam.blob_serialize(execdict["blob"])
                     
                     if blob[0:2] == "\x01\x43" :
                         blob = zlib.decompress(blob[20:])
@@ -167,10 +158,11 @@ class configserver(threading.Thread):
                             break
                     
                         # TINserver's Net Key
-                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"                      
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
                         #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                         BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-
                         foundstring = blob[found:found + 160]
                         blob = blob.replace(foundstring, BERstring)
                         start_search = found + 160
@@ -193,8 +185,8 @@ class configserver(threading.Thread):
                     
                     if blob[0:2] == "\x01\x43":
                         blob = zlib.decompress(blob[20:])
-                    blob2 = blob_utilities.blob_unserialize(blob)
-                    blob3 = blob_utilities.blob_dump(blob2)
+                    blob2 = steam.blob_unserialize(blob)
+                    blob3 = steam.blob_dump(blob2)
                     file = "blob = " + blob3
                     
                     for (search, replace, info) in globalvars.replacestringsCDR :
@@ -210,7 +202,7 @@ class configserver(threading.Thread):
                     
                     execdict = {}
                     exec(file, execdict)
-                    blob = blob_utilities.blob_serialize(execdict["blob"])
+                    blob = steam.blob_serialize(execdict["blob"])
                     
                     h = open("files/secondblob.bin", "wb")
                     h.write(blob)
@@ -230,10 +222,11 @@ class configserver(threading.Thread):
                             break
                     
                         # TINserver's Net Key
-                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"                      
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
                         #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                         BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-
                         foundstring = blob[found:found + 160]
                         blob = blob.replace(foundstring, BERstring)
                         start_search = found + 160

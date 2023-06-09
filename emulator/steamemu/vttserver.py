@@ -2,10 +2,8 @@ import threading, logging, struct, binascii, time, socket, ipaddress, os.path, a
 
 from Crypto.Hash import SHA
 
-import utilities
-import encryption
+import steam
 import config
-import serverlist_utilities
 
 class vttserver(threading.Thread):
     def __init__(self, (socket, address), config) :
@@ -13,7 +11,7 @@ class vttserver(threading.Thread):
         self.socket = socket
         self.address = address
         self.config = config
-          
+
     def run(self):
         log = logging.getLogger("vttsrv")
 
@@ -73,7 +71,7 @@ class vttserver(threading.Thread):
                     cafeuser = self.config["cafeuser"]
                     cafepass = self.config["cafepass"]
                     username_dec = cafeuser + "%" + cafepass
-                    username_enc = encryption.textxor(username_dec)
+                    username_enc = steam.textxor(username_dec)
                     #print(username_dec)
                     #print(username_enc)
                     reply = struct.pack("<L", len(username_enc)) + username_enc
@@ -92,7 +90,7 @@ class vttserver(threading.Thread):
                     cafeuser = self.config["cafeuser"]
                     cafepass = self.config["cafepass"]
                     username_dec = cafeuser + "%" + cafepass
-                    username_enc = encryption.textxor(username_dec)
+                    username_enc = steam.textxor(username_dec)
                     #print(username_dec)
                     #print(username_enc)
                     reply = struct.pack("<L", len(username_enc)) + username_enc

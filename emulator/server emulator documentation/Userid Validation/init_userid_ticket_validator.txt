@@ -1,6 +1,0 @@
-This document is for the steaminitializeuseridticketvalidator process.
-
-	This deals with loading an optional private decryptionkey from a file
-	'Mary had a little lamb' is used in the function, perhaps as a password or seed?
-	and initializing the rsa encryption stuff in general, there does not seem to be an packets related to this function.
-
