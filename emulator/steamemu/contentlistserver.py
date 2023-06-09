@@ -1,9 +1,10 @@
-import threading, logging, struct, binascii, os, time
+import threading, logging, struct, binascii, os, time, atexit
 import utilities
 import steam
 import globalvars
 import serverlist_utilities
 import contentserverlist_utilities
+from serverlist_utilities import remove_from_dir, heartbeat
 import emu_socket
 import steamemu.logger
 import socket as pysocket
@@ -15,10 +16,15 @@ class contentlistserver(threading.Thread):
     global log
     
     def __init__(self, port, config):
+        self.server_type = "csdserver"
         threading.Thread.__init__(self)
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
+
+        # Register the cleanup function using atexit
+        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
+        
         
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
@@ -26,7 +32,7 @@ class contentlistserver(threading.Thread):
 
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "csdserver", globalvars.peer_password )
+            heartbeat(globalvars.serverip, self.port, self.server_type )
             time.sleep(1800) # 30 minutes
             
     def run(self):        
@@ -61,7 +67,6 @@ class contentlistserver(threading.Thread):
                     log.info(clientid + "Disconnected from Content Server Directory Server")
                     return
                 contentserver_list.append(unpacked_serverinfo)
-                print contentserver_list
                 clientsocket.send("\x01")
                 log.info(unpacked_serverinfo.region + " " +clientid + "Added to Content Server Directory Server")
 
@@ -98,8 +103,8 @@ class contentlistserver(threading.Thread):
                     reply = struct.pack(">H", num_servers) + "\x00\x00\x00\x00"
 
                     for contentserver_info in contentserver_list:
-                        bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port)
-                        reply += bin_ip + bin_ip
+                        bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port))
+                        reply += (bin_ip + bin_ip)
                 elif msg[2] == "\x01" and len(msg) == 25 :
                     (appnum, version, numservers, region) = struct.unpack(">xxxLLHLxxxxxxxx", msg)
                     log.info("%ssend which server has content for app %s %s %s %s" % (clientid, appnum, version, numservers, region))
@@ -110,7 +115,7 @@ class contentlistserver(threading.Thread):
                             for app_info in contentserver_info.applist:
                                 app_id, app_version = app_info
                                 if app_id == appnum and app_version == version:
-                                    i++
+                                    i = i + 1
                                     bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port))
                                     reply = struct.pack(">H", i) + "\x00\x00\x00\x00" + bin_ip + bin_ip
                                     break
@@ -125,25 +130,17 @@ class contentlistserver(threading.Thread):
                 log.info(clientid + "Sending out Content Servers with packages")
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x19" : # find best cellid contentserver
-                #packet structure:
-                #U32 - command 0x19
-                #1 byte - 0x00
-                #1 byte - 0x00
-                #1 byte - always 1
-                #U32
-                #U32
-                #U16
-                #U32
-                #U32 - 0xffffffff
-                #U32
-                log.info(clientid + "Sending out Content Servers Based on CellId - Not Operational")
+                # Parsing the buffer
+                _, _, _, value1, value2, value3, value4, unknown_value, value5 = struct.unpack('!B B B I I H s I I I', command[1:])
+                log.info("%sValue1: %d Value2: %d Value3: %d Value4: %d Unknown Value: %s Value5: %d" % (clientid, value1, value2, value3, value4, unknown_value, value5))
+
+                for contentserver_info in contentserver_list:
+                    bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port))
+                    reply += (bin_ip + bin_ip)
+                                                
+                log.info(clientid + "Sending out Content Servers Based on CellId")
+                #reply is the same as the other messages
                 reply = struct.pack(">H", 1) + bin_ip
-                #Expected Response:
-                #u16 - number of content servers
-                #--next, loop according to number of servers--
-                #u32 - 
-                #gap - 6 bytes 0x00??
-                #gap - 6 bytes 0x00??
 
             else :
                 log.warning("Invalid message! " + binascii.b2a_hex(msg))

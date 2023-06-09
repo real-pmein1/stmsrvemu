@@ -1,10 +1,11 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, csv
+import threading, logging, struct, binascii, time, socket, ipaddress, atexit, os.path, ast, csv
 import os
 import utilities
 import config
 import steamemu.logger
 import globalvars
 import serverlist_utilities
+from serverlist_utilities import heartbeat, remove_from_dir
 
 class IceKey(object):
     def __init__(self, key):
@@ -33,7 +34,11 @@ class cserserver(threading.Thread):
         self.host = host
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
+        self.server_type = "cserserver"
+
+        #add function for cleanup when program exits
+        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
+
        # Start the thread for dir registration heartbeat, only
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
@@ -41,7 +46,7 @@ class cserserver(threading.Thread):
         
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "cserserver", globalvars.peer_password )
+            heartbeat(globalvars.serverip, self.port, self.server_type )
             time.sleep(1800) # 30 minutes
             
     def start(self):
@@ -275,13 +280,12 @@ class cserserver(threading.Thread):
                 decrypted[num_blocks * 8:] = block_out
 
             print decrypted
-            # Save decrypted data to a file
+            # Save decrypted data to a file"""
             ip_address = address[0]
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             filename = "clientstats/{}.{}.hwsurvey.txt".format(ip_address, timestamp)
 
-            with open(filename, "w") as f:
-                f.write(decrypted)"""
+
            #remove the following 2 lines when decryption is figured out
             with open(filename, "w") as f:
                 f.write(sentData)

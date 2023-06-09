@@ -252,7 +252,7 @@ def convertgcf() :
                             file = file[:loc] + replace_ip + file[loc+16:]
                             print "Found and replaced IP %s at location %08x" % (extraip, loc)
                     
-                for ip in globalvars.ip_addresses :
+                for ip in globalvars.serveripes :
                     loc = file.find(ip)
                     if loc != -1 :
                         if config["public_ip"] != "0.0.0.0" :

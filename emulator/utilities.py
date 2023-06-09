@@ -1,6 +1,6 @@
 import binascii, ConfigParser, threading, logging, time, os, shutil, zipfile
 import tempfile, zlib, os.path, ast, csv, sys, struct, string, random, logging
-import blob_utilities, globalvars, dirs
+import blob_utilities, globalvars, dirs, socket
 import steamemu.logger
 
 from Steam2.package import Package
@@ -21,6 +21,19 @@ def encodeIP((ip, port)) :
     oct = ip.split(".")
     string = struct.pack("<BBBBH", int(oct[0]), int(oct[1]), int(oct[2]), int(oct[3]), port)
     return string
+
+def convert_ip_port(ip_address, port):
+    # Convert IP address to 4-byte hex string
+    ip_bytes = socket.inet_aton(ip_address)
+    ip_hex = ''.join(['%02X' % ord(byte) for byte in ip_bytes])
+
+    # Convert port to 2-byte hex string
+    port_hex = struct.pack('>H', port).encode('hex')
+
+    # Combine IP and port hex strings
+    combined_hex = ip_hex + port_hex
+
+    return combined_hex
 
 def steamtime_to_unixtime(steamtime_bin) :
     steamtime = struct.unpack("<Q", steamtime_bin)[0]

@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, time, ipaddress, os.path, ast
+import threading, logging, struct, binascii, time, ipaddress, os.path, ast, atexit
 import utilities
 import blob_utilities
 import encryption
@@ -7,6 +7,7 @@ import config
 import steamemu.logger
 import globalvars
 import serverlist_utilities
+from serverlist_utilities import heartbeat, remove_from_dir
 import socket as pysocket
 
 from Crypto.Hash import SHA
@@ -19,14 +20,18 @@ class authserver(threading.Thread):
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
-        
+        self.server_type = "authserver"
+
+        #add function for cleanup when program exits
+        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
+
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
 
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "authserver", globalvars.peer_password )
+            heartbeat(globalvars.serverip, self.port, self.server_type)
             time.sleep(1800) # 30 minutes
             
     def run(self):        
@@ -40,14 +45,15 @@ class authserver(threading.Thread):
 
     def handle_client(self, clientsocket, address):
 
-        # Convert IP address to packed 32-bit binary format
-        ip_packed = pysocket.inet_aton(self.config['validation_ip'])
-        port = self.config['validation_port']
+
+
+        #7f000001 = 127.0.0.1 699A = 27034
         # Combine IP address and port into a single hex string
-        port_hex = struct.pack('!H', int(port)).encode('hex')
-        server_string = ip_packed+port_hex+ip_packed+port_hex
+        server_string = utilities.convert_ip_port(str(self.config['validation_ip']),int(self.config['validation_port']))
+        final_srvstring = server_string + server_string
         #this is the ticket granting servers 1 and 2 both with 2byte port after address bytes
-        servers = binascii.b2a_hex(server_string)
+        servers = binascii.b2a_hex("7F000001699a7F000001699a") #server_string + server_string)
+        
         #need to figure out a way to assign steamid's.  hopefully with mysql
         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
         
@@ -62,9 +68,9 @@ class authserver(threading.Thread):
 
         if command[1:5] == "\x00\x00\x00\x04" or command[1:5] == "\x00\x00\x00\x01" or command[1:5] == "\x00\x00\x00\x02" :
 
-            clientsocket.send("\x00" + pysocket.inet_aton(address[0]))
-            log.debug((str(pysocket.inet_aton(address[0]))))
-            log.debug((str(pysocket.inet_ntoa(pysocket.inet_aton(address[0])))))
+            clientsocket.send("\x00" + pysocket.inet_aton(clientsocket.address[0]))
+            log.debug((str(pysocket.inet_aton(clientsocket.address[0]))))
+            log.debug((str(pysocket.inet_ntoa(pysocket.inet_aton(clientsocket.address[0])))))
 
             command = clientsocket.recv_withlen()
 
@@ -164,6 +170,7 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
+                        servers = binascii.b2a_hex(final_srvstring)
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
@@ -243,6 +250,8 @@ class authserver(threading.Thread):
                     blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
                     currtime = time.time()
                     outerIV = binascii.a2b_hex("92183129534234231231312123123353")
+                    steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
+                    servers = binascii.b2a_hex(final_srvstring)
                     times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                     subheader = innerkey + steamid + servers + times
                     subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)

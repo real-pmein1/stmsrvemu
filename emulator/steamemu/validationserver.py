@@ -1,10 +1,11 @@
-import threading, logging, struct, binascii, os, time
+import threading, logging, struct, binascii, os, time, atexit
 import utilities
 import steam
 import globalvars
 import serverlist_utilities
 import emu_socket
 import steamemu.logger
+from serverlist_utilities import heartbeat, remove_from_dir
 
 class validationserver(threading.Thread):
     log = logging.getLogger("validationsrv")
@@ -14,14 +15,18 @@ class validationserver(threading.Thread):
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
-        
+        self.server_type = "validationserver"
+
+        #add function for cleanup when program exits
+        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
+
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
 
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "validationserver", globalvars.peer_password )
+            heartbeat(globalvars.serverip, self.port, self.server_type )
             time.sleep(1800) # 30 minutes
             
     def run(self):        

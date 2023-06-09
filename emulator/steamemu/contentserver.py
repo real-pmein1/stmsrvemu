@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, os.path, zlib, os,  shutil
+import threading, logging, struct, binascii, os.path, zlib, os,  shutil, atexit
 import utilities
 import blob_utilities
 import storage_utilities
@@ -23,16 +23,22 @@ from contentserverlist_utilities import add_app, ContentServerInfo, send_removal
 
 log = logging.getLogger("contentsrv")
 app_list = []
+
 class contentserver(threading.Thread):
     global app_list
     global log
+    
     def __init__(self, port, config):
         threading.Thread.__init__(self)
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
+        
         self.contentserver_info = ContentServerInfo(globalvars.serverip, int(self.port), globalvars.cs_region, 0)
         self.parse_manifest_files(self.contentserver_info)
+        
+        # Register the cleanup function using atexit
+        #atexit.register(send_removal(globalvars.serverip, int(self.port), globalvars.cs_region))
         
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True

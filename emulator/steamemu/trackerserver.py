@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, csv
+import threading, logging, struct, binascii, time, atexit, socket, ipaddress, os.path, ast, csv
 import os
 import utilities
 import config
@@ -6,7 +6,7 @@ import steamemu.logger
 import globalvars
 import serverlist_utilities
 import steamemu.logger
-
+from serverlist_utilities import heartbeat, remove_from_dir
 class trackerserver(threading.Thread):
 
     def __init__(self, host, port):
@@ -14,7 +14,11 @@ class trackerserver(threading.Thread):
         self.host = host
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
+        self.server_type = "trackerserver"
+
+        #add function for cleanup when program exits
+        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
+
        # Start the thread for dir registration heartbeat, only
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
@@ -22,7 +26,7 @@ class trackerserver(threading.Thread):
         
     def heartbeat_thread(self):       
         while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "trackerserver", globalvars.peer_password )
+            heartbeat(globalvars.serverip, self.port, self.server_type )
             time.sleep(1800) # 30 minutes
             
     def start(self):
