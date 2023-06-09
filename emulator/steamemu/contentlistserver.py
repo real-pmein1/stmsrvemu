@@ -7,11 +7,12 @@ import contentserverlist_utilities
 import emu_socket
 import steamemu.logger
 import socket as pysocket
-from contentserverlist_utilities import contentserver_list, ContentServerInfo, unpack_contentserver_info
-
+from contentserverlist_utilities import contentserver_list, ContentServerInfo, unpack_contentserver_info, remove_server_info
+log = logging.getLogger("clstsrv")
+    
 class contentlistserver(threading.Thread):
     global contentserver_list
-    log = logging.getLogger("clstsrv")
+    global log
     
     def __init__(self, port, config):
         threading.Thread.__init__(self)
@@ -40,14 +41,6 @@ class contentlistserver(threading.Thread):
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server Directory Server ")
         
-        if self.config["public_ip"] != "0.0.0.0" :
-            if clientid.startswith(globalvars.servernet) :
-                bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
-            else :
-                bin_ip = utilities.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
-        else:
-            bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
-        
         msg = clientsocket.recv(4)
         if msg == "\x00\x4f\x8c\x11" :
             clientsocket.send("\x01") # handshake confirmed
@@ -58,32 +51,41 @@ class contentlistserver(threading.Thread):
             log.debug(binascii.b2a_hex(command))
             
             if command == "\x2b":
-                if decrypted_msg is None:
-                    log.warning(clientid + "Failed to decrypt packet: " + binascii.b2a_hex(msg))
-                    clientsocket.send("\x00") #message decryption failed, the only response we give for failure
-                    return
                 # Add single server entry to the list
                 packed_data = msg[1:]
-                contentserver_list.append(unpack_contentserver_info(packed_data))
+                unpacked_serverinfo = unpack_contentserver_info(packed_data)
+                if unpacked_serverinfo is False:
+                    log.warning(clientid + "Failed to decrypt packet: " + binascii.b2a_hex(msg))
+                    clientsocket.send("\x00") #message decryption failed, the only response we give for failure
+                    clientsocket.close()
+                    log.info(clientid + "Disconnected from Content Server Directory Server")
+                    return
+                contentserver_list.append(unpacked_serverinfo)
+                print contentserver_list
                 clientsocket.send("\x01")
-                log.info(server_type + " " +clientid + "Added to Content Server Directory Server")
+                log.info(unpacked_serverinfo.region + " " +clientid + "Added to Content Server Directory Server")
 
             elif command == "\x2e":
                 packed_data = msg[1:]
                 # Remove server entry from the list
                 decrypted_msg = utilities.decrypt(packed_data, globalvars.peer_password)
-                if decrypted_msg is None:
+                ip_address, port, region = struct.unpack('!16s I 16s', decrypted_msg)
+                ip_address = ip_address.rstrip('\x00').decode('utf-8')
+                try:
+                    socket.inet_aton(ip_address)
+                except socket.error:
                     log.warning(clientid + "Failed to decrypt packet: " + binascii.b2a_hex(msg))
                     clientsocket.send("\x00") #message decryption failed, the only response we give for failure
+                    clientsocket.close()
+                    log.info(clientid + "Disconnected from Content Server Directory Server")
                     return
-
-                ip, port, region = receive_removal(decrypted_msg)
-                if remove_server_info(ip, port, region):
+                
+                region = region.rstrip('\x00').decode('utf-8')
+                
+                if remove_server_info(ip, port, region): #will eventually check if it removed the server, couldnt find it or couldnt remove it
                     clientsocket.send("\x01")
                     log.info(server_type + " " +clientid + "Removed from Content Server Directory Server")
-                    #if globalvars.is_masterdir != 1:
-                        #send any requests to add or remove to the master server aswell
-                        #clientsocket.sendto(msg, self.masterdir_ipport)
+
         elif msg == "\x00\x00\x00\x02" :
             clientsocket.send("\x01")
 
@@ -92,14 +94,27 @@ class contentlistserver(threading.Thread):
             if command == "\x00" :
                 if msg[2] == "\x00" and len(msg) == 21 :
                     log.info(clientid + "Sending out Content Servers  with packages")
-                    reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
+                    num_servers = len(contentserver_list)
+                    reply = struct.pack(">H", num_servers) + "\x00\x00\x00\x00"
+
+                    for contentserver_info in contentserver_list:
+                        bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port)
+                        reply += bin_ip + bin_ip
                 elif msg[2] == "\x01" and len(msg) == 25 :
                     (appnum, version, numservers, region) = struct.unpack(">xxxLLHLxxxxxxxx", msg)
                     log.info("%ssend which server has content for app %s %s %s %s" % (clientid, appnum, version, numservers, region))
-                    if self.config["sdk_ip"] == "0.0.0.0" :
-                        log.warning("%sNo servers found for app %s %s %s %s" % (clientid, appnum, version, numservers, region))
-                        reply = "\x00\x00" # no file servers for app
-                    else :
+                    reply = struct.pack(">H", 0)  # Default reply value if no matching server is found
+                    i = 0
+                    for contentserver_info in contentserver_list:
+                        if contentserver_info.region == region:
+                            for app_info in contentserver_info.applist:
+                                app_id, app_version = app_info
+                                if app_id == appnum and app_version == version:
+                                    i++
+                                    bin_ip = utilities.encodeIP((contentserver_info.ip_address, contentserver_info.port))
+                                    reply = struct.pack(">H", i) + "\x00\x00\x00\x00" + bin_ip + bin_ip
+                                    break
+                    if self.config["sdk_ip"] != "0.0.0.0" :
                         log.info("%sHanding off to SDK server for app %s %s" % (clientid, appnum, version))
                         bin_ip = utilities.encodeIP((self.config["sdk_ip"], self.config["sdk_port"]))
                         reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
@@ -149,12 +164,6 @@ class contentlistserver(threading.Thread):
         server_list.append(ServerInfo(ip, port, applist, region, timestamp))
         return True
     
-    #for server to server directory server list removal
-    def remove_server_info(self, ip, port, region):
-        initial_length = len(server_list)
-        server_list = [server_info for server_info in contentserver_list if not (server_info.ip == ip and server_info.port == port and server_info.server_type == server_type)]
-        return len(server_list) < initial_length
-
     #takes care of removing any servers that have not responded within an hour, the default heartbeat time is 30 minutes, so they had more than enough time to respond
     def remove_expired_servers(self):        
         current_time = time.time()
@@ -173,23 +182,4 @@ class contentlistserver(threading.Thread):
             #return [server_info for server_info in contentserver_list if server_info.applist == applist]
         else:
             return [server_info for server_info in contentserver_list if server_info.applist == applist and server_info.region == region]
-
-    def recieve_contentserver_info(buffer, peer_password):
-        decrypted_data = utilities.decrypt(buffer, peer_password)
-
-        # Unpack the IP, port, and region
-        ip_bytes, port, region = struct.unpack(">4sH16s", decrypted_data[:22])
-        ip = utilities.decodeIP(ip_bytes)
-        region = region.rstrip("\x00")
-
-        # Unpack the applist
-        applist = []
-        offset = 22  # Start position after the IP, port, and region
-        while offset < len(decrypted_data):
-            appid, version = struct.unpack(">ii", decrypted_data[offset:offset + 8])
-            applist.append({'appid': appid, 'version': version})
-            offset += 8
-
-        return ip, port, region, applist
-
 

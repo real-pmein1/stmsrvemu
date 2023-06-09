@@ -25,7 +25,7 @@ log = logging.getLogger("contentsrv")
 app_list = []
 class contentserver(threading.Thread):
     global app_list
-    
+    global log
     def __init__(self, port, config):
         threading.Thread.__init__(self)
         self.port = int(port)
@@ -33,6 +33,7 @@ class contentserver(threading.Thread):
         self.socket = emu_socket.ImpSocket()
         self.contentserver_info = ContentServerInfo(globalvars.serverip, int(self.port), globalvars.cs_region, 0)
         self.parse_manifest_files(self.contentserver_info)
+        
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
@@ -596,19 +597,15 @@ class contentserver(threading.Thread):
         # Pack the server_info into a buffer
         ip_bytes = utilities.encodeIP(server_info.ip)
         packed_data = struct.pack(">4sH16s", ip_bytes, server_info.port, server_info.region)
-        numofapps = len(server_info.applist)
-        # Pack the applist size into the buffer
-        packed_data += struct.pack(">I", numofapps)
-
-        # Pack the applist into the buffer
-        for app in server_info.applist:
-            packed_data += struct.pack(">ii", app['appid'], app['version'])
-
+        
+        # Append the applist to the buffer as is
+        packed_data += server_info.applist
+        
         # Encrypt the packed data using peer_password
         encrypted_data = utilities.encrypt(packed_data, peer_password)
 
         return encrypted_data
-    
+        
     def create_remove_contentserver_packet(self, ip, port, region, key):
         packet = "\x2f" + utilities.encrypt(utilities.encodeIP((ip, port)) + region, key)
         return packet

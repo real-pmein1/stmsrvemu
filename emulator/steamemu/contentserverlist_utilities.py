@@ -63,7 +63,8 @@ def remove_server_info(ip, port, region):
     for server_info in contentserver_list:
         if server_info.ip_address == ip and server_info.port == port and server_info.region == region:
             contentserver_list.remove(server_info)
-            break
+            #return 1
+    #return 0
 
 def send_heartbeat(contentserver_info):
     ip_address = contentserver_info.ip_address.encode('utf-8')
@@ -88,21 +89,21 @@ def unpack_contentserver_info(enc_buffer):
     info_data = buffer[:info_size]
     unpacked_info = contentserver_info_structure.unpack(info_data)
     ip_address = unpacked_info[0].decode('utf-8').rstrip('\x00')
+    try:
+        socket.inet_aton(ip_address)
+    except socket.error:
+        return False
+
     port = unpacked_info[1]
     region = unpacked_info[2].decode('utf-8').rstrip('\x00')
     timestamp = unpacked_info[3].decode('utf-8').rstrip('\x00')
 
-    unpacked_applist = []
+
     applist_data = buffer[info_size:]
 
-    applist_length, = struct.unpack('!I', applist_data[:4])
-    applist_data = applist_data[4:]
-
-    for _ in range(applist_length):
-        app_id, version = struct.unpack('!II', applist_data[:8])
-        unpacked_applist.append((app_id, version))
-        applist_data = applist_data[8:]
-
+    # Read the applist without unpacking
+    unpacked_applist = list(applist_data)
+    
     unpacked_info = ContentServerInfo(ip_address, port, region, timestamp)
     unpacked_info.applist = unpacked_applist
 
