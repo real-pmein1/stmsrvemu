@@ -170,7 +170,7 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        bin_ip = utilities.encodeIP((globalvars.serverip, config["validation_port"]))
+                        bin_ip = utilities.encodeIP((globalvars.serverip, self.config["validation_server_port"]))
                         servers = bin_ip + bin_ip
                         #servers = binascii.b2a_hex("7F0000019A697F0000019A69")
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
@@ -251,7 +251,7 @@ class authserver(threading.Thread):
                     currtime = time.time()
                     outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                     steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                    bin_ip = utilities.encodeIP((globalvars.serverip, config["validation_port"]))
+                    bin_ip = utilities.encodeIP((globalvars.serverip, self.config["validation_server_port"]))
                     servers = bin_ip + bin_ip
                     times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                     subheader = innerkey + steamid + servers + times

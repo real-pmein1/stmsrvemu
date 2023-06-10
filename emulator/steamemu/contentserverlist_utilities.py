@@ -1,46 +1,12 @@
 import time, logging
 import struct
-import utilities, socket, datetime, globalvars
+import utilities, socket, datetime, globalvars, threading
 import steamemu.logger
 
 from config import read_config
 config = read_config()
 
 log = logging.getLogger("contentserverlist_utils")
-contentserver_list = []
-
-# Define the structure of contentserver_info
-contentserver_info_structure = struct.Struct('!16s I 16s 21s I')
-
-class ContentServerInfo:
-    def __init__(self, ip_address, port, region, timestamp):
-        self.ip_address = ip_address
-        self.port = port
-        self.region = region
-        self.timestamp = timestamp
-        self.applist = []
-
-def update_contentserver_info(contentserver_info):
-    global contentserver_list
-
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    for server_info in contentserver_list:
-        if server_info.ip_address == contentserver_info.ip_address and server_info.port == contentserver_info.port and server_info.region == contentserver_info.region:
-            server_info.timestamp = current_time
-            return
-
-    contentserver_info.timestamp = current_time
-    contentserver_info.applist = []
-    contentserver_list.append(contentserver_info)
-    
-def create_contentserver_info(ip_address, port, region, timestamp):
-    contentserver_info = ContentServerInfo(ip_address, port, region, timestamp)
-    contentserver_list.append(contentserver_info)
-    return contentserver_info
-
-def add_app(contentserver_info, app_id, version):
-    contentserver_info.applist.append((app_id, version))
 
 def receive_removal(packed_info):
     unpacked_info = struct.unpack('!16s I 16s', packed_info)
@@ -57,60 +23,62 @@ def send_removal(ip_address, port, region):
 
     return remove_from_dir("\x2e" + utilities.encrypt(packed_info, globalvars.peer_password))
 
-def remove_server_info(ip, port, region):
-    global contentserver_list
+def send_heartbeat(contentserver_info, applist):
+    packed_info = ""
+    packed_info += contentserver_info['ip_address'] + '\x00'
+    packed_info += struct.pack('H', contentserver_info['port'])
+    packed_info += contentserver_info['region'] + '\x00'
+    packed_info += str(contentserver_info['timestamp']) + '\x00'
+    packed_info += applist
 
-    for server_info in contentserver_list:
-        if server_info.ip_address == ip and server_info.port == port and server_info.region == region:
-            contentserver_list.remove(server_info)
-            #return 1
-    #return 0
+    return heartbeat("\x2b" + utilities.encrypt(packed_info, globalvars.peer_password))
 
-def send_heartbeat(contentserver_info):
-    ip_address = contentserver_info.ip_address.encode('utf-8')
-    port = contentserver_info.port
-    region = contentserver_info.region.encode('utf-8')
-    timestamp = str(contentserver_info.timestamp).encode('utf-8')
+def unpack_contentserver_info(encrypted_data):
+    decrypted_data = utilities.decrypt(encrypted_data[1:], globalvars.peer_password)
 
-    applist_length = len(contentserver_info.applist)
-    packed_applist = struct.pack('!I', applist_length)
+    ip_address = ""
+    ip_index = 0
+    while decrypted_data[ip_index] != '\x00':
+        ip_address += decrypted_data[ip_index]
+        ip_index += 1
+    ip_index += 1
 
-    for app in contentserver_info.applist:
-        app_id, version = app
-        packed_applist += struct.pack('!II', int(app_id), int(version))
+    port = struct.unpack('H', decrypted_data[ip_index:ip_index + 2])[0]
+    ip_index += 2
 
-    packed_info = contentserver_info_structure.pack(ip_address, port, region, timestamp, len(packed_applist))
+    region = ""
+    while decrypted_data[ip_index] != '\x00':
+        region += decrypted_data[ip_index]
+        ip_index += 1
+    ip_index += 1
 
-    return heartbeat("\x2b" + utilities.encrypt(packed_info + packed_applist, globalvars.peer_password))
+    timestamp = ""
+    while decrypted_data[ip_index] != '\x00':
+        timestamp += decrypted_data[ip_index]
+        ip_index += 1
+    timestamp = float(timestamp)
+    ip_index += 1
 
-def unpack_contentserver_info(enc_buffer):
-    buffer = utilities.decrypt(enc_buffer, globalvars.peer_password)
-    info_size = contentserver_info_structure.size
-    info_data = buffer[:info_size]
-    unpacked_info = contentserver_info_structure.unpack(info_data)
-    ip_address = unpacked_info[0].decode('utf-8').rstrip('\x00')
-    try:
-        socket.inet_aton(ip_address)
-    except socket.error:
-        return False
+    applist_data = decrypted_data[ip_index:]
+    applist = []
 
-    port = unpacked_info[1]
-    region = unpacked_info[2].decode('utf-8').rstrip('\x00')
-    timestamp = unpacked_info[3].decode('utf-8').rstrip('\x00')
+    app_index = 0
+    while app_index < len(applist_data):
+        appid = ""
+        version = ""
+        while app_index < len(applist_data) and applist_data[app_index] != '\x00':
+            appid += applist_data[app_index]
+            app_index += 1
+        app_index += 1
 
+        while app_index < len(applist_data) and applist_data[app_index:app_index + 2] != '\x00\x00':
+            version += applist_data[app_index]
+            app_index += 1
+        app_index += 2
 
-    applist_data = buffer[info_size:]
+        applist.append([appid, version])
 
-    # Read the applist without unpacking
-    #unpacked_applist = list(applist_data)
-        # Read the applist and convert it to a list of tuples
-    unpacked_applist = [(struct.unpack(">I", applist_data[i:i+4])[0], struct.unpack(">I", applist_data[i+4:i+8])[0]) for i in range(0, len(applist_data), 8)]
-
-
-    unpacked_info = ContentServerInfo(ip_address, port, region, timestamp)
-    unpacked_info.applist = unpacked_applist
-
-    return unpacked_info
+    return ip_address, port, region, timestamp, applist
 
 def heartbeat(encrypted_buffer):
     csds_ipport = config["csds_ipport"]
@@ -125,11 +93,13 @@ def heartbeat(encrypted_buffer):
     response = sock.recv(1) # wait for a reply
     
     if response == '\x01':
-        sock.send(encrypted_buffer)
-        confirmation = sock.recv(1) # wait for a reply
-        
-        if confirmation != "\x01" : # lets try again...
-            heartbeat(ip, port, server_type, key)
+        sock.send(str(len(encrypted_buffer)))
+        if response == '\x01':
+            sock.send(encrypted_buffer)
+            confirmation = sock.recv(1) # wait for a reply
+            
+            if confirmation != "\x01" : # lets try again...
+                heartbeat(ip, port, server_type, key)
     else :
         log.warning("Content Server failed to register server to Content Server Directory Server ")
         
@@ -159,3 +129,62 @@ def remove_from_dir(encrypted_buffer):
         
     # Close the socket
     sock.close()
+
+class ContentServerManager(object):
+    contentserver_list = []
+    lock = threading.Lock()
+
+    def add_contentserver_info(self, ip_address, port, region, received_applist):
+        current_time = datetime.datetime.now()
+        entry = (ip_address, port, region, current_time, received_applist)
+        with self.lock:
+            self.contentserver_list.append(entry)
+
+    def remove_old_entries(self):
+        removed_entries = []
+        current_time = datetime.datetime.now()
+        with self.lock:
+            for entry in self.contentserver_list:
+                timestamp = entry[3]
+                time_diff = current_time - timestamp
+                if time_diff.total_seconds() > 3600:  # Check if older than 60 minutes (3600 seconds)
+                    self.contentserver_list.remove(entry)
+                    removed_entries.append(entry)
+        if len(removed_entries) == 0:
+            return 0  # No entries were removed
+        else:
+            return 1  # Entries were successfully removed
+
+    def find_ip_address(self, region=None, appid=None, version=None):
+        if not region and not appid and not version:  # Check if all arguments are empty or None
+            all_entries = [(entry[0], entry[1]) for entry in self.contentserver_list]
+            count = len(all_entries)
+            if count > 0:
+                return all_entries, count
+            else:
+                return None, 0  # No entries found
+        else:
+            matches = []
+            with self.lock:
+                for entry in self.contentserver_list:
+                    if region and entry[2] == region:
+                        for app_entry in entry[4]:
+                            if app_entry[0] == appid and app_entry[1] == version:
+                                matches.append((entry[0], entry[1]))  # Add IP address and port to matches
+                    elif appid and version:
+                        for app_entry in entry[4]:
+                            if app_entry[0] == appid and app_entry[1] == version:
+                                matches.append((entry[0], entry[1]))  # Add IP address and port to matches
+            count = len(matches)
+            if count > 0:
+                return matches, count
+            else:
+                return None, 0  # No matching entries found
+    
+    def remove_entry(self, ip_address, port, region):
+        with self.lock:
+            for entry in self.contentserver_list:
+                if entry[0] == ip_address and entry[1] == port and entry[2] == region:
+                    self.contentserver_list.remove(entry)
+                    return True
+        return False

@@ -19,13 +19,12 @@ from Steam2.checksum3 import Checksum3
 from gcf_to_storage import gcf2storage
 from time import sleep
 from Crypto.Hash import SHA
-from contentserverlist_utilities import add_app, ContentServerInfo, send_removal, send_heartbeat
+from contentserverlist_utilities import send_removal, send_heartbeat
 
 log = logging.getLogger("contentsrv")
 app_list = []
 
 class contentserver(threading.Thread):
-    global app_list
     global log
     
     def __init__(self, port, config):
@@ -33,10 +32,14 @@ class contentserver(threading.Thread):
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
-        
-        self.contentserver_info = ContentServerInfo(globalvars.serverip, int(self.port), globalvars.cs_region, 0)
-        self.parse_manifest_files(self.contentserver_info)
-        
+        self.contentserver_info = {
+            'ip_address': globalvars.serverip,
+            'port': int(self.port),
+            'region': globalvars.cs_region,
+            'timestamp': 1623276000
+        }
+        self.applist = self.parse_manifest_files(self.contentserver_info)
+
         # Register the cleanup function using atexit
         #atexit.register(send_removal(globalvars.serverip, int(self.port), globalvars.cs_region))
         
@@ -46,7 +49,7 @@ class contentserver(threading.Thread):
 
     def heartbeat_thread(self):       
         while True:
-            send_heartbeat(self.contentserver_info)
+            send_heartbeat(self.contentserver_info, self.applist)
             time.sleep(1800) # 30 minutes
             
     def run(self):        
@@ -598,59 +601,20 @@ class contentserver(threading.Thread):
 
         clientsocket.close()
         log.info(clientid + "Disconnected from Content Server")
-        
-    def create_add_contentserver_packet(self, server_info, peer_password):
-        # Pack the server_info into a buffer
-        ip_bytes = utilities.encodeIP(server_info.ip)
-        packed_data = struct.pack(">4sH16s", ip_bytes, server_info.port, server_info.region)
-        
-        # Append the applist to the buffer as is
-        packed_data += server_info.applist
-        
-        # Encrypt the packed data using peer_password
-        encrypted_data = utilities.encrypt(packed_data, peer_password)
 
-        return encrypted_data
-        
-    def create_remove_contentserver_packet(self, ip, port, region, key):
-        packet = "\x2f" + utilities.encrypt(utilities.encodeIP((ip, port)) + region, key)
-        return packet
-    
     def parse_manifest_files(self, contentserver_info):
         # Define the locations to search for '.manifest' files
         locations = ['files/cache/', self.config["v2manifestdir"], self.config["manifestdir"]]
-
+        app_buffer = ""
         for location in locations:
             for file_name in os.listdir(location):
                 if file_name.endswith('.manifest'):
                     # Extract app ID and version from the file name
                     app_id, version = file_name.split('_')
                     version = version.rstrip('.manifest')
-                    
-                    add_app(contentserver_info, int(app_id), int(version))
-                    # Append app ID and version to app_list
-                    #app_list.append((int(app_id), int(version)))
-    
-def heartbeat(buffer):
-    mastercsd_ipport = config["mastercsd_server_ipport"]
-    mastercsd_ip, mastercsd_port = mastercsd_ipport.split(":")
-    
-    contentsock = pysocket.socket(pysocket.AF_INET, pysocket.SOCK_STREAM)
-    contentsock.connect((str(mastercsd_ip), int(mastercsd_port))) # Connect the socket to master csd server
-
-    data = "\x00\x4f\x7b\x11"
-    contentsock.send(data) # Send the 'im a csd server packet' packet
-    
-    response = contentsock.recv(1) # wait for a reply
-    
-    if response == '\x01':
-        contentsock.send(buffer)
-        confirmation = contentsock.recv(1) # wait for a reply
-        
-        if confirmation != "\x01" : # lets try again...
-            heartbeat(buffer)
-    else :
-        log.warning(server_type + "Failed to register server to Content Server Directory Server")
-        
-    # Close the socket
-    contentsock.close()
+                    #for appid, version in self.applist:
+                    #print("appid:", app_id)
+                    #print("version:", version)
+                    # Append app ID and version to app_list in this format
+                    app_buffer += str(app_id) + "\x00" + str(version) + "\x00\x00"
+        return app_buffer
