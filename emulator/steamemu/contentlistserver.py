@@ -51,11 +51,11 @@ class contentlistserver(threading.Thread):
         msg = clientsocket.recv(4)
         if msg == "\x00\x4f\x8c\x11" :
             clientsocket.send("\x01") # handshake confirmed
-            length_packet = clientsocket.recv(1024)
+            length_packet = clientsocket.recv(4)
             unpacked_length = struct.unpack('!I',  length_packet[:4])[0]
 
             # Print the unpacked length
-            print("Unpacked Length:", unpacked_length)
+            #print("Unpacked Length:", unpacked_length)
         
             clientsocket.send("\x01") 
             msg = clientsocket.recv(unpacked_length)
@@ -74,15 +74,15 @@ class contentlistserver(threading.Thread):
                     clientsocket.close()
                     log.info(clientid + "Disconnected from Content Server Directory Server")
                     return
-               # for appid, version in received_applist:
-               #     print("appid:", appid)
-              #      print("version:", version)
+                #for appid, version in received_applist:
+                    #print("appid:", appid)
+                    #print("version:", version)
                         
                 manager.add_contentserver_info(ip_address, int(port), region, received_applist)
                 
                 clientsocket.send("\x01")
                 log.info(region + " " +clientid + "Added to Content Server Directory Server")
-
+                #manager.print_contentserver_list()
             elif command == "\x2e":
                 packed_data = msg[1:]
                 #Remove server entry from the list
@@ -124,7 +124,10 @@ class contentlistserver(threading.Thread):
                 elif msg[2] == "\x01" and len(msg) == 25 :
                     (appnum, version, numservers, region) = struct.unpack(">xxxLLHLxxxxxxxx", msg)
                     log.info("%ssend which server has content for app %s %s %s %s" % (clientid, appnum, version, numservers, region))
-                    results, count = manager.find_ip_address(region, appnum, version)
+                    #print manager.find_ip_address(None, "51", "0")
+                    #manager.print_contentserver_list()
+                    results, count = manager.find_ip_address(str(region), str(appnum), str(version))
+                    #print count
                     if count > 0:
                         reply = struct.pack(">H", count) + "\x00\x00\x00\x00"
                         for ip, port in results:

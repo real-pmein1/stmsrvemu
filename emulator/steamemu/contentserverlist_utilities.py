@@ -93,7 +93,8 @@ def heartbeat(encrypted_buffer):
     response = sock.recv(1) # wait for a reply
     
     if response == '\x01':
-        sock.send(str(len(encrypted_buffer)))
+        packed_length = struct.pack('!I', len(encrypted_buffer))  # Assuming the length fits into an unsigned integer (4 bytes)
+        sock.send(packed_length)
         if response == '\x01':
             sock.send(encrypted_buffer)
             confirmation = sock.recv(1) # wait for a reply
@@ -188,3 +189,14 @@ class ContentServerManager(object):
                     self.contentserver_list.remove(entry)
                     return True
         return False
+    def print_contentserver_list(self):
+        with self.lock:
+            for entry in self.contentserver_list:
+                print("IP Address:", entry[0])
+                print("Port:", entry[1])
+                print("Region:", entry[2])
+                print("App List:")
+                for app_entry in entry[4]:
+                    print("App ID:", app_entry[0])
+                    print("Version:", app_entry[1])
+                print("--------------------")

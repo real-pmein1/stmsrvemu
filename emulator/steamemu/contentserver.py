@@ -346,7 +346,7 @@ class contentserver(threading.Thread):
                     connid = pow(2,31) + connid
 
                     try :
-                        s = storage_utilities.Storage(app, self.config["storagedir"], version)
+                        s = storage_utilities.Storage(str(app), self.config["storagedir"], str(version))
                     except Exception :
                         log.error("Application not installed! %d %d" % (app, version))
 
