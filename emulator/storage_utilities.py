@@ -1,5 +1,6 @@
 import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, zlib, sys
 import os.path, ast, csv, struct
+from index_utilities import readindexes, readindexes_old
 
 from steamemu.config import read_config
 config = read_config()
@@ -13,7 +14,6 @@ class Storage :
             #manifestpath = path[:-9] + "manifests/"
             manifestpathnew = config["manifestdir"]
             manifestpathold = config["v2manifestdir"]
-
         if os.path.isfile("files/cache/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + ".manifest") :
             self.indexfile  = "files/cache/" + self.name + "_" + self.ver + "/" + self.name + ".index"
             self.datafile   = "files/cache/" + self.name + "_" + self.ver + "/" + self.name + ".data"
@@ -32,7 +32,6 @@ class Storage :
 
             (self.indexes, self.filemodes) = readindexes(self.indexfile)
             self.new = True
-        
         self.f = False
 
     def readchunk(self, fileid, chunkid) :
