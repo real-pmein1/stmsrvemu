@@ -114,18 +114,18 @@ class configserver(threading.Thread):
                 elif command == "\x07" :
                     log.info(clientid + "Sending out list of Content Servers")
 
-                    #clientsocket.send(binascii.a2b_hex("0001312d000000012c"))
+                    clientsocket.send(binascii.a2b_hex("0001312d000000012c"))
         
-                    if self.config["public_ip"] != "0.0.0.0" :
-                        if clientid.startswith(globalvars.servernet) :
-                            bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
-                        else :
-                            bin_ip = utilities.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
-                    else:
-                        bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
-                    reply = struct.pack(">H", 1) + bin_ip
+                    #if self.config["public_ip"] != "0.0.0.0" :
+                    #    if clientid.startswith(globalvars.servernet) :
+                    #        bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
+                    #    else :
+                    #        bin_ip = utilities.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
+                    #else:
+                    #    bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
+                    #reply = struct.pack(">H", 1) + bin_ip
                     
-                    clientsocket.send_withlen(reply)
+                    #clientsocket.send_withlen(reply)
 
                 elif command == "\x08" :
                     log.info(clientid + "confserver command 8, unknown, sending zero reply")
