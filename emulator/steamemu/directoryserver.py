@@ -159,9 +159,8 @@ class directoryserver(threading.Thread):
                             reply += utilities.encodeIP((auth_servers[0].ip, auth_servers[0].port))
                             reply += utilities.encodeIP((auth_servers[0].ip, auth_servers[0].port))
                 elif binascii.b2a_hex(msg) == "1cb5aae840":
-                    log.info(clientid + "Sending out list of Administration Billing Bridge Master Servers")
-                    bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
-                    reply = struct.pack(">H", 1) + bin_ip        
+                    log.info(clientid + "Sending out list of Auth Servers: " + binascii.b2a_hex(command))    
+                    reply = self.get_server_list_by_type("authserver")    
                 else :                 
                     log.info(clientid + "Sent unknown command and skipped default else: " + command + " " + binascii.b2a_hex(msg))
                     reply == "\x00\x00"

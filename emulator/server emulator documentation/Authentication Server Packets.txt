@@ -25,7 +25,7 @@ Command:
 send to server:
 	0x12 +tgt +authenticator +payload
 Expected Response:
-0 = success and/or record, > 0 = unknown error
+0 = success and/or record, 1 = illegal characters, > 1 = unknown error
 	
 Command:
 	change password
@@ -68,7 +68,7 @@ Expected Response:
 Command:	
 	Lookup account name by email
 send to server:
-	0x20 <--**May be wrong, from csmania server code**
+	0x20 
 	rsa encrypted, aes session key and raw payload
 Expected Response:
 	encrypted account names as record/blob
@@ -76,10 +76,11 @@ Expected Response:
 Command:	
 	Generate suggested name
 send to server:
-	(unknown command)
-	rsa encrypted, aes session key and raw payload
+	0x1F <- this packet only contains 1 byte
 Expected Response:
-	encrypted account names as record/blob
+	encrypted packet structure:
+	4 bytes <- size of buffer/blob
+	buffer/gap <- blob containing name suggestions
 
 Command:	
 	query account name already in use / 'check login'
@@ -202,7 +203,7 @@ Expected Response:
 Command:
 	get number of accounts with this email
 Send to server:
-	(unknown command code) 
+	0x22
 	rsa encrypted aes sessionkey and payload
 Expected Response:
  0 or 1 = success (maybe 1 means no accounts found using this email), > 2 = unknown error
@@ -210,7 +211,7 @@ Expected Response:
 Command:
 	Request account name by cdkey
 Send to server:
-	(unknown command code) 
+	0x21
 	rsa encrypted aes sessionkey and payload
 Expected Response:
 	(unknown  qhat client expects for success), > 0 = unknown error	
