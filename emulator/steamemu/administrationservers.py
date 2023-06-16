@@ -2,13 +2,14 @@ import threading, logging, struct, binascii, os, time
 import utilities
 import steam
 import globalvars
+import steamemu.logger
 import serverlist_utilities
 import emu_socket
 import steamemu.logger
 import socket as pysocket
-
+log = logging.getLogger("adminsrv")
 class administrationservers(threading.Thread):
-    log = logging.getLogger("adminsrv")
+
     
     def __init__(self, port, config):
         threading.Thread.__init__(self)

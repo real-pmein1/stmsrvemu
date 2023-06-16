@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, time, ipaddress, os.path, ast, atexit
+import threading, logging, struct, binascii, time, ipaddress, os.path, ast, atexit, zlib
 import utilities
 import blob_utilities
 import encryption
@@ -44,20 +44,33 @@ class authserver(threading.Thread):
             server_thread.start()
 
     def handle_client(self, clientsocket, address):
-
-
-
-        #7f000001 = 127.0.0.1 699A = 27034
-        # Combine IP address and port into a single hex string
         server_string = utilities.convert_ip_port(str(self.config['validation_ip']),int(self.config['validation_port']))
         final_srvstring = server_string + server_string
-        #this is the ticket granting servers 1 and 2 both with 2byte port after address bytes
-        servers = binascii.b2a_hex("7F0000019A697F0000019A69") #server_string + server_string)
+        servers = binascii.b2a_hex("7F0000019A697F0000019A69") 
         
         #need to figure out a way to assign steamid's.  hopefully with mysql
         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
         
         clientid = str(address) + ": "
+        f = open("files/firstblob.bin", "rb")
+        blob = f.read()
+        f.close()
+        firstblob_bin = blob
+        if firstblob_bin[0:2] == "\x01\x43":
+            firstblob_bin = zlib.decompress(firstblob_bin[20:])
+        firstblob_unser = blob_utilities.blob_unserialize(firstblob_bin)
+        firstblob = blob_utilities.blob_dump(firstblob_unser)
+            
+        firstblob_list = firstblob.split("\n")
+        steamui_hex = firstblob_list[3][25:41]
+        steamui_ver = int(steamui_hex[14:16] + steamui_hex[10:12] + steamui_hex[6:8] + steamui_hex[2:4], 16)
+        if steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
+            globalvars.tgt_version = "1"
+            log.debug(clientid + "TGT version set to 1")
+        else :
+            globalvars.tgt_version = "2" #config file states 2 as default
+            log.debug(clientid + "TGT version set to 2")
+
         
         log.info(clientid + "Connected to Auth Server")
 

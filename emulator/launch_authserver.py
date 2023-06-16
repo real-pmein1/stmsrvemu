@@ -42,8 +42,7 @@ time.sleep(0.5) #give us a little more time than usual to make sure we are initi
 log.info("Steam Authentication Server is ready.")
 
 if new_password == 1 :
-    print("New Peer Password Generated: \033[1;33m{}\033[0m".format(peer_password))
-    log.info(
+    log.info("New Peer Password Generated: \033[1;33m{}\033[0m".format(globalvars.peer_password))
     log.info("Make sure to give this password to any servers that may want to add themselves to your network!")
 
 print("Press Escape to exit...")

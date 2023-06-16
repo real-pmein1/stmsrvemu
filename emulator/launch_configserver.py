@@ -25,6 +25,8 @@ if config["public_ip"] != "0.0.0.0" :
 print("**************************")
 print
 
+log = logging.getLogger('emulator')
+
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 

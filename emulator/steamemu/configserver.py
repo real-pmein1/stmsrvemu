@@ -74,16 +74,6 @@ class configserver(threading.Thread):
                             firstblob_bin = zlib.decompress(firstblob_bin[20:])
                         firstblob_unser = blob_utilities.blob_unserialize(firstblob_bin)
                         firstblob = blob_utilities.blob_dump(firstblob_unser)
-                        
-                    firstblob_list = firstblob.split("\n")
-                    steamui_hex = firstblob_list[3][25:41]
-                    steamui_ver = int(steamui_hex[14:16] + steamui_hex[10:12] + steamui_hex[6:8] + steamui_hex[2:4], 16)
-                    if steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
-                        globalvars.tgt_version = "1"
-                        log.debug(clientid + "TGT version set to 1")
-                    else :
-                        globalvars.tgt_version = "2" #config file states 2 as default
-                        log.debug(clientid + "TGT version set to 2")
 
                     clientsocket.send_withlen(blob)
 

@@ -13,48 +13,64 @@ import emu_socket
 import steamemu.logger
 import socket as pysocket
 
-from serverlist_utilities import heartbeat, remove_from_dir
+from serverlist_utilities import remove_from_dir, heartbeat
+log = logging.getLogger("validationsrv")
+
 
 class validationserver(threading.Thread):
-    log = logging.getLogger("validationsrv")
     
     def __init__(self, port, config):
+        self.server_type = "validationserver"
         threading.Thread.__init__(self)
         self.port = int(port)
         self.config = config
-        self.tcp_socket = emu_socket.ImpSocket()
-        self.udp_socket = pysocket.socket(pysocket.AF_INET, pysocket.SOCK_DGRAM)
+        self.socket = emu_socket.ImpSocket()
 
-    def run(self):
+        # Register the cleanup function using atexit
+        #atexit.register(send_removal(globalvars.serverip, int(self.port), globalvars.cs_region))
         
-        self.tcp_socket.bind((globalvars.serverip, self.port))
-        self.tcp_socket.listen(5)
-       
-        self.handle_clientUDP()  # Call the UDP client handling within the run method
+        thread2 = threading.Thread(target=self.heartbeat_thread)
+        thread2.daemon = True
+        thread2.start()
 
+    def heartbeat_thread(self):       
         while True:
-            (clientsocket, address) = self.tcp_socket.accept()
-            threading.Thread(target=self.handle_clientTCP, args=(clientsocket, address)).start()
-
-    def handle_clientTCP(self, clientsocket, address):
-        clientid = str(address) + ": "
-        self.log.info(clientid + "Connected to Validation Server")
-        
-        msg = clientsocket.recv(1024)
-        # clientsocket.send_withlen(reply)
-        self.log.info("Unknown message: " + binascii.b2a_hex(msg))
-
-        clientsocket.close()
-        self.log.info(clientid + "Disconnected from Validation Server")
-
-    def handle_clientUDP(self):
-        self.udp_socket.bind((globalvars.serverip, self.port))
-
-        while True:
-            msg, address = self.udp_socket.recvfrom(1024)
+            heartbeat(globalvars.serverip, self.port, self.server_type )
+            time.sleep(1800) # 30 minutes
             
-            clientid = str(address) + ": "
-            self.log.info(clientid + "Connected to Validation Server")
-            self.log.info("Unknown message: " + binascii.b2a_hex(msg))
-            # clientsocket.send_withlen(reply)
+    def run(self):        
+        self.socket.bind((globalvars.serverip, self.port))
+        self.socket.listen(5)
 
+        while True:
+            (clientsocket, address) = self.socket.accept()
+            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
+
+    def handle_client(self, clientsocket, address):
+        #threading.Thread.__init__(self)
+        clientid = str(address) + ": "
+         
+        log.info(clientid + "Connected to Validation Server")
+               
+        msg = clientsocket.recv(256)
+        log.debug(binascii.b2a_hex(msg))
+        
+       # if msg == "\x00\x3e\x7b\x11" :
+           # clientsocket.send("\x01") # handshake confirmed
+           # msg = clientsocket.recv(1024)
+            
+        command = msg[0]
+        log.info(binascii.b2a_hex(command))
+        log.info(binascii.b2a_hex(msg))
+        reply = "\x0F" + utilities.encodeIP(address)
+        clientsocket.send(reply)
+        msg = clientsocket.recv(1512)
+        log.debug(binascii.b2a_hex(msg))            
+        command = msg[0]
+        log.info(binascii.b2a_hex(command))
+        log.info(binascii.b2a_hex(msg))
+        #clientsocket.send(msg)
+        #msg = clientsocket.recv(1512)
+        #log.info(binascii.b2a_hex(command))
+        #log.info(binascii.b2a_hex(msg))
+        clientsocket.close()
