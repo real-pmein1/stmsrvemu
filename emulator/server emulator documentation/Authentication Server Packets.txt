@@ -60,10 +60,15 @@ Expected Response:
 Command:	
 	request forgot password email
 send to server:
-	(unknown command)
-	rsa encrypted, aes session key and raw payload
+	0x0E
 Expected Response:
-	0 = success, 2 = account or user does not exist, 1 or > 2 unknown error
+	byte <- return code
+	**if returncode = 1
+	2 bytes <- question length, if greater than 255, error too long
+	**if length > 0
+	buffer <-question
+	
+	0 = no personal question set or 1 = success, 2 = account or user does not exist, 3 user blocked, > 3 unknown error
 
 Command:	
 	Lookup account name by email
@@ -145,7 +150,7 @@ Command:
 Send to server:
 	0x05 +tgt +authenticator +payload (payload being SubscriptionBillingInfoRecordFromSteamSubscriptionBillingInfo)
 Expected Response:
-		0 = success and Record or 1 = subscription rate limit exceeded or 2 = unverified email or > 2 unknown
+		0 = success and Record/blob or 1 = subscription demand too high / rate limit exceeded or 2 = unverified email or > 2 unknown
 
 Command:
 	Unsubscribe
@@ -166,7 +171,7 @@ Command:
 Send to server:
 	0x13 +tgt +authenticator +payload
 Expected Response:
-0 = success and Record or 1 = incorrect email verification key or >1 unknown	
+	0 = success and Record or 1 = incorrect email verification key or >1 unknown	
 
 Command:
 	Verify Protocol and receive client external ip	
@@ -206,7 +211,9 @@ Send to server:
 	0x22
 	rsa encrypted aes sessionkey and payload
 Expected Response:
- 0 or 1 = success (maybe 1 means no accounts found using this email), > 2 = unknown error
+	byte <- return code
+	4 bytes <- number of accounts using this email
+ 0 = success > 1 = unknown error
 
 Command:
 	Request account name by cdkey
