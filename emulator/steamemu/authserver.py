@@ -1,15 +1,14 @@
 import threading, logging, struct, binascii, time, ipaddress, os.path, ast, atexit, zlib
+import socket as pysocket
+import config
 import utilities
 import blob_utilities
 import encryption
 import emu_socket
-import config
 import steamemu.logger
 import globalvars
 import serverlist_utilities
-from serverlist_utilities import heartbeat, remove_from_dir
-import socket as pysocket
-
+from serverlist_utilities import remove_from_dir, send_heartbeat
 from Crypto.Hash import SHA
 
 log = logging.getLogger("authsrv")
@@ -21,17 +20,21 @@ class authserver(threading.Thread):
         self.config = config
         self.socket = emu_socket.ImpSocket()
         self.server_type = "authserver"
-
-        #add function for cleanup when program exits
-        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
-
+        self.server_info = {
+            'ip_address': globalvars.serverip,
+            'port': int(self.port),
+            'server_type': self.server_type,
+            'timestamp': int(time.time())
+        }
+        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))       
+        
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
-
+        
     def heartbeat_thread(self):       
         while True:
-            heartbeat(globalvars.serverip, self.port, self.server_type)
+            send_heartbeat(self.server_info)
             time.sleep(1800) # 30 minutes
             
     def run(self):        
@@ -47,7 +50,7 @@ class authserver(threading.Thread):
         server_string = utilities.convert_ip_port(str(self.config['validation_ip']),int(self.config['validation_port']))
         final_srvstring = server_string + server_string
         servers = binascii.b2a_hex("7F0000019A697F0000019A69") 
-        
+        #region 
         #need to figure out a way to assign steamid's.  hopefully with mysql
         steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
         
@@ -78,7 +81,7 @@ class authserver(threading.Thread):
         
         log.debug(":" + binascii.b2a_hex(command[1:5]) + ":")
         log.debug(":" + binascii.b2a_hex(command) + ":")
-
+#region 
         if command[1:5] == "\x00\x00\x00\x04" or command[1:5] == "\x00\x00\x00\x01" or command[1:5] == "\x00\x00\x00\x02" :
 
             clientsocket.send("\x00" + pysocket.inet_aton(clientsocket.address[0]))
@@ -299,16 +302,36 @@ class authserver(threading.Thread):
                     clientsocket.send(ticket_full)
 
             elif len(command) >= 256 :
-                #print(binascii.b2a_hex(command[0:3]))
-                if binascii.b2a_hex(command[0:3]) == "100168" :
-                    log.info(clientid + "Change password")
+                print(binascii.b2a_hex(command[0:3]))
+                if binascii.b2a_hex(command[0:3]) == "120168" :
+                    log.info(clientid + "Change Email")
+                    print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "100168" :
+                    log.info(clientid + "Change password")
+                    print(binascii.b2a_hex(command))
+                    clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "110168" :
+                    log.info(clientid + "Change Personal Question")
+                    print(binascii.b2a_hex(command))
+                    clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "1C0168" :
+                    log.info(clientid + "Change Account Name")
+                    print(binascii.b2a_hex(command))
+                    clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "0A0168" :
+                    log.info(clientid + "Get Encrypted UserID Ticket To Send To AppServer")
+                    print(binascii.b2a_hex(command))
+                    clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "040168" :
+                    log.info(clientid + "User Logged Off")
+                    #clientsocket.send("\x01")
                 else :
                     print(binascii.b2a_hex(command[3:]))
                     log.info(clientid + "Ticket login")
                     clientsocket.send("\x01")
             elif len(command) == 1 :
-                if command == "\x1d" :
+                if command == "\x1d" : #Create Account: Is Name in use
                     log.info(clientid + "command: query account name already in use")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
@@ -340,13 +363,13 @@ class authserver(threading.Thread):
                     username_str = username.rstrip('\x00')
                     #print(len(username_str))
                     if (os.path.isfile("files/users/" + username_str + ".py")) :
-                        clientsocket.send("\x01")#not working
+                        clientsocket.send("\x01") #Username in use!
                     else :
-                        clientsocket.send("\x00")
-                elif command == "\x22" :
-                    log.info(clientid + "command: Check email")
+                        clientsocket.send("\x00") #Username is not in use                    
+                elif command == "\x22" : #Check Email is verified
+                    log.info(clientid + "command: Check email [Not Implemented]")
                     clientsocket.send("\x00")
-                elif command == "\x01" :
+                elif command == "\x01" : #Create User
                     log.info(clientid + "command: Create user")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
@@ -371,9 +394,9 @@ class authserver(threading.Thread):
                     ciphertext = cryptedblob[20:-20]
                     plaintext = encryption.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
-                    #print(plaintext)
+                    print("plaintext: " + plaintext)
                     plainblob = blob_utilities.blob_unserialize(plaintext)
-                    #print(plainblob)
+                    print("plainblob: " + str(plainblob))
                     
                     invalid = {'\x07\x00\x00\x00'}
                     def without_keys(d, keys) :
@@ -396,8 +419,9 @@ class authserver(threading.Thread):
                         userblobfile.write(str(plainblob_fixed))
                     
                     clientsocket.send("\x00")
-                elif command == "\x0e" :
-                    log.info(clientid + "command: Lost password - username check")
+                
+                elif command == "\x0e" : #Lost Pass: request account info by username
+                    log.info(clientid + "command: Lost password - username check [Not Implemented]")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
@@ -427,7 +451,7 @@ class authserver(threading.Thread):
                         clientsocket.send("\x00")
                     else :
                         clientsocket.send("\x01")
-                elif command == "\x0f" :
+                elif command == "\x0f" : #Lost Pass: Reset Password
                     log.info(clientid + "command: Lost password - reset")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
@@ -479,12 +503,10 @@ class authserver(threading.Thread):
                     plaintext = encryption.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
                     #print blob_utilities.blob_unserialize(plaintext)
-                    
-                    
-                elif command == "\x20" :
-                    log.info(clientid + "command: Lost password - email check")
-                elif command == "\x21" :
-                    log.info(clientid + "command: Lost password - product check")
+                elif command == "\x20" : #Lost Pass: request account info by email
+                    log.info(clientid + "command: Lost password - email check [Not Implemented]")
+                elif command == "\x21" : #Lost Pass: request account info by cdkey
+                    log.info(clientid + "command: Lost password - request account name by cdkey [Not Implemented]")
                 else :
                     # This is cheating. I've just cut'n'pasted the hex from the network_key. FIXME
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
@@ -510,7 +532,7 @@ class authserver(threading.Thread):
                     plaintext = encryption.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
                     #print blob_utilities.blob_unserialize(plaintext)
-                
+                    print(clientsocket)
                     clientsocket.send("\x00")
             else :
                 log.warning(clientid + "Invalid command length: " + str(len(command)))

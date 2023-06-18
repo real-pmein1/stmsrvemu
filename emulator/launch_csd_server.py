@@ -26,6 +26,7 @@ print("**************************")
 print
 
 log = logging.getLogger('emulator')
+log.info("...Starting Steam Server...\n")
 
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()

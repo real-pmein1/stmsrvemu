@@ -4,17 +4,17 @@ import time
 import utilities
 import emu_socket
 import globalvars
-import serverlist_utilities
 import steamemu.logger
 import socket as pysocket
+import serverlist_utilities
+from serverlist_utilities import unpack_server_info, DirServerManager
 
-from serverlist_utilities import heartbeat
-
-server_list = []
 log = logging.getLogger("masterdirsrv")
 
+manager = DirServerManager()    
+
 class directoryserver(threading.Thread):
-    global server_list
+    global manager
     global log
     
     def __init__(self, port, config):
@@ -22,81 +22,105 @@ class directoryserver(threading.Thread):
         self.port = int(port)
         self.config = config
         self.socket = emu_socket.ImpSocket()
-        self.server_list = server_list
-        
-        #add function for cleanup when program exits
-        ##atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
-
-        if globalvars.is_masterdir == 1 :
-            #add ourself to the serverlist as a directoryserver type, with a 0'd timestamp to indicate that it cannot be removed
-            self.add_server_info(globalvars.serverip, self.config["dir_server_port"], "masterdirsrv", "0000-00-00 00:00:00")
+        self.server_type = "masterdirserver" if globalvars.dir_ismaster == 0 else "dirserver"
+        self.server_info = {
+            'ip_address': globalvars.serverip,
+            'port': int(self.port),
+            'server_type': self.server_type,
+            'timestamp': int(time.time())
+        }
+        # atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type)) # add function for cleanup when program exits
+        if globalvars.dir_ismaster == 1 :  # add ourself to the serverlist as a directoryserver type, with a 0'd timestamp to indicate that it cannot be removed 
+            manager.add_server_info(globalvars.serverip, self.config["dir_server_port"], self.server_type, 1)
+            log = logging.getLogger("master_dirserver")
         else:
-            log = logging.getLogger("slavedirsrv")
+            log = logging.getLogger("dirserver")
             log.info("Connecting to Master Directory Server")
-
             thread2 = threading.Thread(target=self.heartbeat_thread)
             thread2.daemon = True
             thread2.start()
             
-        # Start the thread for removing expired servers
-        thread = threading.Thread(target=self.expired_servers_thread)
+        thread = threading.Thread(target=self.expired_servers_thread) # Thread for removing servers older than 1 hour
         thread.daemon = True
         thread.start()
-
         
+    def heartbeat_thread(self):       
+        while True:
+            send_heartbeat(self.server_info)
+            time.sleep(1800) # 30 minutes
+               
     def run(self):        
         self.socket.bind((globalvars.serverip, self.port))
         self.socket.listen(5)
-
         while True:
             (clientsocket, address) = self.socket.accept()
             threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
+            
 
     def handle_client(self, clientsocket, address):
         #threading.Thread.__init__(self)
         global server_list
         clientid = str(address) + ": "
-        if globalvars.is_masterdir == 1:           
+        if globalvars.dir_ismaster == 1:           
             log.info(clientid + "Connected to Directory Server")
         else:           
-            log.info(clientid + "Connected to Slave Directory Server")
+            log.info(clientid + "Connected to Slave/Peer Directory Server")
                
         msg = clientsocket.recv(4)
         log.debug(binascii.b2a_hex(msg))
-        
-        if msg == "\x00\x3e\x7b\x11" :
+
+        if msg == "\x00\x3e\x7b\x11" :            
             clientsocket.send("\x01") # handshake confirmed
             msg = clientsocket.recv(1024)
-            
-            command = msg[0]
+            command = msg[0]           
             log.debug(binascii.b2a_hex(command))
             
-            if command == "\x1c":
-                ip, port, server_type = self.extract_packet_data(msg[1:])# Extract the server info
-                self.add_server_info(str(ip), str(port), str(server_type))# Add single server entry to the list
-                clientsocket.send("\x01")
-                log.info(server_type + " " +clientid + "Added  to Directory Server")
-
-            elif command == "\x1d":
-                
-                ip, port, server_type = self.extract_packet_data(msg[1:])
-                if self.remove_server_info(ip, port, server_type): # Remove server entry from the list
-                    clientsocket.send("\x01")
-                    log.info(server_type + " " +clientid + "Removed from Directory Server")
-                    if globalvars.is_masterdir != 1: #send any requests to add or remove to the master server aswell
-                        clientsocket.sendto(msg, self.masterdir_ipport)
-
-            elif command == "\x55" :   #NOT FUNCTIONAL YET; the master serer does not send the serverlist yet
-                clientsocket.send("\x01")
-                msg = clientsocket.recv_withlen()# Recieve Current server List From Master             
-                decrypted_msg = utilities.decrypt(msg[1:], globalvars.peer_password)
-                if decrypted_msg is None:
-                    log.warning(clientid + "Failed to decrypt packet: " + binascii.b2a_hex(msg))
-                    clientsocket.send("\x00") #message decryption failed, the only response we give for failure
+            if command == "\x1a": # Add server entry to the list             
+                ip_address, port, server_type, timestamp = unpack_server_info(msg)
+                try:
+                    pysocket.inet_aton(ip_address)
+                except pysocket.error:
+                    log.warning(clientid + " Sent bad heartbeat packet: " + binascii.b2a_hex(msg))
+                    clientsocket.send("\x00") # message decryption failed, the only response we give for failure
+                    clientsocket.close()
+                    log.info(clientid + "Disconnected from Directory Server")
                     return
-                else:
-                    receive_server_list() #add all servers in list to our list
+                       
+                manager.add_server_info(ip_address, int(port), server_type)
                 
+                clientsocket.send("\x01")
+                log.info("[" + server_type + "] " + clientid + "Added to Directory Server")
+                
+                log.debug("IP Address: " + ip_address)
+                log.debug("Port: " + str(port))
+                log.debug("Server Type: " + server_type)
+                log.debug("Timestamp: " + datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+                
+                if globalvars.dir_ismaster != 1: # relay any requests to the master server aswell
+                    clientsocket.sendto(msg, str(config["masterdir_ipport"]))
+                
+            elif command == "\x1d": # Remove server entry from the list
+                ip_address, port, server_type = unpack_removal_info(msg)
+                try:
+                    pysocket.inet_aton(ip_address)
+                except pysocket.error:
+                    log.warning(clientid + " Sent bad removal request packet: " + binascii.b2a_hex(msg))
+                    clientsocket.send("\x00") # message decryption failed, the only response we give for failure
+                    clientsocket.close()
+                    log.info(clientid + "Disconnected from Directory Server")
+                    return
+                                
+                if manager.remove_entry(ip, port, server_type) is True:
+                    clientsocket.send("\x01")
+                    log.info("[" + server_type + "] " + clientid + "Removed server from Directory Server")
+                    if globalvars.dir_ismaster != 1: # relay any requests to the master server aswell
+                        clientsocket.sendto(msg, str(config["masterdir_ipport"]))
+                else: # couldnt remove server because: doesnt exists, problem with list
+                    clientsocket.send("\x01")
+                    log.info("[" + server_type + "] " + clientid + "There was an issue removing the server from Directory Server")  
+                                  
+            # BEN TODO: Add packet for slave/peer dir servers to recieve master dir serverlist
+                    
         elif msg == "\x00\x00\x00\x01" or msg == "\x00\x00\x00\x02":
             clientsocket.send("\x01")
             msg = clientsocket.recv_withlen()
@@ -105,64 +129,66 @@ class directoryserver(threading.Thread):
             reply = "\x00\x00"
             if command == "\x00" or command == "\x12" or command == "\x1a": # Send out list of authservers
                 log.info(clientid + "Sending out list of Auth Servers: " + binascii.b2a_hex(command))    
-                reply = self.get_server_list_by_type("authserver")
+                reply = manager.get_and_prep_server_list("authserver")
             elif command == "\x03": # Send out list of Configuration Servers
                 log.info(clientid + "Sending out list of Configuration Servers")
-                reply = self.get_server_list_by_type("configserver")
+                reply = manager.get_and_prep_server_list("configserver")
             elif command == "\x06" or command == "\x05" : # send out content list servers
-                log.info(clientid + "Sending out list of content list servers")
-                reply = self.get_server_list_by_type("csdserver")
+                log.info(clientid + "Sending out list of Content Server Directory Servers")
+                reply = manager.get_and_prep_server_list("csdserver")
             elif command == "\x0f" : # hl master server
                 log.info(clientid + "Sending out list of HL Master Servers")
-                reply = self.get_server_list_by_type("masterhlserver")
-            elif command == "\x12" : #userid ticket validation server address, not supported yet
-                log.info(clientid + "Sending out list of Client / Account Authentication servers")
-                reply = self.get_server_list_by_type("validationtserver")
+                reply = manager.get_and_prep_server_list("masterhlserver")
             elif command == "\x14" : # send out CSER server (not implemented)
-                log.info(clientid + "Sending out list of CSER servers")
-                reply = self.get_server_list_by_type("cserserver")
+                log.info(clientid + "Sending out list of CSER Servers")
+                reply = manager.get_and_prep_server_list("cserserver")
             elif command == "\x18" or command == "\x1e": # source master server & ragdoll kungfu use the same exact protocol
-                log.info(clientid + "Requesting Source Master Server")
-                reply = self.get_server_list_by_type("masterhl2server")
+                log.info(clientid + "Requesting Source Master Servers")
+                reply = manager.get_and_prep_server_list("masterhl2server")
             elif command == "\x0A" : # remote file harvest master server
                 log.info(clientid + "Sending out list of Remote File Harvest Master Servers")
-                reply = self.get_server_list_by_type("harvestserver")
+                reply = manager.get_and_prep_server_list("harvestserver")
+            elif command == "\x12" : #userid ticket validation server address, not supported yet
+                log.info(clientid + "Sending out list of Client / Account Authentication Servers")
+                reply = manager.get_and_prep_server_list("validationserver")
             elif command == "\x0B" : #  master VCDS Validation (New valve cdkey Authentication) server
                 log.info(clientid + "Sending out list of VCDS Validation (New valve CDKey Authentication) Master Servers")
-                reply = self.get_server_list_by_type("validationserver")
-            elif command == "\x10" : #  Friends master server
-                log.info(clientid + "Sending out list of Messaging Servers")
-                reply = self.get_server_list_by_type("messagingserver")
+                reply = manager.get_and_prep_server_list("validationserver")
             elif command == "\x07" : # Ticket Validation master server
                 log.info(clientid + "Sending out list of Ticket Validation Master Servers")
-                reply = self.get_server_list_by_type("validationserver")
+                reply = manager.get_and_prep_server_list("validationserver")
+            elif command == "\x10" : #  Friends master server
+                log.info(clientid + "Sending out list of Messaging Servers")
+                reply = manager.get_and_prep_server_list("messagingserver")
             elif command == "\x0D" or command == "\x0E" : # all MCS Master Public Content master server
                 log.info(clientid + "Sending out list of MCS Master Public Content Master Servers")
-                reply = self.get_server_list_by_type("csdserver") 
-            elif command == "\x1c" : # slave client authentication server's & proxy client authentication server's
-                #Please note that this code is from vss, but dissassembly shows just recieving a authserver ip
+                reply = manager.get_and_prep_server_list("csdserver") 
+            elif command == "\x1c" :
+                  
                 if binascii.b2a_hex(msg) == "1c600f2d40" : 
-                    csds_servers = self.get_server_info_by_type("csdserver")
-                    auth_servers = self.get_server_info_by_type("authserver")
+                    log.info(clientid + "Sending out CSDS and 2 Authentication Servers")
+                    csds_servers = manager.get_and_prep_server_list("csdserver")
+                    auth_servers = manager.get_and_prep_server_list("authserver")
                     reply = struct.pack(">H", 3)  # Total number of servers in the reply
                     
-                    if csds_servers:
+                    if csds_servers :
                         reply += utilities.encodeIP((csds_servers[0].ip, csds_servers[0].port))
-                    else:
+                    else :
                         reply = "\x00\x00"
 
-                    if len(auth_servers) > 0:
-                        if len(auth_servers) >= 2:
+                    if len(auth_servers) > 0 :
+                        if len(auth_servers) >= 2 :
                             reply += utilities.encodeIP((auth_servers[0].ip, auth_servers[0].port))
                             reply += utilities.encodeIP((auth_servers[1].ip, auth_servers[1].port))
                         else:
                             reply += utilities.encodeIP((auth_servers[0].ip, auth_servers[0].port))
                             reply += utilities.encodeIP((auth_servers[0].ip, auth_servers[0].port))
-                elif binascii.b2a_hex(msg) == "1cb5aae840":
-                    log.info(clientid + "Sending out list of Auth Servers: " + binascii.b2a_hex(command))    
-                    reply = self.get_server_list_by_type("authserver")    
+                            
+                elif binascii.b2a_hex(msg) == "1cb5aae840" : # Used for Subscription & CDKey Registration
+                    log.info(clientid + "Sending out list of Auth Servers For Transactions")    
+                    reply = manager.get_and_prep_server_list("authserver")    
                 else :                 
-                    log.info(clientid + "Sent unknown command and skipped default else: " + command + " " + binascii.b2a_hex(msg))
+                    log.info(clientid + "Sent unknown command: " + command + " Data: " + binascii.b2a_hex(msg))
                     reply == "\x00\x00"
                     
             elif command == "\x15" : # Log Processing Server's master server
@@ -218,148 +244,18 @@ class directoryserver(threading.Thread):
                 bin_ip = utilities.encodeIP((globalvars.serverip, int("27023")))
                 reply = struct.pack(">H", 1) + bin_ip       
             else :
-                 log.info(clientid + "Sent unknown command and skipped default else: " + command + " " + binascii.b2a_hex(msg))
+                 log.info(clientid + "Sent unknown command: " + command + " Data: " + binascii.b2a_hex(msg))
                  reply == "\x00\x00"
             clientsocket.send_withlen(reply)        
         else :
-            log.error(clientid + "Invalid version message: " + binascii.b2a_hex(command))
+            log.error(clientid + "Invalid Message: " + binascii.b2a_hex(command))
 
         clientsocket.close()
         log.info (clientid + "disconnected from Directory Server")
-        
-    #for server to server directory server list addition
-    def add_server_info(self, ip, port, server_type, timestamp = ""):
-        for server_info in server_list:
-            if server_info.ip == ip and server_info.port == port and server_info.server_type == server_type:
-                server_info.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                return False
-        server_list.append(ServerInfo(ip, port, server_type, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        return True
-    
-    #for server to server directory server list removal
-    def remove_server_info(self, ip, port, server_type):
-        global server_list
-        initial_length = len(server_list)
-        server_list = [server_info for server_info in server_list if not (server_info.ip == ip and server_info.port == port and server_info.server_type == server_type)]
-        return len(server_list) < initial_length
-
-    #takes care of removing any servers that have not responded within an hour, the default heartbeat time is 30 minutes, so they had more than enough time to respond
-    def remove_expired_servers(self):        
-        current_time = time.time()
-        server_list = [server_info for server_info in server_list if server_info.timestamp == "0000-00-00 00:00:00" or (current_time - server_info.timestamp) <= 3600]
-
+       
+    #takes care of removing any servers that have not responded within an hour,
+    #the default heartbeat time is 30 minutes, so they had more than enough time to respond
     def expired_servers_thread(self):
         while True:
             time.sleep(3600) # 1 hour
-            self.remove_expired_servers()
-            
-    def heartbeat_thread(self):       
-        while True:
-            time.sleep(1800) # 30 minutes        
-            serverlist_utilities.heartbeat(globalvars.serverip, str(config["dir_server_port"]), "directoryserver", globalvars.peer_password )
- 
-    #used to extract the decrypted payload buffer (after commad and message byte) for a server's request to add or remove itself.        
-    def extract_packet_data(self, msg):
-        decrypted_buffer = utilities.decrypt(msg, globalvars.peer_password)
-
-        # Unpack the IP address (4 bytes), port (2 bytes), and server type (null-terminated string)
-        ip_bytes = decrypted_buffer[:4]
-        port_bytes = decrypted_buffer[4:6]
-        server_type_bytes = decrypted_buffer[6:].rstrip(b'\x00')
-
-        # Convert IP address to string
-        try:
-            ip = pysocket.inet_ntoa(ip_bytes)
-        except socket.error:
-            self.socket.close()
-            log.info("Client Sent Incorrect Heartbeat Format")
-            return False
-        
-        # Unpack port as unsigned short (integer)
-        port = struct.unpack(">H", port_bytes)[0]
-
-        # Decode server type as string
-        server_type = server_type_bytes.decode('utf-8')
-
-        return ip, port, server_type
-    
-    def receive_server_list(self):
-        buffer = clientsocket.recv_withlen()
-        if not buffer:
-            return
-        #buffer = clientsocket.recvall(buffer_len)
-
-        reply = utilities.decrypt(buffer, globalvars.peer_password)
-        num_servers = struct.unpack(">H", reply[:2])[0]
-        offset = 2
-
-        for i in range(num_servers):
-            server_type_bytes = reply[offset:offset + 3].decode('utf-8')
-            ip_port = utilities.decodeIP(reply[offset + 3:offset + 7])
-            ip, port = ip_port[0], ip_port[1]
-            timestamp_bytes = reply[offset + 7:offset + 12].decode('utf-8')
-
-            # Check if server is already in the global server_list
-            for server_info in server_list:
-                if server_info.ip == ip and server_info.port == port and server_info.server_type == server_type_bytes:
-                    # If timestamp in new buffer is more recent than stored value, update
-                    if timestamp_bytes > server_info.timestamp:
-                        server_info.timestamp = timestamp_bytes
-                    break
-            else:  # If loop didn't break (i.e. no match found), add new server to global list
-                server_info = ServerInfo(ip, port, server_type_bytes, timestamp_bytes) 
-                server_list.append(server_info)
-                
-    #used to retrieve all the servers or only specific server types, for client requests and for sending the complete list of servers to new slave directory servers
-    def get_server_info_by_type(self, server_type = ""):
-        global server_list
-        server_info = None
-        if not server_type:
-            return [server_info for server_info in self.server_list]
-        else:
-            return [server_info for server_info in self.server_list if server_info.server_type == server_type]        
-
-    #used for sending a slave directory server the complete server list
-    def send_server_list(self):
-        server_list = self.get_server_info_by_type()
-        num_servers = len(server_list)
-
-        if num_servers == 0:
-            self.socket.send_withlen("\x00\x00")
-        else:
-            reply = struct.pack(">H", num_servers)
-            for server_info in server_list:
-                server_type_bytes = server_info.server_type.encode('utf-8')
-                ip_port_bytes = utilities.encodeIP((server_info.ip, server_info.port))
-                timestamp_bytes = server_info.timestamp.encode('utf-8')  # Assuming timestamp is already a string
-                reply += server_type_bytes + ip_port_bytes + timestamp_bytes
-
-            encbuffer = utilities.encrypt(reply, globalvars.peer_password)
-            self.socket.send_withlen(encbuffer)
-            
-    def send_server_list_by_type(self, server_type):
-        self.socket.send_withlen(self.get_server_list(server_type))
-            
-    #Grab all server ip/port's available for a specific client request        
-    def get_server_list_by_type(self, server_type):
-        global server_list
-        server_list = self.get_server_info_by_type(server_type)
-        for server_info in server_list:
-            print server_info.server_type
-        num_servers = len(server_list)
-        
-        if num_servers == 0:
-            return "\x00\x00"
-        else:
-            reply = struct.pack(">H", 1)
-            for server_info in server_list:
-                ip_port_bytes = utilities.encodeIP((server_info.ip, server_info.port))
-                reply += ip_port_bytes
-            return reply
-    
-class ServerInfo:
-    def __init__(self, ip, port, server_type, timestamp):
-        self.ip = ip
-        self.port = port
-        self.server_type = server_type
-        self.timestamp = timestamp
+            manager.remove_old_entries()

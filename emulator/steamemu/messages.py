@@ -1,11 +1,11 @@
 import threading, logging, struct, binascii, time, socket, atexit, ipaddress, os.path, ast
 import os
-import utilities
 import config
+import utilities
 import steamemu.logger
 import globalvars
 import serverlist_utilities
-from serverlist_utilities import heartbeat, remove_from_dir
+from serverlist_utilities import send_heartbeat, remove_from_dir
 
 class messagesserver(threading.Thread):
 
@@ -15,28 +15,27 @@ class messagesserver(threading.Thread):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_type = "messagesserver"
-
-        #add function for cleanup when program exits
-        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
-
-       # Start the thread for dir registration heartbeat, only
+        self.server_info = {
+                    'ip_address': globalvars.serverip,
+                    'port': int(self.port),
+                    'server_type': self.server_type,
+                    'timestamp': int(time.time())
+                }
+        # Register the cleanup function using atexit
+        # atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))             
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
         
     def heartbeat_thread(self):       
         while True:
-            heartbeat(globalvars.serverip, self.port, self.server_type )
+            send_heartbeat(self.server_info)
             time.sleep(1800) # 30 minutes
             
-    def start(self):
-        
+    def start(self):        
         self.socket.bind((self.host, self.port))
-
-        while True:
-            #recieve a packet
-            data, address = self.socket.recvfrom(1280)
-            # Start a new thread to process each packet
+        while True: # recieve a packet
+            data, address = self.socket.recvfrom(1280) # Start a new thread to process each packet
             threading.Thread(target=self.process_packet, args=(data, address)).start()
 
     def process_packet(self, data, address):

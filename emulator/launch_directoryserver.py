@@ -32,7 +32,7 @@ log.info("...Starting Steam Server...\n")
 utilities.checklocalipnet()
 
 #launch directoryserver first so servers can heartbeat the moment they launch
-if globalvars.is_masterdir == 1 :
+if globalvars.dir_ismaster == 1 :
     log.info("Steam Master General Directory Server listening on port " + str(config["dir_server_port"]))
 else:
     log.info("Steam Slave General Directory Server listening on port " + str(config["dir_server_port"]))
@@ -51,3 +51,4 @@ while True:
     if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
         os._exit(0)
 
+    

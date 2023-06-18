@@ -90,21 +90,20 @@ def heartbeat(encrypted_buffer):
     data = "\x00\x4f\x8c\x11"
     sock.send(data) # Send the 'im a dir server packet' packet
     
-    response = sock.recv(1) # wait for a reply
+    handshake = sock.recv(1) # wait for a reply
     
-    if response == '\x01':
+    if handshake == '\x01':
         packed_length = struct.pack('!I', len(encrypted_buffer))  # Assuming the length fits into an unsigned integer (4 bytes)
         sock.send(packed_length)
+        response = sock.recv(1)
         if response == '\x01':
             sock.send(encrypted_buffer)
-            confirmation = sock.recv(1) # wait for a reply
-            
-            if confirmation != "\x01" : # lets try again...
-                heartbeat(ip, port, server_type, key)
+            confirmation = sock.recv(1)
+            if confirmation != '\x01' :
+                log.warning("Content Server failed to register server to Content Server Directory Server ")
     else :
-        log.warning("Content Server failed to register server to Content Server Directory Server ")
-        
-    # Close the socket
+        log.warning("Content Server failed to contact Content Server Directory Server ")
+
     sock.close()
 
 def remove_from_dir(encrypted_buffer):
@@ -117,18 +116,16 @@ def remove_from_dir(encrypted_buffer):
     data = "\x00\x4f\x8c\x11"
     sock.send(data) # Send the 'im a dir server packet' packet
     
-    response = sock.recv(1) # wait for a reply
+    handshake = sock.recv(1) # wait for a reply
     
-    if response == '\x01':
+    if handshake == '\x01':
         sock.send(encrypted_buffer)
         confirmation = sock.recv(1) # wait for a reply
+        if confirmation != '\x01' :
+            log.warning("Content Server failed to register server to Content Server Directory Server ")
+    else :
+        log.warning("Content Server failed to contact Content Server Directory Server ")
         
-        if confirmation != "\x01" : # lets try again...
-            remove_from_dir(ip, port, server_type, key)
-    else:
-        log.warning("Content Server failed to register server to Content Server Directory Server ")
-        
-    # Close the socket
     sock.close()
 
 class ContentServerManager(object):

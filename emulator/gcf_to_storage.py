@@ -7,7 +7,7 @@ from Steam import oldsteam
 def compare_checksums(less, more) :
     for fileid in range(less.numfiles) :
         if less.checksums_raw[fileid] != more.checksums_raw[fileid] :
-            print "Checksums doesn't match for file", fileid, len(less.checksums_raw[fileid]), len(more.checksums_raw[fileid])
+            print("Checksum doesn't match the file", fileid, len(less.checksums_raw[fileid]), len(more.checksums_raw[fileid]))
             sys.exit()
 
 def gcf2storage(filename) :
@@ -37,10 +37,10 @@ def gcf2storage(filename) :
         f.close()
 
         if stored_manifest_data != gcf.manifest_data :
-            print "Manifests differ!!"
+            print( "Manifests differ!!")
             sys.exit()
         else :
-            print "Manifests match, continuing.."
+            print( "Manifests match, continuing..")
     else :
         #print "New manifest"
 
@@ -57,7 +57,7 @@ def gcf2storage(filename) :
         stored_checksums.load_from_file(checksum_filename)
 
         if gcf_checksums.numfiles > stored_checksums.numfiles :
-            print "Checksums in GCF have more files than checksums in storage"
+            print( "Checksums in GCF have more files than checksums in storage")
             compare_checksums(stored_checksums, gcf_checksums)
         
             if do_updates :
@@ -67,7 +67,7 @@ def gcf2storage(filename) :
                 f.write(gcf.checksum_data)
                 f.close()
         else :
-            print "Checksums in storage have equal or more files than checksums in GCF"
+            print( "Checksums in storage have same or more files than checksums in GCF")
             compare_checksums(gcf_checksums, stored_checksums)
     else :
         if do_updates :
@@ -85,7 +85,7 @@ def gcf2storage(filename) :
             continue
 
         if d.dirtype & 0x100 :
-            print "File encrypted", d.fileid
+            print("File encrypted", d.fileid)
             #sys.exit()
         if not storage.indexes.has_key(d.fileid) :
             #print "File not in storage", d.fileid, d.fullfilename
@@ -105,7 +105,7 @@ def gcf2storage(filename) :
                     file = "".join(file)
                 
                     if len(file) != d.itemsize :
-                        print "Length of extracted file and file size doesn't match!", len(file), d.itemsize
+                        print( "Length of extracted file and file size doesn't match!", len(file), d.itemsize)
                         sys.exit()
                     
                     chunks = []
@@ -127,7 +127,7 @@ def gcf2storage(filename) :
                     continue
         else :
             if storage.filemodes[d.fileid] == 2 or storage.filemodes[d.fileid] == 3 :
-                print "File is encrypted in storage but not in GCF", d.fileid
+                print ("File is encrypted in storage but not in GCF", d.fileid)
                 sys.exit()
 
             storage_chunk = ""
@@ -144,7 +144,7 @@ def gcf2storage(filename) :
                 totalsize += len(gcf_block)
                 if len(gcf_chunk) >= len(storage_chunk) :
                     if gcf_chunk != storage_chunk :
-                        print "Difference between chunks!!!", len(gcf_chunk), len(storage_chunk)
+                        print( "Difference between chunks!!!", len(gcf_chunk), len(storage_chunk))
                         sys.exit()
                     else :
                         #print "\b.",
@@ -156,8 +156,8 @@ def gcf2storage(filename) :
 
             #print storage_chunkid, gcf_checksums.numchecksums[d.fileid]
             if totalsize != d.itemsize :
-                print
-                print "Different sizes, file incomplete? ", d.fileid, totalsize, d.itemsize
+                print("")
+                print( "Different sizes, file incomplete? ", d.fileid, totalsize, d.itemsize)
                 #sys.exit()
             else :
-                print "\b.",
+                print ("\b.")

@@ -28,13 +28,13 @@ log.info("...Starting Steam Server...\n")
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 
-vttserver(int("27046"), config).start()
-log.info("Valve Time Tracking Server listening on port 27046")
-time.sleep(0.2)
+vttserver(config["vtt_server_port1"], config).start()
+log.info("Valve Time Tracking Server listening on port ", config["vtt_server_port1"])
+time.sleep(0.5)
 
-vttserver(int("27047"), config).start()
-log.info("Valve CyberCafe server listening on port 27047")
-time.sleep(0.2)
+vttserver(config["vtt_server_port2"], config).start()
+log.info("Valve CyberCafe server listening on port ", config["vtt_server_port2"])
+time.sleep(0.5)
 
 log.info("Steam CyberCafe Server's are ready.")
 

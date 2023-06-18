@@ -51,6 +51,11 @@ def convert_ip_port(ip_address, port):
 
     return combined_hex
 
+def get_nanoseconds_since_time0():
+    time0 = time.time()  # Get the current time in seconds since the epoch
+    nanoseconds = int(time0 * 1e9)  # Convert seconds to nanoseconds
+    return nanoseconds
+
 def steamtime_to_unixtime(steamtime_bin) :
     steamtime = struct.unpack("<Q", steamtime_bin)[0]
     unixtime = steamtime / 1000000- 62135596800

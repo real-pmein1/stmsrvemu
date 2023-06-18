@@ -10,10 +10,10 @@ class Storage :
         self.name = str(storagename)
         self.ver = str(version)
         
-        if path.endswith("storages/") :
+        #if path.endswith("storages/") :
             #manifestpath = path[:-9] + "manifests/"
-            manifestpathnew = config["manifestdir"]
-            manifestpathold = config["v2manifestdir"]
+        manifestpathnew = config["manifestdir"]
+        manifestpathold = config["v2manifestdir"]
         if os.path.isfile("files/cache/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + ".manifest") :
             self.indexfile  = "files/cache/" + self.name + "_" + self.ver + "/" + self.name + ".index"
             self.datafile   = "files/cache/" + self.name + "_" + self.ver + "/" + self.name + ".data"

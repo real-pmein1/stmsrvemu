@@ -8,8 +8,7 @@ import globalvars
 import emu_socket
 import steamemu.logger
 import serverlist_utilities
-
-from serverlist_utilities import heartbeat, remove_from_dir
+from serverlist_utilities import remove_from_dir, send_heartbeat
 from Crypto.Hash import SHA
 
 log = logging.getLogger("confsrv")
@@ -21,16 +20,23 @@ class configserver(threading.Thread):
         self.config = config
         self.socket = emu_socket.ImpSocket()
         self.server_type = "configserver"
-        #add function for cleanup when program exits
+        self.server_info = {
+                    'ip_address': globalvars.serverip,
+                    'port': int(self.port),
+                    'server_type': self.server_type,
+                    'timestamp': int(time.time())
+                }
+        # Register the cleanup function using atexit
         #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
-
+        
+        
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
-
+        
     def heartbeat_thread(self):       
         while True:
-            heartbeat(globalvars.serverip, self.port, self.server_type )
+            send_heartbeat(self.server_info)
             time.sleep(1800) # 30 minutes
             
     def run(self):        
@@ -146,7 +152,7 @@ class configserver(threading.Thread):
                         newlength = len(replace)
                         missinglength = fulllength - newlength
                         if missinglength < 0 :
-                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                            print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                         else :
                             fileold = file
                             file = file.replace(search, replace)
@@ -201,12 +207,12 @@ class configserver(threading.Thread):
                     file = "blob = " + blob3
                     
                     for (search, replace, info) in globalvars.replacestringsCDR :
-                        print "Fixing CDR"
+                        print("Fixing CDR")
                         fulllength = len(search)
                         newlength = len(replace)
                         missinglength = fulllength - newlength
                         if missinglength < 0 :
-                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                            print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                         else :
                             file = file.replace(search, replace)
                             print("Replaced " + info + " " + search + " with " + replace)

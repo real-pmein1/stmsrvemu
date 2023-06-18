@@ -15,7 +15,7 @@ python_check.check_python_version()
 #check for a peer_password, otherwise generate one
 new_password = utilities.check_peerpassword()
 
-print("Steam 2004-2011 administration Server Emulator v" + globalvars.emuversion)
+print("Steam 2004-2011 Administration Server Emulator v" + globalvars.emuversion)
 print("=====================================")
 print
 print("**************************")
@@ -32,9 +32,10 @@ log.info("...Starting Steam Server...\n")
 utilities.checklocalipnet()
 
 administrationservers(config["admin_server_port"], config).start()
-time.sleep(1.0) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
+log.info("Steam Administration Server listening on port " + str(config["admin_server_port"]))
+time.sleep(0.2) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
     
-log.info("Steam administration Server is ready.")
+log.info("Steam Administration Server is ready.")
 
 if new_password == 1 :
     log.info("New Peer Password Generated: \033[1;33m{}\033[0m".format(globalvars.peer_password))

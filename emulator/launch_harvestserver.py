@@ -32,7 +32,8 @@ log.info("...Starting Steam Server...\n")
 utilities.checklocalipnet()
 
 harvestserver(globalvars.serverip, int(config["harvest_server_port"])).start()
-time.sleep(1.0) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
+log.info("Steam MiniDump Harvester Server listening on port " + str(config["harvest_server_port"]))
+time.sleep(0.5) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
     
 log.info("Steam MiniDump Harvester Server is ready.")
 

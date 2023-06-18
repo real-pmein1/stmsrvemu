@@ -25,6 +25,7 @@ def watchkeyboard():
     while True:
         if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
             os._exit(0)
+            
 # Create a thread and start running the watchkeyboard function
 keyboard_thread = threading.Thread(target=watchkeyboard)
 keyboard_thread.daemon = True  # Set the thread as a daemon to exit when the main thread exits
@@ -36,7 +37,7 @@ python_check.check_python_version()
 config = read_config()
 
 #Set is dir server slave or master
-globalvars.is_masterdir = int(config["is_masterdir"])
+globalvars.dir_ismaster = int(config["dir_ismaster"])
 #Set emulator version
 globalvars.emuversion = str(config["emu_version"])
 #set the ip and port for id ticket validation server
@@ -67,8 +68,8 @@ utilities.checklocalipnet()
 utilities.initialise()
 time.sleep(0.2)
 
-#launch directoryserver first so servers can heartbeat the moment they launch
-if globalvars.is_masterdir == 1 :
+#launch directoryserver first so server can heartbeat the moment they launch
+if globalvars.dir_ismaster == 1 :
     log.info("Steam Master General Directory Server listening on port " + str(config["dir_server_port"]))
 else:
     log.info("Steam Slave General Directory Server listening on port " + str(config["dir_server_port"]))
@@ -76,33 +77,33 @@ else:
 directoryserver(int(config["dir_server_port"]), config).start()
 time.sleep(1.0) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
 
-threading.Thread(target=cserserver(globalvars.serverip, 27013).start).start()
-log.info("CSER Server listening on port 27013")
+threading.Thread(target=cserserver(globalvars.serverip, int(config["cser_server_port"])).start).start()
+log.info("CSER Server listening on port " + str(config["cser_server_port"]))
 time.sleep(0.5)
 
-threading.Thread(target=harvestserver(globalvars.serverip, 27055).start).start()
-log.info("MiniDump Harvest Server listening on port 27055")
+threading.Thread(target=harvestserver(globalvars.serverip, int(config["harvest_server_port"])).start).start()
+log.info("MiniDump Harvest Server listening on port " + str(config["harvest_server_port"]))
 time.sleep(0.5)
 
-threading.Thread(target=masterhl(globalvars.serverip, 27010).start).start()
-log.info("Master HL1 Server listening on port 27010")
+threading.Thread(target=masterhl(globalvars.serverip, int(config["masterhl1_server_port"])).start).start()
+log.info("Master HL1 Server listening on port " + str(config["masterhl1_server_port"]))
 time.sleep(0.5)
 
-threading.Thread(target=masterhl2(globalvars.serverip, 27011).start).start()
-log.info("Master HL2 Server listening on port 27011")
+threading.Thread(target=masterhl2(globalvars.serverip, int(config["masterhl2_server_port"])).start).start()
+log.info("Master HL2 Server listening on port " + str(config["masterhl2_server_port"]))
 time.sleep(0.5)
 
-threading.Thread(target=trackerserver(globalvars.serverip, 27014).start).start()
-log.info("[2004-2007] Tracker Server listening on port 27014") #old 2004 tracker/friends CHAT SERVER
+threading.Thread(target=trackerserver(globalvars.serverip, int(config["tracker_server_port"])).start).start()
+log.info("[2004-2007] Tracker Server listening on port " + str(config["tracker_server_port"])) 
 globalvars.tracker = 1
 time.sleep(0.5)
 
-threading.Thread(target=messagesserver(globalvars.serverip, 27017).start).start()
-log.info("Client Messaging Server listening on port 27017")
+threading.Thread(target=messagesserver(globalvars.serverip, int(config["cm_server_port"])).start).start()
+log.info("Client Messaging Server listening on port " + str(config["cm_server_port"]))
 time.sleep(0.2)
 
-configserver(int(config["conf_server_port"]), config).start()
-log.info("Steam Config Server listening on port " + str(config["conf_server_port"]))
+configserver(int(config["config_server_port"]), config).start()
+log.info("Steam Config Server listening on port " + str(config["config_server_port"]))
 time.sleep(0.5)
 
 contentlistserver(int(config["csd_server_port"]), config).start()
@@ -117,28 +118,28 @@ authserver(int(config["auth_server_port"]), config).start()
 log.info("Steam Master Authentication Server listening on port " + str(config["auth_server_port"]))
 time.sleep(0.5)
 
-validationserver("27034", config).start()
+validationserver(int(config["validation_server_port"]), config).start()
 log.info("Steam User ID Validation Server listening on port " + str(config["validation_server_port"]))
 time.sleep(0.5)
 
-vttserver("27046", config).start()
-log.info("Valve Time Tracking Server listening on port 27046")
+vttserver(config["vtt_server_port1"], config).start()
+log.info("Valve Time Tracking Server listening on port " + str(config["vtt_server_port1"]))
 time.sleep(0.2)
 
-vttserver("27047", config).start()
-log.info("Valve CyberCafe server listening on port 27047")
+vttserver(config["vtt_server_port1"], config).start()
+log.info("Valve CyberCafe server listening on port " + str(config["vtt_server_port1"]))
 time.sleep(0.2)
 
-logstatusservers("27021", config).start()
-log.info("Valve Log & Status servers listening on port 27021 TCP & UDP")
+logstatusservers(int(config["status_server_port"]), config).start()
+log.info("Valve Log & Status servers listening on port " + str(config["status_server_port"]) + " TCP & UDP")
 time.sleep(0.2)
 
-miscservers("27022", config).start()
-log.info("Valve MISC servers listening on port 27022 TCP & UDP")
+miscservers(int(config["misc_server_port"]), config).start()
+log.info("Valve MISC servers listening on port " + str(config["misc_server_port"]) + " TCP & UDP")
 time.sleep(0.2)
 
-administrationservers("27023", config).start()
-log.info("Valve Administration servers listening on port 27023 TCP & UDP")
+administrationservers(int(config["admin_server_port"]), config).start()
+log.info("Valve Administration servers listening on port " + str(config["admin_server_port"]) + " TCP & UDP")
 time.sleep(0.2)
 
 if config["sdk_ip"] != "0.0.0.0" :

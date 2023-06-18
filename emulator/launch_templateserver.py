@@ -4,7 +4,7 @@ import steamemu.logger
 import python_check
 
 from steamemu.config import save_config_value
-from steamemu.directoryserver import templateserver
+from steamemu.templateserver import templateserver
 from steamemu.config import read_config
 
 config = read_config()
@@ -31,9 +31,9 @@ log.info("...Starting Steam Server...\n")
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 
-dirlistener = listener(config["dir_server_port"], config)
-dirlistener.start()
-time.sleep(1.0) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
+templatelistener(config["template_server_port"], config).start()
+log.info("Steam template Server listening on port " + str(config["template_server_port"]))
+time.sleep(0.5) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
     
 log.info("Steam template Server is ready.")
 

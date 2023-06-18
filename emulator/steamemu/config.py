@@ -9,7 +9,7 @@ def read_config() :
     myDefaults = {'public_ip':"0.0.0.0", 'log_to_file':"true", 'http_port':"", 'hldsupkg':"", 'steamver':"v2", 'default_password':"password",
                   'v2storagedir':"files/v2storages/", 'v2manifestdir':"files/v2manifests/", 'tinserver':"0", 'tracker_ip':"0.0.0.0",
                   'cafeuser':"noaccountconfigured", 'cafepass':"bar", 'cafemacs':"00-00-00-00-00-00;", 'cafetime':"60", 'cafe_use_mac_auth':"0",
-                  'sdk_ip':"0.0.0.0", 'sdk_port':"27030", 'use_sdk':"0", 'tgt_version':"2", 'is_dirmaster':"1", 'peer_password':"",
+                  'sdk_ip':"0.0.0.0", 'sdk_port':"27030", 'use_sdk':"0", 'tgt_version':"2", 'dir_ismaster':"1", 'peer_password':"",
                   'validation_ip':"127.0.0.1", 'validation_port':"27034", 'masterdir_ipport':"",
                   'main_key_n':"0x86724794f8a0fcb0c129b979e7af2e1e309303a7042503d835708873b1df8a9e307c228b9c0862f8f5dbe6f81579233db8a4fe6ba14551"
                   "679ad72c01973b5ee4ecf8ca2c21524b125bb06cfa0047e2d202c2a70b7f71ad7d1c3665e557a7387bbc43fe52244e58d91a14c660a84b6ae6fdc857b3f59"

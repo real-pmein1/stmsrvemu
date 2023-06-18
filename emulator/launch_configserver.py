@@ -26,15 +26,16 @@ print("**************************")
 print
 
 log = logging.getLogger('emulator')
+log.info("...Starting Steam Server...\n")
 
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 
-configserver(int(config["conf_server_port"]), config).start()
-log.info("Steam Config Server listening on port " + str(config["conf_server_port"]))
+configserver(int(config["config_server_port"]), config).start()
+log.info("Steam Configuration Server listening on port " + str(config["config_server_port"]))
 time.sleep(0.5)
 
-log.info("Steam Config Server is ready.")
+log.info("Steam Configuration Server is ready.")
 
 if new_password == 1 :
     log.info("New Peer Password Generated: \033[1;33m{}\033[0m".format(globalvars.peer_password))

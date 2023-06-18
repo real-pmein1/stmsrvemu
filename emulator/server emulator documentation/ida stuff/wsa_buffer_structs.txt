@@ -1,0 +1,106 @@
+
+
+
+struct CWSABUFWrapper
+{
+  _DWORD m_uSizeOfMallocedDataBuffer;
+  void *m_pMallocedDataBuffer;
+  _DWORD m_pMsgCursor;
+  _DWORD m_pMsgEnd;
+};
+struct rWSABUFInfo
+{
+  _BYTE gap0[8];
+  CHAR *m_pMsgCursor;
+  _DWORD m_pMsgEnd;
+};
+struct __declspec(align(4)) rWSABUFInfo
+{
+  _BYTE gap0[8];
+  struct_dword18 *m_vecWSABUF;
+  _DWORD m_pMsgEnd;
+};
+struct __declspec(align(8)) vecWSABUFinfo
+{
+  _DWORD m_eState;
+  _DWORD dword4;
+  struct _WSABUF *m_vecWSABUF;
+  char charC;
+  struct CWSABUFWrapper dword10;
+  _DWORD *unknown;
+  _DWORD *m_uCurrentOrFinalPreparedWSABUFIdx;
+  _DWORD *m_uNextIncompleteSendOrReceiveWSABUFIdx;
+};
+struct __declspec(align(4)) struct_a3
+{
+  _DWORD dword0;
+  _DWORD dword4;
+  _WSABUF *m_vecWSABUF;
+  char charC;
+  _BYTE gapD[255];
+  _DWORD dword10C;
+  _DWORD dword110;
+  _DWORD dword114;
+};
+struct m_vecWSABUF
+{
+  _DWORD dword0;
+  _DWORD dword4;
+  __attribute__((aligned(16))) _DWORD dword10;
+  _BYTE gap14[8];
+  _DWORD dword1C;
+};
+struct m_vecWSABUFInfo
+{
+  _BYTE m_eState[4];
+  _DWORD dword4;
+  struct m_vecWSABUF dword8;
+  _DWORD dword10;
+  struct m_vecWSABUF m_vecWSABUFInfosize;
+  _DWORD m_uCurrentOrFinalPreparedWSABUFIdx;
+  _DWORD m_uNextIncompleteSendOrReceiveWSABUFIdx;
+};
+
+struct struct_this
+{
+  _DWORD dword0;
+  struct rWSABUFInfo dword4; = vector/array wsabuf
+  struct common::CWSABUFWrapper::TWSABUFInfo dword10;
+  _BYTE m_uCurrentOrFinalPreparedWSABUFIdx[4];
+  _DWORD m_uSizeOfLengthPrefixedMsg;
+  _DWORD dword20;
+  _DWORD dword28;
+  _DWORD dword2C;
+};
+
+good structs 2004 and above:
+struct _WSABUF
+{
+  ULONG len;
+  CHAR *buf;
+};
+struct __declspec(align(16)) CWSABUFWrapper
+{
+  _DWORD m_uSizeOfMallocedDataBuffer;
+  void *m_pMallocedDataBuffer;
+  void *m_pMsgCursor;
+  _DWORD m_pMsgEnd;
+};
+struct __declspec(align(8)) vecWSABUFinfo
+{
+  _DWORD m_eState;
+  _DWORD dword4;
+  struct _WSABUF *m_vecWSABUF;
+  char charC;
+  struct CWSABUFWrapper dword10;
+  _DWORD *unknown;
+  _DWORD *m_uCurrentOrFinalPreparedWSABUFIdx;
+  _DWORD *m_uNextIncompleteSendOrReceiveWSABUFIdx;
+};
+
+good structs 2003:
+
+
+
+good structs 2002:
+
