@@ -1,0 +1,122 @@
+record name: CSubscriberAccountRecord 
+0 = versionnum(Always: 4)
+ 1 = unique username
+ 2=account creation time
+ 3=OptionalAccountCreationKey (Always: Egq-pe-y)
+ 4=OptionalBillingInfoRecord
+	AccountPaymentCardInfoRecord
+ 5=AccountUserPasswordsRecord
+	<username>/AccountUserPasswordRecord
+	1=SaltedPassphraseDigest
+	2=PassphraseSalt
+	3=PersonalQuestion
+	4=SaltedAnswerToQuestionDigest
+	5=AnswerToQuestionSalt
+ 6=AccountUsersRecord
+	<Username>/AccountUserRecord 
+   		 1=SteamLocalUserID
+  		 2=UserType (admin or regular user)
+    		 3=UserAppAccessRightsRecord
+ 7=AccountSubscriptionsRecord
+	<subscription#>/AccountSubscriptionRecord
+		1=SubscribedDate
+		2=UnsubscribedDate
+		3=SubscriptionStatus
+		5=StatusChangeFlag
+		6=PreviousSubscriptionState
+		7=BillingStatus ---not used on server?
+		8=UserIP   ---not used on server?
+ 8=DerivedSubscribedAppsRecord
+	appid
+ 9=LastRecalcDerivedSubscribedAppsTime
+ 10=Cellid
+ 11=AccountEmailAddress
+ 12=AccountStatus
+ 14=AccountLastModifiedTime
+ 15=AccountSubscriptionsBillingInfoRecord
+	<billing id>
+		1=AccountPaymentCardInfoRecord
+		2=AccountPrepurchasedInfoRecord
+			1=cdkeyname/product type name
+			2=cdkey
+		3=AccountBillingInfoRecord
+		4=AccountExternalBillingInfoRecord
+	5=AccountPaymentCardReceiptRecord
+	6=AccountPrepurchaseReceiptRecord
+	7=EmptyReceiptRecord
+
+
+AccountPaymentCardInfoRecord
+    1=PaymentCardType
+    2=CardNumber
+    3=CardHolderName
+    4=CardExpYear
+    5=CardExpMonth
+    6=CardCVV2
+    7=BillingAddress1
+    8=BillingAddress2
+    9=BillingCity
+    10=BillinZip
+    11=BillingState
+    12=BillingCountry
+    13=BillingPhone
+    14=BillinEmailAddress
+    15=CCApprovalDate
+    16=CCApprovalCode
+    17=CDenialDate
+    18=CDenialCode
+    19=UseAVS
+    20=PriceBeforeTax
+    21=TaxAmount
+    22=TransactionType
+    23=AuthComments
+    24=AuthStatus
+    25=AuthSource
+    26=AuthResponse
+    27=TransDate
+    28=TransTime
+    29=PS2000Data
+    30=SettlementDate
+    31=SettlementCode   	   
+	   32=CCTSResponseCode, 33=SettlementBatchId, 34=SettlementBatchSeq, 35=SettlementApprovalCode, 36=SettlementComments, 37=SettlementStatus, 38=AStoBBSTxnId, 39=SubsId, 
+	   40=AcctName, 41=CC1TimeChargeTxnSeq, 42=CustSupportName, 43=ChargeBackCaseNumber, 44=GetCreditForceTxnSeq, 45=ShippingInfoRecord, 46=CVV2Response
+
+AccountExternalBillingInfoRecord
+	1=ExternalAccountName
+	2=ExternalAccountPassword
+
+AccountPaymentCardReceiptRecord
+	1=PaymentCardType
+	2=CardNumber
+	3=CardHolderName
+	4-6 ????
+	7=BillingAddress1
+	8=BillingAddress2
+	9=BillingCity
+	10=BillingZip
+	11=BillingState
+	12=BillingCountry
+	13=CCApprovalCode
+	14=PriceBeforeTax
+	15=TaxAmount
+	16=TransDate
+	17=TransTime
+	18=AStoBBSTxnId
+	19=ShippingCost
+
+CAccountPrepurchaseReceiptRecord
+	<unknown value, perhaps sub or appid?>
+		1=TypeOfProofOfPurchase 
+		2=AStoBBSTxnId(key or 000)
+
+CAccountPrepurchaseInfoRecord
+	1=TypeOfProofOfPurchase
+	2=BinaryProofOfPurchaseToken
+	3=TokenRejectionReason
+	4=AStoBBSTxnId
+	5=SubsId
+	6=AcctName
+	7=CustSupportName
+
+
+

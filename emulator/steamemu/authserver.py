@@ -302,33 +302,87 @@ class authserver(threading.Thread):
                     clientsocket.send(ticket_full)
 
             elif len(command) >= 256 :
-                print(binascii.b2a_hex(command[0:3]))
-                if binascii.b2a_hex(command[0:3]) == "120168" :
-                    log.info(clientid + "Change Email")
-                    print(binascii.b2a_hex(command))
-                    clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "100168" :
-                    log.info(clientid + "Change password")
-                    print(binascii.b2a_hex(command))
-                    clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "110168" :
-                    log.info(clientid + "Change Personal Question")
-                    print(binascii.b2a_hex(command))
-                    clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "1C0168" :
-                    log.info(clientid + "Change Account Name")
-                    print(binascii.b2a_hex(command))
-                    clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "0A0168" :
+                #print(binascii.b2a_hex(command[0:3]))
+                if binascii.b2a_hex(command[0:3]) == "040168" : #User Logged off
+                    log.info(clientid + "User Logged Off")
+                    clientsocket.close()         
+                elif binascii.b2a_hex(command[0:3]) == "0A0168" : # Get Encrypted Ticket for AppServer
                     log.info(clientid + "Get Encrypted UserID Ticket To Send To AppServer")
                     print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "040168" :
-                    log.info(clientid + "User Logged Off")
+                elif binascii.b2a_hex(command[0:3]) == "100168" : # Change Password
+                    log.info(clientid + "Change password")
+                    print(binascii.b2a_hex(command))
+                    clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "120168" : # Change Email
+                    log.info(clientid + "Change Email")
+                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                    signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
+                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                    clientsocket.send(reply)
+                    reply = clientsocket.recv_withlen()
+                
+                    RSAdata = reply[2:130]
+                    datalength = struct.unpack(">L", reply[130:134])[0]
+                    cryptedblob_signature = reply[134:136]
+                    cryptedblob_length = reply[136:140]
+                    cryptedblob_slack = reply[140:144]
+                    cryptedblob = reply[144:]
+                
+                    key = encryption.get_aes_key(RSAdata, encryption.network_key)
+                    log.debug("Message verification:" + repr(encryption.verify_message(key, cryptedblob)))
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = encryption.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = blob_utilities.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    usernamechk = blobdict['\x01\x00\x00\x00']
+                    username_str = usernamechk.rstrip('\x00')
+                    with open("files/users/" + username_str + ".py", 'r') as userblobfile:
+                        userblobstr = userblobfile.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    #print(str(userblob))
+                    personalsalt = userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00']
+                    #print(personalsalt)
+                    clientsocket.send(personalsalt) #NEW SALT PER USER
+                    
+                    #===================Reply with verification answer=======================#
+                    
+                    reply2 = clientsocket.recv_withlen()
+                
+                    RSAdata = reply2[2:130]
+                    datalength = struct.unpack(">L", reply2[130:134])[0]
+                    cryptedblob_signature = reply2[134:136]
+                    cryptedblob_length = reply2[136:140]
+                    cryptedblob_slack = reply2[140:144]
+                    cryptedblob = reply2[144:]
+                
+                    key = encryption.get_aes_key(RSAdata, encryption.network_key)
+                    log.debug("Message verification:" + repr(encryption.verify_message(key, cryptedblob)))
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = encryption.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    print blob_utilities.blob_unserialize(plaintext)
+                    clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "110168" : # Change Personal Question
+                    log.info(clientid + "Change Personal Question")
+                    print(command)
+                   # print blob_utilities.blob_unserialize(plaintext)
                     #clientsocket.send("\x01")
+                elif binascii.b2a_hex(command[0:3]) == "1C0168" : # Change Account Name
+                    log.info(clientid + "Change Account Name")
+                    print(binascii.b2a_hex(command))
+                    clientsocket.send("\x01")   
                 else :
-                    print(binascii.b2a_hex(command[3:]))
-                    log.info(clientid + "Ticket login")
+                    log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command[0]))
+                    log.warning(clientid + "Extra data:", binascii.b2a_hex(data))
+                    #print(binascii.b2a_hex(command[3:]))
+                    #log.info(clientid + "Ticket login")
                     clientsocket.send("\x01")
             elif len(command) == 1 :
                 if command == "\x1d" : #Create Account: Is Name in use
@@ -365,11 +419,11 @@ class authserver(threading.Thread):
                     if (os.path.isfile("files/users/" + username_str + ".py")) :
                         clientsocket.send("\x01") #Username in use!
                     else :
-                        clientsocket.send("\x00") #Username is not in use                    
-                elif command == "\x22" : #Check Email is verified
+                        clientsocket.send("\x00") #Username is not in use      
+                elif command == "\x22" : # Check Email is verified
                     log.info(clientid + "command: Check email [Not Implemented]")
                     clientsocket.send("\x00")
-                elif command == "\x01" : #Create User
+                elif command == "\x01" : # Create User
                     log.info(clientid + "command: Create user")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
@@ -419,9 +473,72 @@ class authserver(threading.Thread):
                         userblobfile.write(str(plainblob_fixed))
                     
                     clientsocket.send("\x00")
+                elif command == "\x13" : # Verify Email
+                    print("verify Email")
+                    clientsocket.send("\x01") 
+                elif command == "\x14" : # Request verification Email
+                    print("Requested Verification Email")
+                    clientsocket.send("\x01") 
+                elif command == "\x09" : # Retrieve Account Info
+                    print("Request Account Information")
+                    clientsocket.send("\x01") 
+                elif command == "\x15" : # Update Account Billing Info
+                    print("Update Account Billing Information") 
+                    clientsocket.send("\x01") 
+                elif command == "\x16" : # Update Subscription Billing Info
+                    print("Update Subscription Billing Information")
+                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                    signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
+                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                    clientsocket.send(reply)
+                    reply = clientsocket.recv_withlen()
                 
-                elif command == "\x0e" : #Lost Pass: request account info by username
-                    log.info(clientid + "command: Lost password - username check [Not Implemented]")
+                    RSAdata = reply[2:130]
+                    datalength = struct.unpack(">L", reply[130:134])[0]
+                    cryptedblob_signature = reply[134:136]
+                    cryptedblob_length = reply[136:140]
+                    cryptedblob_slack = reply[140:144]
+                    cryptedblob = reply[144:]
+                
+                    key = encryption.get_aes_key(RSAdata, encryption.network_key)
+                    log.debug("Message verification:" + repr(encryption.verify_message(key, cryptedblob)))
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = encryption.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = blob_utilities.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    usernamechk = blobdict['\x01\x00\x00\x00']
+                    username_str = usernamechk.rstrip('\x00')
+                    with open("files/users/" + username_str + ".py", 'r') as userblobfile:
+                        userblobstr = userblobfile.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    #print(str(userblob))
+                    personalsalt = userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00']
+                    #print(personalsalt)
+                    clientsocket.send(personalsalt) #NEW SALT PER USER
+                    
+                    reply2 = clientsocket.recv_withlen()
+                
+                    RSAdata = reply2[2:130]
+                    datalength = struct.unpack(">L", reply2[130:134])[0]
+                    cryptedblob_signature = reply2[134:136]
+                    cryptedblob_length = reply2[136:140]
+                    cryptedblob_slack = reply2[140:144]
+                    cryptedblob = reply2[144:]
+                
+                    key = encryption.get_aes_key(RSAdata, encryption.network_key)
+                    log.debug("Message verification:" + repr(encryption.verify_message(key, cryptedblob)))
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = encryption.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print blob_utilities.blob_unserialize(plaintext)
+                elif command == "\x0e" : # Lost Pass: request account info by username/request email verification
+                    log.info(clientid + "Lost password - Find by Username [Not Implemented]")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
@@ -451,7 +568,7 @@ class authserver(threading.Thread):
                         clientsocket.send("\x00")
                     else :
                         clientsocket.send("\x01")
-                elif command == "\x0f" : #Lost Pass: Reset Password
+                elif command == "\x0f" : # Lost Pass: Reset Password
                     log.info(clientid + "command: Lost password - reset")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
@@ -482,10 +599,13 @@ class authserver(threading.Thread):
                     with open("files/users/" + username_str + ".py", 'r') as userblobfile:
                         userblobstr = userblobfile.read()
                         userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                    #print(userblob)
+                    #print(str(userblob))
                     personalsalt = userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00']
                     #print(personalsalt)
                     clientsocket.send(personalsalt) #NEW SALT PER USER
+                    
+                    #===================Reply with verification answer=======================#
+                    
                     reply2 = clientsocket.recv_withlen()
                 
                     RSAdata = reply2[2:130]
@@ -502,10 +622,10 @@ class authserver(threading.Thread):
                     ciphertext = cryptedblob[20:-20]
                     plaintext = encryption.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
-                    #print blob_utilities.blob_unserialize(plaintext)
-                elif command == "\x20" : #Lost Pass: request account info by email
+                    print blob_utilities.blob_unserialize(plaintext)
+                elif command == "\x20" : # Lost Pass: request account info by email
                     log.info(clientid + "command: Lost password - email check [Not Implemented]")
-                elif command == "\x21" : #Lost Pass: request account info by cdkey
+                elif command == "\x21" : # Lost Pass: request account info by cdkey
                     log.info(clientid + "command: Lost password - request account name by cdkey [Not Implemented]")
                 else :
                     # This is cheating. I've just cut'n'pasted the hex from the network_key. FIXME
