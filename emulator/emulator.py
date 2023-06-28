@@ -1,5 +1,5 @@
 import sys
-import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile
+import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, types
 
 import struct #for int to byte conversion
 
@@ -22,13 +22,14 @@ from steamemu.masterhl2 import masterhl2
 from steamemu.friends import friends
 from steamemu.vttserver import vttserver
 from steamemu.twosevenzeroonefour import twosevenzeroonefour
+from steamemu.validationserver import validationserver
 
 #from steamemu.udpserver import udpserver
 
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-print("Steam 2004-2011 Server Emulator v0.60")
+print("Steam 2004-2011 Server Emulator v0.61")
 print("=====================================")
 print
 
@@ -160,14 +161,56 @@ class udplistener(threading.Thread):
                     #serversocket.close()
                 elif globalvars.data.startswith("q") :
                     header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-                    challenge = struct.pack("I", globalvars.hl1challengenum + 1)
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    registered = 0
+                    for server in globalvars.hl1serverlist :
+                        if len(str(server)) > 5 :
+                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                                challenge = struct.pack("I", int(server[4]))
+                                registered = 1
+                                break
+                    if registered == 0 :
+                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl1challengenum + 1))
+                        challenge = struct.pack("I", globalvars.hl1challengenum + 1)
+                        globalvars.hl1challengenum += 1
                     serversocket.sendto(header + challenge, globalvars.addr)
-                    globalvars.hl1challengenum += 1
                 elif globalvars.data.startswith("M") :
                     header = b'\xFF\xFF\xFF\xFF\x4E\x0A'
-                    challenge = struct.pack("I", globalvars.hl1challengenum + 1)
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    registered = 0
+                    for server in globalvars.hl1serverlist :
+                        if len(str(server)) > 5 :
+                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                                challenge = struct.pack("I", int(server[4]))
+                                registered = 1
+                                break
+                    if registered == 0 :
+                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl1challengenum + 1))
+                        challenge = struct.pack("I", globalvars.hl1challengenum + 1)
+                        globalvars.hl1challengenum += 1
                     serversocket.sendto(header + challenge, globalvars.addr)
-                    globalvars.hl1challengenum += 1
                 elif globalvars.data.startswith("0") :
                     serverdata1 = globalvars.data.split('\n')
                     serverdata2 = serverdata1[1]
@@ -240,9 +283,30 @@ class udplistener(threading.Thread):
                     serversocket.sendto(header + nullip + nullport, globalvars.addr)
                 elif globalvars.data.startswith("q") :
                     header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-                    challenge = struct.pack("I", globalvars.hl2challengenum + 1)
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    registered = 0
+                    for server in globalvars.hl2serverlist :
+                        if len(str(server)) > 5 :
+                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                                challenge = struct.pack("I", int(server[4]))
+                                registered = 1
+                                break
+                    if registered == 0 :
+                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl2challengenum + 1))
+                        challenge = struct.pack("I", globalvars.hl2challengenum + 1)
+                        globalvars.hl2challengenum += 1
                     serversocket.sendto(header + challenge, globalvars.addr)
-                    globalvars.hl2challengenum += 1
                 elif globalvars.data.startswith("0") :
                     serverdata1 = globalvars.data.split('\n')
                     #print(serverdata1)
@@ -261,8 +325,8 @@ class udplistener(threading.Thread):
                     #print(tempserverlist[3])
                     #print(tempserverlist[4])
                     #print(tempserverlist[5])
-                    print("This Challenge: %s" % tempserverlist[4])
-                    print("Current Challenge: %s" % (globalvars.hl2challengenum))
+                    log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
+                    log.debug(clientid + "Current Challenge: %s" % (globalvars.hl2challengenum))
                 elif globalvars.data.startswith("b") :
                     ipstr = str(globalvars.addr)
                     ipstr1 = ipstr.split('\'')
@@ -285,9 +349,16 @@ class udplistener(threading.Thread):
                             #print(type(portactual))
                             #print(type(globalvars.hl2serverlist[i][0]))
                             #print(type(globalvars.hl2serverlist[i][24]))
+                            #for server in globalvars.hl2serverlist :
+                                #print(server)
                             if globalvars.hl2serverlist[i][0] == ipactual and (str(globalvars.hl2serverlist[i][24]) == portactual or "27015" == portactual) :
+                                #print(type(globalvars.hl2serverlist[i]))
+                                #print(type(i))
+                                #print(type(globalvars.hl2serverlist))
+                                #print(globalvars.hl2serverlist[i][0])
+                                #print(str(globalvars.hl2serverlist[i][24]))
                                 globalvars.hl2serverlist.pop(i)
-                                print("Removed game server: %s:%s" % (ipactual, portactual))
+                                log.info(clientid + "Unregistered server: %s:%s" % (ipactual, portactual))
                                 running -= 1
                         i += 1
                     print("Running servers: %s" % str(running))
@@ -622,10 +693,10 @@ hl2masterlistener = udplistener(27011, masterhl2, config)
 hl2masterlistener.start()
 log.info("Master HL2 Server listening on port 27011")
 time.sleep(0.2)
-twosevenzeroonefourlistener = udplistener(27014, twosevenzeroonefour, config)
-twosevenzeroonefourlistener.start()
-log.info("Server listening on port 27014") #ANOTHER CHAT SERVER
-time.sleep(0.2)
+#twosevenzeroonefourlistener = udplistener(27014, twosevenzeroonefour, config)
+#twosevenzeroonefourlistener.start()
+#log.info("Server listening on port 27014") #ANOTHER CHAT SERVER
+#time.sleep(0.2)
 if config["tracker_ip"] == "0.0.0.0" :
     #chatlistener = udplistener(27017, friends, config)
     #chatlistener.start()
@@ -661,7 +732,11 @@ log.info("Valve Time Tracking Server listening on port 27046")
 time.sleep(0.2)
 vttlistener2 = listener("27047", vttserver, config)
 vttlistener2.start()
-log.info("Valve CyberCafe server listening on port 27047")
+log.info("Valve CyberCafe Server listening on port 27047")
+time.sleep(0.2)
+vallistener = listener("27034", validationserver, config)
+vallistener.start()
+log.info("Steam User Validation Server listening on port 27034")
 time.sleep(0.2)
 if config["sdk_ip"] != "0.0.0.0" :
     log.info("Steamworks SDK Content Server configured on port " + str(config["sdk_port"]))
