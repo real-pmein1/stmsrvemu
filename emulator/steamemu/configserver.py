@@ -11,7 +11,7 @@ import serverlist_utilities
 from serverlist_utilities import remove_from_dir, send_heartbeat
 from Crypto.Hash import SHA
 
-log = logging.getLogger("confsrv")
+log = logging.getLogger("ConfigSRV")
         
 class configserver(threading.Thread):
     def __init__(self, port, config):
@@ -64,12 +64,12 @@ class configserver(threading.Thread):
                 if command == "\x01" :
                     log.info(clientid + "sending first blob")
 
-                    if os.path.isfile("files/1stcdr.py") :
-                        f = open("files/1stcdr.py", "r")
+                    if os.path.isfile("files/firstblob.py") :
+                        f = open("files/firstblob.py", "r")
                         firstblob = f.read()
                         f.close()
                         execdict = {}
-                        execfile("files/1stcdr.py", execdict)
+                        execfile("files/firstblob.py", execdict)
                         blob = blob_utilities.blob_serialize(execdict["blob"])
                     else :
                         f = open("files/firstblob.bin", "rb")
@@ -101,31 +101,21 @@ class configserver(threading.Thread):
 
                 elif command == "\x05" :
                     log.info(clientid + "confserver command 5, unknown, sending zero reply")
-                    clientsocket.send("\x00")
+                    clientsocket.send("\x00") #perhaps to signal if network is available
 
                 elif command == "\x06" :
                     log.info(clientid + "confserver command 6, unknown, sending zero reply")
                     clientsocket.send("\x00")
 
                 elif command == "\x07" :
-                    log.info(clientid + "Sending out list of Content Servers")
+                    log.info(clientid + "confserver command 7, Sending pre-recorded packet")
 
                     clientsocket.send(binascii.a2b_hex("0001312d000000012c"))
-        
-                    #if self.config["public_ip"] != "0.0.0.0" :
-                    #    if clientid.startswith(globalvars.servernet) :
-                    #        bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
-                    #    else :
-                    #        bin_ip = utilities.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
-                    #else:
-                    #    bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
-                    #reply = struct.pack(">H", 1) + bin_ip
-                    
-                    #clientsocket.send_withlen(reply)
+
 
                 elif command == "\x08" :
                     log.info(clientid + "confserver command 8, unknown, sending zero reply")
-                    clientsocket.send("\x00")
+                    clientsocket.send("\x01")
 
                 else :
                     log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command))
@@ -140,10 +130,10 @@ class configserver(threading.Thread):
                     f = open("files/cache/secondblob.bin", "rb")
                     blob = f.read()
                     f.close()
-                elif os.path.isfile("files/2ndcdr.py") :
-                    if not os.path.isfile("files/2ndcdr.orig") :
-                        shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
-                    g = open("files/2ndcdr.py", "r")
+                elif os.path.isfile("files/secondblob.py") :
+                    if not os.path.isfile("files/secondblob.orig") :
+                        shutil.copy2("files/secondblob.py","files/secondblob.py.orig")
+                    g = open("files/secondblob.py", "r")
                     file = g.read()
                     g.close()
                     
@@ -158,12 +148,12 @@ class configserver(threading.Thread):
                             file = file.replace(search, replace)
                             if (search in fileold) and (replace in file) :
                                 print("Replaced " + info + " " + search + " with " + replace)
-                    h = open("files/2ndcdr.py", "w")
+                    h = open("files/secondblob.py", "w")
                     h.write(file)
                     h.close()
                     
                     execdict = {}
-                    execfile("files/2ndcdr.py", execdict)
+                    execfile("files/secondblob.py", execdict)
                     blob = blob_utilities.blob_serialize(execdict["blob"])
                     
                     if blob[0:2] == "\x01\x43" :

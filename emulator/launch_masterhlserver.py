@@ -25,7 +25,7 @@ if config["public_ip"] != "0.0.0.0" :
 print("**************************")
 print
 
-log = logging.getLogger('emulator')
+log = logging.getLogger('MasterHLSRV')
 log.info("...Starting Steam Server...\n")
 
 #check local ip and set globalvars.serverip

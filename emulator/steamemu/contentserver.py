@@ -21,12 +21,22 @@ from time import sleep
 from Crypto.Hash import SHA
 from contentserverlist_utilities import send_removal, send_heartbeat
 
-log = logging.getLogger("contentsrv")
+log = logging.getLogger("ContentSRV")
 app_list = []
+
 
 class contentserver(threading.Thread):
     global log
-    
+    def check_thread_status(self):
+        while True:
+            if self.thread2.is_alive():
+                log.error("[content server] Thread is alive")
+            else:
+                log.error("[content server] Thread has died... attempting restart")
+                self.thread2.start()
+                break
+        time.sleep(45 * 60)  # Delay for 45 minutes
+
     def __init__(self, port, config):
         threading.Thread.__init__(self)
         self.port = int(port)
@@ -39,13 +49,15 @@ class contentserver(threading.Thread):
             'timestamp': 1623276000
         }
         self.applist = self.parse_manifest_files(self.contentserver_info)
-
         # Register the cleanup function using atexit
         #atexit.register(send_removal(globalvars.serverip, int(self.port), globalvars.cs_region))
         
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
+        self.thread2 = threading.Thread(target=self.heartbeat_thread)
+        self.thread2.daemon = True
+        self.thread2.start()
+        #thread_status_checker = threading.Thread(target=self.check_thread_status)
+        #thread_status_checker.daemon = True
+        #thread_status_checker.start()
 
     def heartbeat_thread(self):       
         while True:

@@ -9,7 +9,7 @@ import serverlist_utilities
 from serverlist_utilities import remove_from_dir, send_heartbeat
 
 class miscservers(threading.Thread):
-    log = logging.getLogger("miscsrv")
+    log = logging.getLogger("MISCSRV")
     
     def __init__(self, port, config):
         threading.Thread.__init__(self)

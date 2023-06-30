@@ -28,7 +28,7 @@ print
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 
-log = logging.getLogger('emulator')
+log = logging.getLogger('CMSRV')
 log.info("...Starting Steam Server...\n")
 
 messagesserver(globalvars.serverip, int(config["cm_server_port"])).start()

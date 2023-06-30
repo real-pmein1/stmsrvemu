@@ -39,7 +39,7 @@ class messagesserver(threading.Thread):
             threading.Thread(target=self.process_packet, args=(data, address)).start()
 
     def process_packet(self, data, address):
-        log = logging.getLogger("msgsrv")
+        log = logging.getLogger("CMSRV")
         clientid = str(config["server_ip"]) + ": "
         log.info(clientid + "Connected to Message Server")
         log.debug(clientid + ("Received message: %s, from %s" % (data, address)))

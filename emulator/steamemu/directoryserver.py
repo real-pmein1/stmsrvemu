@@ -29,12 +29,12 @@ class directoryserver(threading.Thread):
             'server_type': self.server_type,
             'timestamp': int(time.time())
         }
+        log = logging.getLogger("DirectorySRV")
         # atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type)) # add function for cleanup when program exits
         if globalvars.dir_ismaster == 1 :  # add ourself to the serverlist as a directoryserver type, with a 0'd timestamp to indicate that it cannot be removed 
             manager.add_server_info(globalvars.serverip, self.config["dir_server_port"], self.server_type, 1)
-            log = logging.getLogger("master_dirserver")
-        else:
-            log = logging.getLogger("dirserver")
+        #    log = logging.getLogger("master_dirserver")
+        else:       
             log.info("Connecting to Master Directory Server")
             thread2 = threading.Thread(target=self.heartbeat_thread)
             thread2.daemon = True

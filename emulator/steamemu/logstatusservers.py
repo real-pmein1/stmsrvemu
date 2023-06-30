@@ -17,7 +17,7 @@ class logstatusservers(threading.Thread):
         self.config = config
         self.tcp_socket = emu_socket.ImpSocket()
         self.udp_socket = pysocket.socket(pysocket.AF_INET, pysocket.SOCK_DGRAM)
-        self.server_type = "statusserver"
+        self.server_type = "StatusSRV"
         self.server_info = {
                     'ip_address': globalvars.serverip,
                     'port': int(self.port),

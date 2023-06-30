@@ -39,7 +39,7 @@ class trackerserver(threading.Thread) :
             threading.Thread(target=self.process_packet, args=(data, address)).start()
 
     def process_packet(self, data, address) :
-        log = logging.getLogger("trackersrv")
+        log = logging.getLogger("TrackerSRV")
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Tracker Server")
         log.debug(clientid + ("Received message: %s, from %s" % (data, address)))

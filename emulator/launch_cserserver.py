@@ -25,13 +25,13 @@ if config["public_ip"] != "0.0.0.0" :
 print("**************************")
 print
 
-log = logging.getLogger('emulator')
+log = logging.getLogger('CSERSRV')
 log.info("...Starting Steam Server...\n")
 
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 
-cserserver(globalvars.serverip, int(config["cser_server_port")]).start()
+cserserver(globalvars.serverip, int(config["cser_server_port"])).start()
 log.info("Steam CSER Server listening on port " + str(config["cser_server_port"]))
 time.sleep(0.5) #give us a little more time than usual to make sure we are initialized before servers start their heartbeat
     

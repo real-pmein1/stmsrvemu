@@ -60,7 +60,7 @@ class cserserver(threading.Thread):
             threading.Thread(target=self.process_packet, args=(data, address)).start()
 
     def process_packet(self, data, address):
-        log = logging.getLogger("csersrv")
+        log = logging.getLogger("CSERSRV")
         # Process the received packet
         clientid = str(address) + ": "
         log.info(clientid + "Connected to CSER Server")

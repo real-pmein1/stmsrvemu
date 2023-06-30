@@ -11,7 +11,7 @@ import serverlist_utilities
 from serverlist_utilities import remove_from_dir, send_heartbeat
 from Crypto.Hash import SHA
 
-log = logging.getLogger("authsrv")
+log = logging.getLogger("AuthenticationSRV")
 
 class authserver(threading.Thread):
     def __init__(self, port, config):
@@ -185,33 +185,91 @@ class authserver(threading.Thread):
                         blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
-                        steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        bin_ip = utilities.encodeIP((globalvars.serverip, self.config["validation_server_port"]))
+                        #steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
+                        steamid = binascii.a2b_hex("0000" + binascii.b2a_hex(userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16]))
+                        #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
+                        #authport = struct.pack("<L", int(port))
+                        bin_ip = utilities.encodeIP((self.config["server_ip"], self.config["validation_port"]))
+                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
                         servers = bin_ip + bin_ip
-                        #servers = binascii.b2a_hex("7F0000019A697F0000019A69")
                         times = utilities.unixtime_to_steamtime(currtime) + utilities.unixtime_to_steamtime(currtime + (60*60*24*28))
                         subheader = innerkey + steamid + servers + times
                         subheader_encrypted = encryption.aes_encrypt(key, outerIV, subheader)
-                        if globalvars.tgt_version == "1" :
-                            subheader_encrypted = "\x00\x01" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
+                        subhead_decr_len = "\x00\x36"
+                        subhead_encr_len = "\x00\x40"
+                        if globalvars.tgt_version == "1" : #nullData1
+                            subheader_encrypted = "\x00\x01" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted #TTicket_SubHeader (EncrData)
                             log.debug(clientid + "TGT Version: 1") #v2 Steam
                         elif globalvars.tgt_version == "2" :
                             subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
                             log.debug(clientid + "TGT Version: 2") #v3 Steam
                         else :
                             subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
-                            log.debug(clientid + "TGT Version: 2")
-                        unknown_part = "\x01\x68" + ("\xff" * 0x168)
-                        ticket = subheader_encrypted + unknown_part + blob_encrypted
+                            log.debug(clientid + "TGT Version: 2") #Assume v3 Steam
+                        #unknown_part = "\x01\x68" + ("\xff" * 0x168) #THE ACTUAL TICKET!!!
+                        #unknown_part = "\x01\x64" + ("\xfe" * 0x164)
+                        #\x00\x02 + \x00\x80 + outerIV + (\x00 * int(80)) + \x00\x3a + \x00\x50 + (\x00 * int(50)) + DATA=\x00\x10 + (\x06\x01 in user.py) + clientIP + \x00\x00\x00\x00 + (\x00 * int(80))
+                        #0 = eVersionNum
+                        #1=eUniqueAccountName
+                        #2=eAccountUserName
+                        #3=eSteamInstanceID
+                        #4=eSteamLocalUserID
+                        #5=eClientExternalIPAddr
+                        #6=eClientLocalIPAddr
+                        #7=eUserIDTicketValidationServerIPAddr1
+                        #8=eUserIDTicketValidationServerport1
+                        #9=eUserIDTicketValidationServerIPAddr2
+                        #10=eUserIDTicketValidationServerport2
+                        #11=eClientToServerAESSessionKey
+                        #12=eTicketCreationTime
+                        #13=TicketValidUntilTime
+                        #14=ServerReadablePart
+                        subcommand3 = "\x00\x00\x00\x00"
+                        empty1_len = "\x00\x80"
+                        empty1 = ("\x00" * 0x80) #TTicketHeader unknown encrypted
+                        empty3 = ("\x00" * 0x80) #unknown encrypted
+                        #username_len = len(username) * 2
+                        #username_len_packed = struct.pack(">H", 50 + username_len)
+                        accountId = userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #SteamID
+                        clientIP = pysocket.inet_aton(clientsocket.address[0])
+                        if globalvars.tgt_version == "1" :
+                            subcommand1 = "\x00\x01" #for TGT v1
+                            subcommand2 = "" #missing for TGT v1
+                            empty2_dec_len = "\x00\x42"
+                            empty2_enc_len = "\x00\x50"
+                            empty2 = ("\x00" * 0x50) #160 chars long (80 int bytes) unknown encrypted
+                        elif globalvars.tgt_version == "2" :
+                            subcommand1 = "\x00\x02" #for TGT v2
+                            subcommand2 = "\x00\x10" #steamID+clientIPaddress TGT v2 only
+                            subcommand2 = subcommand2 + accountId + clientIP
+                            empty2_dec_len = "\x00\x52"
+                            empty2_enc_len = "\x00\x60"
+                            empty2 = ("\x00" * 0x60) #192 chars long (96 int bytes) unknown encrypted
+                        else :
+                            subcommand1 = "\x00\x02" #assume TGT v2
+                            subcommand2 = "\x00\x10" #steamID+clientIPaddress TGT v2 only
+                            subcommand2 = subcommand2 + accountId + clientIP
+                            empty2_dec_len = "\x00\x52"
+                            empty2_enc_len = "\x00\x60"
+                            empty2 = ("\x00" * 0x60) #192 chars long (96 int bytes) unknown encrypted
+                        
+                        #empty2 = username + empty2_empty[(len(username)):]
+                        
+                        real_ticket = subcommand1 + empty1_len + empty1 + IV + empty2_dec_len + empty2_enc_len + empty2 + subcommand2 + empty3
+                        real_ticket_len = struct.pack(">H", len(real_ticket)) #TicketLen
+                        #ticket = subheader_encrypted + unknown_part + blob_encrypted
+                        ticket = subheader_encrypted + real_ticket_len + real_ticket + blob_encrypted
+                        
                         ticket_signed = ticket + encryption.sign_message(innerkey, ticket)
                         if wrongpass == "1" :
-                            tgt_command = "\x02" # Incorrect password
+                            tgt_command = "\x02"
                         else :
                             tgt_command = "\x00" # AuthenticateAndRequestTGT command
-                    
                         steamtime = utilities.unixtime_to_steamtime(time.time())
-                        ticket_full = tgt_command + steamtime + "\x00\xd2\x49\x6b\x00\x00\x00\x00" + struct.pack(">L", len(ticket_signed)) + ticket_signed
-                        clientsocket.send(ticket_full)
+                        clock_skew_tolerance = "\x00\xd2\x49\x6b\x00\x00\x00\x00"
+                        ticket_full = tgt_command + steamtime + clock_skew_tolerance + struct.pack(">L", len(ticket_signed)) + ticket_signed
+                        clientsocket.send(ticket_full)    
+                        
                 elif legacyblocked == 1 :
                     log.warning(clientid + "Blocked legacy user: " + username)
                     clientsocket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
@@ -367,7 +425,7 @@ class authserver(threading.Thread):
                     ciphertext = cryptedblob[20:-20]
                     plaintext = encryption.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
-                    print blob_utilities.blob_unserialize(plaintext)
+                    print(blob_utilities.blob_unserialize(plaintext))
                     clientsocket.send("\x01")
                 elif binascii.b2a_hex(command[0:3]) == "110168" : # Change Personal Question
                     log.info(clientid + "Change Personal Question")
@@ -378,9 +436,13 @@ class authserver(threading.Thread):
                     log.info(clientid + "Change Account Name")
                     print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")   
+                elif binascii.b2a_hec(command[0:3]) == "090168" : # Retrieve Account Info
+                    print("Request Account Information")
+                    clientsocket.send("\x01") 
                 else :
-                    log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command[0]))
-                    log.warning(clientid + "Extra data:", binascii.b2a_hex(data))
+                    log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command[0:3]))
+                    
+                    #log.warning(clientid + "Extra data:", binascii.b2a_hex(data))
                     #print(binascii.b2a_hex(command[3:]))
                     #log.info(clientid + "Ticket login")
                     clientsocket.send("\x01")
@@ -478,9 +540,6 @@ class authserver(threading.Thread):
                     clientsocket.send("\x01") 
                 elif command == "\x14" : # Request verification Email
                     print("Requested Verification Email")
-                    clientsocket.send("\x01") 
-                elif command == "\x09" : # Retrieve Account Info
-                    print("Request Account Information")
                     clientsocket.send("\x01") 
                 elif command == "\x15" : # Update Account Billing Info
                     print("Update Account Billing Information") 
@@ -622,7 +681,7 @@ class authserver(threading.Thread):
                     ciphertext = cryptedblob[20:-20]
                     plaintext = encryption.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
-                    print blob_utilities.blob_unserialize(plaintext)
+                    print(blob_utilities.blob_unserialize(plaintext))
                 elif command == "\x20" : # Lost Pass: request account info by email
                     log.info(clientid + "command: Lost password - email check [Not Implemented]")
                 elif command == "\x21" : # Lost Pass: request account info by cdkey

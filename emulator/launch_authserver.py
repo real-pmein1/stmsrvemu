@@ -28,7 +28,7 @@ print
 #check local ip and set globalvars.serverip
 utilities.checklocalipnet()
 
-log = logging.getLogger('emulator')
+log = logging.getLogger('AuthSRV')
 log.info("...Starting Steam Server...\n")
   
 #grab the ip and port for id ticket validation server

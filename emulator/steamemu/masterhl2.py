@@ -14,7 +14,7 @@ class masterhl2(threading.Thread):
         self.host = host
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.server_type = "masterhl2"
+        self.server_type = "MasterHL2SRV"
         self.server_info = {
                     'ip_address': globalvars.serverip,
                     'port': int(self.port),

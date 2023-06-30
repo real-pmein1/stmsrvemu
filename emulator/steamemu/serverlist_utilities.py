@@ -179,5 +179,6 @@ class DirServerManager(object):
                 print("Port: ", entry[1])
                 print("server_type: ", entry[2])
                 print("Permanent: ", "Yes" if entry[4] == 1 else "No")
-                print("Timestamp: ", datetime.datetime.fromtimestamp(entry[3]).strftime('%Y-%m-%d %H:%M:%S'))
+                print("Timestamp:", str(entry[3]))
+                #print("Timestamp: ", datetime.datetime.fromtimestamp(entry[3]).strftime('%Y-%m-%d %H:%M:%S'))
                 print("--------------------")

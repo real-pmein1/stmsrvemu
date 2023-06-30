@@ -14,7 +14,7 @@ class harvestserver(threading.Thread):
         self.host = host
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.server_type = "harvestserver"
+        self.server_type = "HarvestSRV"
         self.server_info = {
                     'ip_address': globalvars.serverip,
                     'port': int(self.port),

@@ -10,7 +10,7 @@ from serverlist_utilities import remove_from_dir, send_heartbeat
 import contentserverlist_utilities
 from contentserverlist_utilities import unpack_contentserver_info, ContentServerManager
 
-log = logging.getLogger("clstsrv")
+log = logging.getLogger("CSDSRV")
 
 manager = ContentServerManager() 
    

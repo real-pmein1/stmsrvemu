@@ -8,7 +8,7 @@ import serverlist_utilities
 import emu_socket
 from serverlist_utilities import remove_from_dir, send_heartbeat
 
-log = logging.getLogger("adminsrv")
+log = logging.getLogger("AdminSRV")
 
 class administrationservers(threading.Thread):
     def __init__(self, port, config):
