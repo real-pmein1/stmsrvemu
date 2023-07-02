@@ -15,7 +15,7 @@ manager = DirServerManager()
 dirConnectionCount = 0
 
 class directoryserver(threading.Thread):
-    global manager, log, dirConnectionCount
+    global manager
     global log
     
     def __init__(self, port, config):
@@ -60,6 +60,7 @@ class directoryserver(threading.Thread):
 
     def handle_client(self, clientsocket, address):
         global server_list
+        global dirConnectionCount
         #threading.Thread.__init__(self)
 
         

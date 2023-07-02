@@ -27,7 +27,7 @@ csConnectionCount = 0
 
 
 class contentserver(threading.Thread):
-    global log, csConnectionCount
+    global log
     def check_thread_status(self):
         while True:
             if self.thread2.is_alive():
@@ -76,6 +76,7 @@ class contentserver(threading.Thread):
             threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
 
     def handle_client(self, clientsocket, address):
+        global csConnectionCount
         csConnectionCount += 1
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server")
