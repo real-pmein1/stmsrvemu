@@ -12,6 +12,15 @@ config = read_config()
 # Check the Python version
 python_check.check_python_version()
 
+def watchescape_thread():       
+    while True:
+        if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
+            os._exit(0)
+            
+thread2 = threading.Thread(target=watchescape_thread)
+thread2.daemon = True
+thread2.start()
+        
 print("Steam 2004-2011 Valve CyberCafe Server Emulator v" + globalvars.emuversion)
 print("=====================================")
 print
@@ -29,17 +38,15 @@ log.info("...Starting Steam Server...\n")
 utilities.checklocalipnet()
 
 vttserver(config["vtt_server_port1"], config).start()
-log.info("Valve Time Tracking Server listening on port ", config["vtt_server_port1"])
+log.info("Valve Time Tracking Server listening on port " + str(config["vtt_server_port1"]))
 time.sleep(0.5)
 
 vttserver(config["vtt_server_port2"], config).start()
-log.info("Valve CyberCafe server listening on port ", config["vtt_server_port2"])
+log.info("Valve CyberCafe server listening on port " + str(config["vtt_server_port2"]))
 time.sleep(0.5)
 
 log.info("Steam CyberCafe Server's are ready.")
 
 print("Press Escape to exit...")
-while True:
-    if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
-        os._exit(0)
+
 

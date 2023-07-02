@@ -15,6 +15,15 @@ python_check.check_python_version()
 #check for a peer_password, otherwise generate one
 new_password = utilities.check_peerpassword()
 
+def watchescape_thread():       
+    while True:
+        if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
+            os._exit(0)
+            
+thread2 = threading.Thread(target=watchescape_thread)
+thread2.daemon = True
+thread2.start()
+
 print("Steam 2004-2011 Half-life 2 Master Server Emulator v" + globalvars.emuversion)
 print("=====================================")
 print
@@ -42,7 +51,4 @@ if new_password == 1 :
     log.info("Make sure to give this password to any servers that may want to add themselves to your network!")
 
 print("Press Escape to exit...")
-while True:
-    if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
-        os._exit(0)
 
