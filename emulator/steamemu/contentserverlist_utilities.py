@@ -84,9 +84,16 @@ def heartbeat(encrypted_buffer):
     csds_ipport = config["csds_ipport"]
     csds_ip, csds_port = csds_ipport.split(":")
     
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((str(csds_ip), int(csds_port))) # Connect the socket to master dir server
-
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((str(csds_ip), int(csds_port)))  # Connect the socket to master dir server
+            break  # Exit the loop if connection succeeds
+        except socket.error as e:
+            print("Connection error:", str(e))
+            print("Retrying in 5 minutes...")
+            time.sleep(5 * 60)  # Wait for 5 minutes before retrying
+        
     data = "\x00\x4f\x8c\x11"
     sock.send(data) # Send the 'im a dir server packet' packet
     
@@ -186,14 +193,21 @@ class ContentServerManager(object):
                     self.contentserver_list.remove(entry)
                     return True
         return False
-    def print_contentserver_list(self):
+    
+    def print_contentserver_list(self, printapps = 0):
         with self.lock:
             for entry in self.contentserver_list:
                 print("IP Address:", entry[0])
                 print("Port:", entry[1])
                 print("Region:", entry[2])
-                print("App List:")
-                for app_entry in entry[4]:
-                    print("App ID:", app_entry[0])
-                    print("Version:", app_entry[1])
+                if printapps == 1 :
+                    print("App List:")
+                    for app_entry in entry[4]:
+                        print("App ID:", app_entry[0])
+                        print("Version:", app_entry[1])
+                else :
+                    appcount = 0
+                    for app_entry in entry[4]:
+                        appcount += 1
+                    print("Number of Apps Available: " + appcount)       
                 print("--------------------")

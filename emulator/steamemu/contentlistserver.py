@@ -13,9 +13,10 @@ from contentserverlist_utilities import unpack_contentserver_info, ContentServer
 log = logging.getLogger("CSDSRV")
 
 manager = ContentServerManager() 
+csdsConnectionCount = 0
    
 class contentlistserver(threading.Thread):
-    global manager
+    global manager, csdsConnectionCount
     
     def __init__(self, port, config):
         self.server_type = "csdserver"
@@ -60,7 +61,6 @@ class contentlistserver(threading.Thread):
             threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
 
     def handle_client(self, clientsocket, address):
-
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server Directory Server ")
         msg = clientsocket.recv(4)
@@ -115,7 +115,7 @@ class contentlistserver(threading.Thread):
                     log.info("[" + region + "] " + clientid + "There was an issue removing the server from Content Server Directory Server")
 
         elif msg == "\x00\x00\x00\x02" :
-            
+            csdsConnectionCount += 1 #ignore cs heartbeats and removal connections
             clientsocket.send("\x01")
             msg = clientsocket.recv_withlen()
             command = msg[0]

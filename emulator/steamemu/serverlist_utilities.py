@@ -21,9 +21,16 @@ def heartbeat(encrypted_buffer):
     masterdir_ipport = config["masterdir_ipport"]
     mdir_ip, mdir_port = masterdir_ipport.split(":")
     
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((str(mdir_ip), int(mdir_port))) # Connect the socket to master dir server
-
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((str(mdir_ip), int(mdir_port))) # Connect the socket to master dir server
+            break
+        except socket.error as e:
+            print("Connection error:", str(e))
+            print("Retrying in 5 minutes...")
+            time.sleep(5 * 60)  # Wait for 5 minutes before retrying
+    
     data = "\x00\x3e\x7b\x11"
     sock.send(data) # Send the 'im a dir server packet' packet
     

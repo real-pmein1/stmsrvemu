@@ -12,9 +12,10 @@ from serverlist_utilities import unpack_server_info, DirServerManager
 log = logging.getLogger("DirectorySRV")
 
 manager = DirServerManager()    
+dirConnectionCount = 0
 
 class directoryserver(threading.Thread):
-    global manager
+    global manager, log, dirConnectionCount
     global log
     
     def __init__(self, port, config):
@@ -58,8 +59,10 @@ class directoryserver(threading.Thread):
             
 
     def handle_client(self, clientsocket, address):
-        #threading.Thread.__init__(self)
         global server_list
+        #threading.Thread.__init__(self)
+
+        
         clientid = str(address) + ": "
         if globalvars.dir_ismaster == 1:           
             log.info(clientid + "Connected to Directory Server")
@@ -122,6 +125,7 @@ class directoryserver(threading.Thread):
             # BEN TODO: Add packet for slave/peer dir servers to recieve master dir serverlist
                     
         elif msg == "\x00\x00\x00\x01" or msg == "\x00\x00\x00\x02":
+            dirConnectionCount += 1 # only count user's, ignore heartbeat/other servers
             clientsocket.send("\x01")
             msg = clientsocket.recv_withlen()
             command = msg[0]

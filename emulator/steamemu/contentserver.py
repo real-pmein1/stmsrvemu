@@ -23,10 +23,11 @@ from contentserverlist_utilities import send_removal, send_heartbeat
 
 log = logging.getLogger("ContentSRV")
 app_list = []
+csConnectionCount = 0
 
 
 class contentserver(threading.Thread):
-    global log
+    global log, csConnectionCount
     def check_thread_status(self):
         while True:
             if self.thread2.is_alive():
@@ -49,16 +50,18 @@ class contentserver(threading.Thread):
             'timestamp': 1623276000
         }
         self.applist = self.parse_manifest_files(self.contentserver_info)
+    
         # Register the cleanup function using atexit
         #atexit.register(send_removal(globalvars.serverip, int(self.port), globalvars.cs_region))
         
         self.thread2 = threading.Thread(target=self.heartbeat_thread)
         self.thread2.daemon = True
         self.thread2.start()
+        
         #thread_status_checker = threading.Thread(target=self.check_thread_status)
         #thread_status_checker.daemon = True
         #thread_status_checker.start()
-
+    
     def heartbeat_thread(self):       
         while True:
             send_heartbeat(self.contentserver_info, self.applist)
@@ -73,6 +76,7 @@ class contentserver(threading.Thread):
             threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
 
     def handle_client(self, clientsocket, address):
+        csConnectionCount += 1
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server")
 
@@ -216,10 +220,10 @@ class contentserver(threading.Thread):
                         f = open("files/cache/secondblob.bin", "rb")
                         blob = f.read()
                         f.close()
-                    elif os.path.isfile("files/2ndcdr.py") :
-                        if not os.path.isfile("files/2ndcdr.orig") :
-                            shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
-                        g = open("files/2ndcdr.py", "r")
+                    elif os.path.isfile("files/secondblob.py") :
+                        if not os.path.isfile("files/secondblob.py.orig") :
+                            shutil.copy2("files/secondblob.py","files/secondblob.py.orig")
+                        g = open("files/secondblob.py", "r")
                         file = g.read()
                         g.close()
                     
@@ -228,18 +232,18 @@ class contentserver(threading.Thread):
                             newlength = len(replace)
                             missinglength = fulllength - newlength
                             if missinglength < 0 :
-                                print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                             else :
                                 fileold = file
                                 file = file.replace(search, replace)
                                 if (search in fileold) and (replace in file) :
                                     print("Replaced " + info + " " + search + " with " + replace)
-                        h = open("files/2ndcdr.py", "w")
+                        h = open("files/secondblob.py", "w")
                         h.write(file)
                         h.close()
                         
                         execdict = {}
-                        execfile("files/2ndcdr.py", execdict)
+                        execfile("files/secondblob.py", execdict)
                         blob = blob_utilities.blob_serialize(execdict["blob"])
                     
                         if blob[0:2] == "\x01\x43" :
@@ -267,8 +271,8 @@ class contentserver(threading.Thread):
                             f.close()
                     
                     else :
-                        if not os.path.isfile("files/secondblob.orig") :
-                            shutil.copy2("files/secondblob.bin","files/secondblob.orig")
+                        if not os.path.isfile("files/secondblob.bin.orig") :
+                            shutil.copy2("files/secondblob.bin","files/secondblob.bin.orig")
                         f = open("files/secondblob.bin", "rb")
                         blob = f.read()
                         f.close()
@@ -615,6 +619,7 @@ class contentserver(threading.Thread):
         log.info(clientid + "Disconnected from Content Server")
 
     def parse_manifest_files(self, contentserver_info):
+        global app_list
         # Define the locations to search for '.manifest' files
         locations = ['files/cache/', self.config["v2manifestdir"], self.config["manifestdir"]]
         app_buffer = ""
@@ -629,4 +634,5 @@ class contentserver(threading.Thread):
                     #print("version:", version)
                     # Append app ID and version to app_list in this format
                     app_buffer += str(app_id) + "\x00" + str(version) + "\x00\x00"
+                    app_list.append((app_id, version))
         return app_buffer

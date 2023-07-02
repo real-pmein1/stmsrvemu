@@ -1,11 +1,11 @@
-import threading, logging, time, os, os.path, msvcrt
+import threading, logging, time, os, os.path, msvcrt, sys
 import utilities, globalvars, emu_socket
 import steamemu.logger
 import python_check
 
 from command_input import InputManager
 from steamemu.config import save_config_value
-from steamemu.directoryserver import directoryserver, manager
+from steamemu.directoryserver import directoryserver, manager as dirmanager, dirConnectionCount
 from steamemu.config import read_config
 
 config = read_config()
@@ -16,14 +16,19 @@ python_check.check_python_version()
 #check for a peer_password, otherwise generate one
 new_password = utilities.check_peerpassword()
 
-global manager
+global dirmanager, dirConnectionCount
 
 class DirInputManager(InputManager):
     def process_input(self, c):
         if c == '\r':
             if self.input_buffer.strip() == 'showlist':
                 print(" ")
-                manager.print_dirserver_list()
+                dirmanager.print_dirserver_list()
+            elif self.input_buffer.strip() == 'connectioncount':
+                print(" ")
+                print("Total Number of Connections: " + str(dirConnectionCount))
+            elif self.input_buffer.strip() == 'exit' or self.input_buffer.strip() == 'quit':
+                os._exit(0)
             else :
                 print(" ")
                 print('\nCustom process_input implementation:', self.input_buffer)

@@ -5,7 +5,7 @@ import python_check
 from command_input import InputManager
 from steamemu.config import read_config
 from steamemu.converter import convertgcf
-from steamemu.directoryserver import directoryserver, manager
+from steamemu.directoryserver import directoryserver, manager as dirmanager
 from steamemu.configserver import configserver
 from steamemu.contentlistserver import contentlistserver, manager as csdsmanager
 from steamemu.contentserver import contentserver
@@ -22,7 +22,7 @@ from steamemu.administrationservers import administrationservers
 from steamemu.miscservers import miscservers
 from steamemu.logstatusservers import logstatusservers
 
-global manager, csdsmanager
+global dirmanager, csdsmanager
 
 # Check the Python version
 python_check.check_python_version()
@@ -32,10 +32,12 @@ class EmuInputManager(InputManager):
         if c == '\r':
             if self.input_buffer.strip() == 'showdirlist':
                 print(" ")
-                manager.print_dirserver_list()
+                dirmanager.print_dirserver_list()
             elif self.input_buffer.strip() == 'showcslist':
                 print(" ")
                 csdsmanager.print_contentserver_list()
+            elif self.input_buffer.strip() == 'exit' or self.input_buffer.strip() == 'quit':
+                os._exit(0)
             else :
                 print("\n Unknown Command:  " + self.input_buffer)
             self.input_buffer = ''
