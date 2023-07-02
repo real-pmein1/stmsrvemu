@@ -1,12 +1,13 @@
-import threading, logging, time, os, os.path, msvcrt
+import threading, logging, time, os, os.path, msvcrt, sys
 import utilities, globalvars, emu_socket
 import steamemu.logger
 import python_check
+from command_input import InputManager
 from steamemu.config import read_config
 from steamemu.converter import convertgcf
-from steamemu.directoryserver import directoryserver
+from steamemu.directoryserver import directoryserver, manager
 from steamemu.configserver import configserver
-from steamemu.contentlistserver import contentlistserver
+from steamemu.contentlistserver import contentlistserver, manager as csdsmanager
 from steamemu.contentserver import contentserver
 from steamemu.authserver import authserver
 from steamemu.masterhl import masterhl
@@ -21,18 +22,34 @@ from steamemu.administrationservers import administrationservers
 from steamemu.miscservers import miscservers
 from steamemu.logstatusservers import logstatusservers
 
-def watchkeyboard():
-    while True:
-        if msvcrt.kbhit() and ord(msvcrt.getch()) == 27:  # 27 is the ASCII code for Escape
-            os._exit(0)
-            
-# Create a thread and start running the watchkeyboard function
-keyboard_thread = threading.Thread(target=watchkeyboard)
-keyboard_thread.daemon = True  # Set the thread as a daemon to exit when the main thread exits
-keyboard_thread.start()
+global manager, csdsmanager
 
 # Check the Python version
 python_check.check_python_version()
+
+class EmuInputManager(InputManager):
+    def process_input(self, c):
+        if c == '\r':
+            if self.input_buffer.strip() == 'showdirlist':
+                print(" ")
+                manager.print_dirserver_list()
+            elif self.input_buffer.strip() == 'showcslist':
+                print(" ")
+                csdsmanager.print_contentserver_list()
+            else :
+                print("\n Unknown Command:  " + self.input_buffer)
+            self.input_buffer = ''
+        elif c == '\x08':
+            if self.input_buffer:
+                 # Clear the last character on the screen
+                sys.stdout.write('\b ')
+                sys.stdout.flush()
+                # Remove the last character
+                self.input_buffer = self.input_buffer[:-1]
+        elif c == '\x1b':
+            os._exit(0)
+        else:
+            self.input_buffer += c #this allows for more than 1 character at a time         
 
 config = read_config()
 
@@ -126,8 +143,8 @@ vttserver(config["vtt_server_port1"], config).start()
 log.info("Valve Time Tracking Server listening on port " + str(config["vtt_server_port1"]))
 time.sleep(0.2)
 
-vttserver(config["vtt_server_port1"], config).start()
-log.info("Valve CyberCafe server listening on port " + str(config["vtt_server_port1"]))
+vttserver(config["vtt_server_port2"], config).start()
+log.info("Valve CyberCafe server listening on port " + str(config["vtt_server_port2"]))
 time.sleep(0.2)
 
 logstatusservers(int(config["status_server_port"]), config).start()
@@ -152,5 +169,7 @@ if new_password == 1 :
     log.info("New Peer Password Generated: \033[1;33m{}\033[0m".format(globalvars.peer_password))
     log.info("Make sure to give this password to any servers that may want to add themselves to your network!")
 
+input_buffer = ""
 print("Press Escape to exit...")
-
+input_manager = EmuInputManager()
+input_manager.start_input()

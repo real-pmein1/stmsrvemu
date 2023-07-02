@@ -8,8 +8,11 @@ from Steam2.neuter import neuter_file
 from steamemu.converter import convertgcf
 from steamemu.config import read_config
 from steamemu.config import save_config_value
+
+
 config = read_config()
-log = logging.getLogger('emulator')
+log = logging.getLogger('Utilities')
+    
 def decodeIP(string) :
     (oct1, oct2, oct3, oct4, port) = struct.unpack("<BBBBH", string)
     ip = "%d.%d.%d.%d" % (oct1, oct2, oct3, oct4)
@@ -111,7 +114,7 @@ def sortfunc(x, y) :
             return cmp(x, y)
 
 def initialise():
-    log = logging.getLogger('emulator')
+    log = logging.getLogger('Initializer')
 # create the Steam.exe file
     f = open(config["packagedir"] + config["steampkg"], "rb")
     pkg = Package(f.read())
@@ -138,8 +141,8 @@ def initialise():
         g.write(file)
         g.close()
             
-    if os.path.isfile("files/1stcdr.py") :
-        f = open("files/1stcdr.py", "r")
+    if os.path.isfile("files/firstblob.py") :
+        f = open("files/firstblob.py", "r")
         firstblob = f.read()
         f.close()
     else :

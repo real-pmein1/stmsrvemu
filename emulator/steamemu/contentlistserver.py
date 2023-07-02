@@ -47,6 +47,14 @@ class contentlistserver(threading.Thread):
         self.socket.bind((globalvars.serverip, self.port))
         self.socket.listen(5)
         
+        if self.config["use_sdk"] == 1 :
+             sdk_server_info = {
+            'ip_address': str(self.config["sdk_ip"]),
+            'port': int(self.config["sdk_port"]),
+            'region': globalvars.cs_region,
+            'timestamp': 1623276000
+        }
+        
         while True:
             (clientsocket, address) = self.socket.accept()
             threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()

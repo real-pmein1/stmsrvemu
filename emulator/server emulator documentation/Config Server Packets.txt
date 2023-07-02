@@ -42,21 +42,24 @@ Command:
 Send to Server:
 	0x05
 Response:
-	0 = successful, > 0 = unknown?
+	u8		<- Unknown
 
 Command:
 	(Unknown)
 Send to Server:
 	0x06
 Response:
-	0 = successful, > 0 = unknown?
+	u8		<- Unknown
 
 Command:
 	(Unknown)
 Send to Server:
 	0x07
-Response:
-	\x00\x01\x31\x2d\x00\x00\x00\x01\x2c
+Response: *Recorded response: 	\x00\x01\x31\x2d\x00\x00\x00\x01\x2c*
+	u8		<- Maybe command byte?
+	u32		<- Unknown
+	u32		<- Unknown
+
 
 Command:
 	(Unknown)

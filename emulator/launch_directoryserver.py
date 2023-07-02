@@ -29,7 +29,13 @@ class DirInputManager(InputManager):
                 print('\nCustom process_input implementation:', self.input_buffer)
             self.input_buffer = ''
         elif c == '\x08':
-            self.input_buffer = self.input_buffer[:-1]
+            if self.input_buffer:
+                # Clear the last character on the screen
+                sys.stdout.write('\b ')
+                sys.stdout.flush()
+                # Remove the last character
+                self.input_buffer = self.input_buffer[:-1]
+
         elif c == '\x1b':
             os._exit(0)
         else:

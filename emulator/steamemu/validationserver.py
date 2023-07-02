@@ -10,7 +10,7 @@ import steamemu.logger
 import serverlist_utilities
 from serverlist_utilities import send_removal, send_heartbeat
 
-
+log = logging.getLogger("validationsrv")
 
 class validationserver(threading.Thread):
     log = logging.getLogger("ValidationSRV")
@@ -60,14 +60,14 @@ class validationserver(threading.Thread):
 
         if command[1:5] == "\x00\x00\x00\x04" :
 
-            self.socket.send("\x01" + socket.inet_aton(self.address[0])) #CRASHES IF NOT 01
+            clientsocket.send("\x01" + pysocket.inet_aton(address[0])) #CRASHES IF NOT 01
             #log.debug((str(socket.inet_aton(self.address[0]))))
             #log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
             #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
             #signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
             #reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
             #self.socket.send(reply)
-            ticket_full = self.socket.recv_withlen()
+            ticket_full = clientsocket.recv_withlen()
             ticket_full = binascii.b2a_hex(ticket_full)
             command = ticket_full[0:2]
             unknown1 = ticket_full[2:10]
@@ -107,7 +107,7 @@ class validationserver(threading.Thread):
             sha_key = ticket_full[40+ticketLen+104:40+ticketLen+144]
             unknown1 = unknown1 + "\x01"
             currtime = time.time()
-            tms = steam.unixtime_to_steamtime(currtime)
+            tms = utilities.unixtime_to_steamtime(currtime)
             steamid_header = binascii.a2b_hex("0000") #CRASHES IF NOT 00
             steamid = binascii.a2b_hex(accountId)
             unknown_data = bytearray(0x80)

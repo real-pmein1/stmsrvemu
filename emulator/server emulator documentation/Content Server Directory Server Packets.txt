@@ -11,12 +11,6 @@ format of packets (from client to server) (taken from https://habr.com/en/articl
 
 
 (Family: 0x00000002 aka 0x02000000)
-Command:
-	find best public content server's	
-Send to server:
-	0x03
-Expected Response:
-	ip's or unknown error	
 
 Command:
 	find all public content server's
@@ -29,6 +23,21 @@ Command:
 	find public content server's with appid
 Send to server:
 	0x0001
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Recieve ContentServer ID With IP and Aport
+Send to server:
+	0x0002
+Expected Response:
+	u16			<- server ID
+	Gap			<-ip address
+
+Command:
+	find best public content server's	
+Send to server:
+	0x03
 Expected Response:
 	ip's or unknown error	
 

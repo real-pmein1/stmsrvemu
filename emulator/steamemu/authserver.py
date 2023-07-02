@@ -8,12 +8,14 @@ import emu_socket
 import steamemu.logger
 import globalvars
 import serverlist_utilities
+from mysql_class import MySQLConnector
 from serverlist_utilities import remove_from_dir, send_heartbeat
 from Crypto.Hash import SHA
 
 log = logging.getLogger("AuthenticationSRV")
 
 class authserver(threading.Thread):
+    mysqlconn = 0
     def __init__(self, port, config):
         threading.Thread.__init__(self)
         self.port = int(port)
@@ -26,6 +28,10 @@ class authserver(threading.Thread):
             'server_type': self.server_type,
             'timestamp': int(time.time())
         }
+        
+        mysqlconn = MySQLConnector() # Initialize mysql connection
+        mysqlconn.connect() # Connect Persistently
+        
         #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))       
         
         thread2 = threading.Thread(target=self.heartbeat_thread)
@@ -175,7 +181,7 @@ class authserver(threading.Thread):
                         execdict_new = without_keys(execdict, secretkey)
                         blob = blob_utilities.blob_serialize(execdict_new)
                         bloblen = len(blob)
-                        log.debug("Blob length: " + str(bloblen))
+                        log.debug("Blob length: " + str(bloblen) + " unserialized Blob data: " + str(execdict) + " serialized Blob data: " + str(blob))
                         innerkey = binascii.a2b_hex("10231230211281239191238542314233")
                         innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344")
                         blob_encrypted = encryption.aes_encrypt(innerkey, innerIV, blob)
@@ -436,7 +442,7 @@ class authserver(threading.Thread):
                     log.info(clientid + "Change Account Name")
                     print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")   
-                elif binascii.b2a_hec(command[0:3]) == "090168" : # Retrieve Account Info
+                elif binascii.b2a_hex(command[0:3]) == "090168" : # Retrieve Account Info
                     print("Request Account Information")
                     clientsocket.send("\x01") 
                 else :

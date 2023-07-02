@@ -9,7 +9,7 @@ import socket as pysocket
 import serverlist_utilities
 from serverlist_utilities import unpack_server_info, DirServerManager
 
-log = logging.getLogger("masterdirsrv")
+log = logging.getLogger("DirectorySRV")
 
 manager = DirServerManager()    
 

@@ -110,9 +110,9 @@ def convertgcf() :
 
                 search = "hlmaster1.hlauth.net:27010"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27010"
+                    ip = config["public_ip"] + config["masterhl1_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27010"
+                    ip = config["server_ip"] + config["masterhl1_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -124,9 +124,9 @@ def convertgcf() :
 
                 search = "207.173.177.11:27010"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27010"
+                    ip = config["public_ip"] + config["masterhl1_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27010"
+                    ip = config["server_ip"] + config["masterhl1_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -138,9 +138,9 @@ def convertgcf() :
 
                 search = "207.173.177.12:27010"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27010"
+                    ip = config["public_ip"] + config["masterhl1_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27010"
+                    ip = config["server_ip"] + config["masterhl1_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -152,9 +152,9 @@ def convertgcf() :
 
                 search = "207.173.177.11:27011"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27011"
+                    ip = config["public_ip"] + config["masterhl2_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27011"
+                    ip = config["server_ip"] + config["masterhl2_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -166,9 +166,9 @@ def convertgcf() :
 
                 search = "207.173.177.12:27011"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27011"
+                    ip = config["public_ip"] + config["masterhl2_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27011"
+                    ip = config["server_ip"] + config["masterhl2_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -180,7 +180,7 @@ def convertgcf() :
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = "tracker.valvesoftware.com:1200"
-                    ip = config["tracker_ip"] + ":1200"
+                    ip = config["tracker_ip"] + config["masterhl2_server_port"]
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -192,7 +192,7 @@ def convertgcf() :
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.42:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -204,7 +204,7 @@ def convertgcf() :
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.43:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -216,7 +216,7 @@ def convertgcf() :
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.44:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -228,7 +228,7 @@ def convertgcf() :
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.45:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength

@@ -78,15 +78,57 @@ class masterhl(threading.Thread):
             serversocket.sendto(header + nullip + nullport, address)
             #serversocket.close()
         elif data.startswith("q") :
-            header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-            challenge = struct.pack("I", globalvars.hl1challengenum + 1)
-            serversocket.sendto(header + challenge, address)
-            globalvars.hl1challengenum += 1
+                    header = b'\xFF\xFF\xFF\xFF\x73\x0A'
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    registered = 0
+                    for server in globalvars.hl1serverlist :
+                        if len(str(server)) > 5 :
+                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                                challenge = struct.pack("I", int(server[4]))
+                                registered = 1
+                                break
+                    if registered == 0 :
+                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl1challengenum + 1))
+                        challenge = struct.pack("I", globalvars.hl1challengenum + 1)
+                        globalvars.hl1challengenum += 1
+                    serversocket.sendto(header + challenge, globalvars.addr)
         elif data.startswith("M") :
-            header = b'\xFF\xFF\xFF\xFF\x4E\x0A'
-            challenge = struct.pack("I", globalvars.hl1challengenum + 1)
-            serversocket.sendto(header + challenge, address)
-            globalvars.hl1challengenum += 1
+                    header = b'\xFF\xFF\xFF\xFF\x4E\x0A'
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    registered = 0
+                    for server in globalvars.hl1serverlist :
+                        if len(str(server)) > 5 :
+                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                                challenge = struct.pack("I", int(server[4]))
+                                registered = 1
+                                break
+                    if registered == 0 :
+                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl1challengenum + 1))
+                        challenge = struct.pack("I", globalvars.hl1challengenum + 1)
+                        globalvars.hl1challengenum += 1
+                    serversocket.sendto(header + challenge, globalvars.addr)
         elif data.startswith("0") :
             serverdata1 = data.split('\n')
             serverdata2 = serverdata1[1]
