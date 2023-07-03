@@ -7,9 +7,8 @@ import config
 import globalvars
 import emu_socket
 import time
-import serverlist_utilities
-import contentserverlist_utilities
 import steamemu.logger
+
 from Crypto.Hash import SHA
 from Steam2.manifest import *
 from Steam2.neuter import neuter
@@ -285,12 +284,12 @@ class contentserver(threading.Thread):
                         file = "blob = " + blob3
                     
                         for (search, replace, info) in globalvars.replacestringsCDR :
-                            print "Fixing CDR"
+                            print("Fixing CDR")
                             fulllength = len(search)
                             newlength = len(replace)
                             missinglength = fulllength - newlength
                             if missinglength < 0 :
-                                print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                             else :
                                 file = file.replace(search, replace)
                                 print("Replaced " + info + " " + search + " with " + replace)
@@ -348,7 +347,7 @@ class contentserver(threading.Thread):
                 elif command[0] == "\x09" or command[0] == "\x0a" : #09 is used by early clients without a ticket
 
                     if command[0] == "\x0a" :
-                        log.info(clientid + "Login packet used")
+                        log.info(clientid + "Request Content Ticket - INOP")
                     #else :
                         #log.error(clientid + "Not logged in")
 
@@ -391,13 +390,13 @@ class contentserver(threading.Thread):
                                     newlength = len(replace)
                                     missinglength = fulllength - newlength
                                     if missinglength < 0 :
-                                        print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                                     elif missinglength == 0 :
                                         file = file.replace(search, replace)
-                                        print "Replaced", info
+                                        print("Replaced", info)
                                     else :
                                         file = file.replace(search, replace + ('\x00' * missinglength))
-                                        print "Replaced", info
+                                        print("Replaced", info)
 
                                 h = open("files/temp/" + str(app) + "_" + str(version) + ".neutered.gcf", "wb")
                                 h.write(file)

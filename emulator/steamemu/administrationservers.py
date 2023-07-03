@@ -4,9 +4,9 @@ import utilities
 import steam
 import globalvars
 import steamemu.logger
-import serverlist_utilities
+
 import emu_socket
-from serverlist_utilities import remove_from_dir, send_heartbeat
+
 
 log = logging.getLogger("AdminSRV")
 

@@ -7,45 +7,17 @@ import steam
 import globalvars
 import emu_socket
 import steamemu.logger
-import serverlist_utilities
-from serverlist_utilities import send_removal, send_heartbeat
+
+from tcp_socket import TCPNetworkHandler
 
 log = logging.getLogger("validationsrv")
 
-class validationserver(threading.Thread):
+class validationserver(TCPNetworkHandler):
     log = logging.getLogger("ValidationSRV")
        
     def __init__(self, port, config):
-        threading.Thread.__init__(self)
-        self.port = int(port)
-        self.config = config
-        self.socket = emu_socket.ImpSocket()
-        self.server_type = "validationserver"
-        self.server_info = {
-                    'ip_address': globalvars.serverip,
-                    'port': int(self.port),
-                    'server_type': self.server_type,
-                    'timestamp': int(time.time())
-                }
-        
-        # Register the cleanup function using atexit
-                    
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
-        
-    def heartbeat_thread(self) :       
-        while True :
-            send_heartbeat(self.server_info)
-            time.sleep(1800) # 30 minutes
-            
-    def run(self):        
-        self.socket.bind((globalvars.serverip, self.port))
-        self.socket.listen(5)
-
-        while True:
-            (clientsocket, address) = self.socket.accept()
-            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
+        server_type = "validationserver"
+        super(validationserver, self).__init__(emu_socket.ImpSocket(), config, port, server_type)  # Create an instance of NetworkHandler
 
     def handle_client(self, clientsocket, address):
         #threading.Thread.__init__(self)

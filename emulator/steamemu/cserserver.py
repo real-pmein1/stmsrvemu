@@ -4,9 +4,16 @@ import utilities
 import config
 import steamemu.logger
 import globalvars
-import serverlist_utilities
-from serverlist_utilities import send_heartbeat, remove_from_dir
 
+from networkhandler import UDPNetworkHandler
+
+def int_wrapper(value):
+    try:
+        val1=int(value, base=16)
+        return val1
+    except (ValueError, TypeError):
+        return 0
+    
 class IceKey(object):
     def __init__(self, key):
         self.key = key
@@ -27,44 +34,14 @@ class IceKey(object):
             sum -= delta
 
         return struct.pack('>LL', x[0], x[1])
-def int_wrapper(value):
-    try:
-        val1=int(value, base=16)
-        return val1
-    except (ValueError, TypeError):
-        return 0
-class cserserver(threading.Thread):
-    def __init__(self, host, port):
-        #threading.Thread.__init__(self)
-        self.host = host
-        self.port = port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.server_type = "cserserver"
-        self.server_info = {
-                    'ip_address': globalvars.serverip,
-                    'port': int(self.port),
-                    'server_type': self.server_type,
-                    'timestamp': int(time.time())
-                }
-        # Register the cleanup function using atexit
-        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
         
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
-        
-    def heartbeat_thread(self):       
-        while True:
-            send_heartbeat(self.server_info)
-            time.sleep(1800) # 30 minutes
-            
-    def start(self) :    
-        self.socket.bind((self.host, self.port))
-        while True : #recieve a packet
-            data, address = self.socket.recvfrom(1280) # Start a new thread to process each packet
-            threading.Thread(target=self.process_packet, args=(data, address)).start()
+class cserserver(UDPNetworkHandler):
+    def __init__(self, config, port):
+        server_type = "cserserver"
+        super(masterhl, self).__init__(config, port, server_type)  # Create an instance of NetworkHandler
 
-    def process_packet(self, data, address):
+    def handle_client(self, *args):
+        data, address = args
         log = logging.getLogger("CSERSRV")
         # Process the received packet
         clientid = str(address) + ": "

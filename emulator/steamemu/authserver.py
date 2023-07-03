@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, time, ipaddress, os.path, ast, atexit, zlib
+import threading, logging, struct, binascii, time, ipaddress, os.path, ast, zlib
 import socket as pysocket
 import config
 import utilities
@@ -7,50 +7,22 @@ import encryption
 import emu_socket
 import steamemu.logger
 import globalvars
-import serverlist_utilities
+
 from mysql_class import MySQLConnector
-from serverlist_utilities import remove_from_dir, send_heartbeat
 from Crypto.Hash import SHA
+from networkhandler import TCPNetworkHandler
 
 log = logging.getLogger("AuthenticationSRV")
 
-class authserver(threading.Thread):
+class authserver(TCPNetworkHandler):
     mysqlconn = 0
+    
     def __init__(self, port, config):
-        threading.Thread.__init__(self)
-        self.port = int(port)
-        self.config = config
-        self.socket = emu_socket.ImpSocket()
-        self.server_type = "authserver"
-        self.server_info = {
-            'ip_address': globalvars.serverip,
-            'port': int(self.port),
-            'server_type': self.server_type,
-            'timestamp': int(time.time())
-        }
-        
+        server_type = "authserver"
+        super(authserver, self).__init__(config, port, server_type)  # Create an instance of NetworkHandler
+ 
         mysqlconn = MySQLConnector() # Initialize mysql connection
         mysqlconn.connect() # Connect Persistently
-        
-        #atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))       
-        
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
-        
-    def heartbeat_thread(self):       
-        while True:
-            send_heartbeat(self.server_info)
-            time.sleep(1800) # 30 minutes
-            
-    def run(self):        
-        self.socket.bind((globalvars.serverip, self.port))
-        self.socket.listen(5)
-
-        while True:
-            (clientsocket, address) = self.socket.accept()
-            server_thread = threading.Thread(target=self.handle_client, args=(clientsocket, address))
-            server_thread.start()
 
     def handle_client(self, clientsocket, address):
         server_string = utilities.convert_ip_port(str(self.config['validation_ip']),int(self.config['validation_port']))

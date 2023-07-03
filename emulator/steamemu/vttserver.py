@@ -8,23 +8,12 @@ import globalvars
 import steamemu.logger
 
 from Crypto.Hash import SHA
+from tcp_socket import TCPNetworkHandler
 
-
-class vttserver(threading.Thread):
+class vttserver(TCPNetworkHandler):
     def __init__(self, port, config):
-        threading.Thread.__init__(self)
-        self.port = int(port)
-        self.config = config
-        self.socket = emu_socket.ImpSocket()
+        super(vttserver, self).__init__(emu_socket.ImpSocket(), config, port) 
         
-    def run(self):        
-        self.socket.bind((globalvars.serverip, self.port))
-        self.socket.listen(5)
-
-        while True:
-            (clientsocket, address) = self.socket.accept()
-            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
-
     def handle_client(self, clientsocket, address):
         log = logging.getLogger("vttsrv")
 

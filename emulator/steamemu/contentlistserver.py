@@ -5,60 +5,36 @@ import steam
 import globalvars
 import emu_socket
 import steamemu.logger
-import serverlist_utilities
-from serverlist_utilities import remove_from_dir, send_heartbeat
-import contentserverlist_utilities
+
 from contentserverlist_utilities import unpack_contentserver_info, ContentServerManager
+from tcp_socket import TCPNetworkHandler
 
 log = logging.getLogger("CSDSRV")
 
 manager = ContentServerManager() 
 csdsConnectionCount = 0
    
-class contentlistserver(threading.Thread):
+class contentlistserver(TCPNetworkHandler):
     global manager, csdsConnectionCount
     
     def __init__(self, port, config):
-        self.server_type = "csdserver"
-        threading.Thread.__init__(self)
-        self.port = int(port)
-        self.config = config
-        self.socket = emu_socket.ImpSocket()
-        self.server_info = {
-            'ip_address': globalvars.serverip,
-            'port': int(self.port),
-            'server_type': self.server_type,
-            'timestamp': int(time.time())
-        }
-        # atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type)) # Register the cleanup function using atexit        
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
+        server_type = "csdserver"
+        super(contentlistserver, self).__init__(config, port, server_type)  # Create an instance of NetworkHandler
         
         thread = threading.Thread(target=self.expired_servers_thread) # Thread for removing servers older than 1 hour
         thread.daemon = True
         thread.start()
-        
-    def heartbeat_thread(self):       
-        while True:
-            send_heartbeat(self.server_info)
-            time.sleep(1800) # 30 minutes
-            
-    def run(self):        
-        self.socket.bind((globalvars.serverip, self.port))
-        self.socket.listen(5)
-        
-        if self.config["use_sdk"] == 1 :
-             sdk_server_info = {
-            'ip_address': str(self.config["sdk_ip"]),
-            'port': int(self.config["sdk_port"]),
-            'region': globalvars.cs_region,
-            'timestamp': 1623276000
-        }
-        
-        while True:
-            (clientsocket, address) = self.socket.accept()
-            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
+        #Ben note: Figure out how to get the appid's and versions from the sdk contentserver.
+        #ideas include: if a packet exists for getting the app list, have csds send the packet and parse the response
+        #or put sdk contentserver in a folder within stmserver that we can parse through the files ourselves
+       # if self.config["use_sdk"] == 1 :
+       #      sdk_server_info = {
+       #     'ip_address': str(self.config["sdk_ip"]),
+       #     'port': int(self.config["sdk_port"]),
+       #     'region': globalvars.cs_region,
+       #     'timestamp': 1623276000
+       # }
+
 
     def handle_client(self, clientsocket, address):
         clientid = str(address) + ": "
