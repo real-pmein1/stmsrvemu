@@ -7,7 +7,7 @@ import emu_socket
 import steamemu.logger
 
 from contentserverlist_utilities import unpack_contentserver_info, ContentServerManager
-from tcp_socket import TCPNetworkHandler
+from networkhandler import TCPNetworkHandler
 
 log = logging.getLogger("CSDSRV")
 
@@ -15,11 +15,11 @@ manager = ContentServerManager()
 csdsConnectionCount = 0
    
 class contentlistserver(TCPNetworkHandler):
-    global manager, csdsConnectionCount
+    global manager
     
     def __init__(self, port, config):
         server_type = "csdserver"
-        super(contentlistserver, self).__init__(config, port, server_type)  # Create an instance of NetworkHandler
+        super(contentlistserver, self).__init__(config, int(port), server_type)  # Create an instance of NetworkHandler
         
         thread = threading.Thread(target=self.expired_servers_thread) # Thread for removing servers older than 1 hour
         thread.daemon = True
@@ -37,6 +37,7 @@ class contentlistserver(TCPNetworkHandler):
 
 
     def handle_client(self, clientsocket, address):
+        global csdsConnectionCount
         clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server Directory Server ")
         msg = clientsocket.recv(4)

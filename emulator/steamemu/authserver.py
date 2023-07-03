@@ -347,21 +347,20 @@ class authserver(TCPNetworkHandler):
                     padding = "\x00" * 1222
                     ticket_full = tgt_command + steamtime + padding
                     clientsocket.send(ticket_full)
-
-            elif len(command) >= 256 :
-                #print(binascii.b2a_hex(command[0:3]))
-                if binascii.b2a_hex(command[0:3]) == "040168" : #User Logged off
+    
+            else :
+                if binascii.b2a_hex(command[0]) == "04" : #User Logged off
                     log.info(clientid + "User Logged Off")
                     clientsocket.close()         
-                elif binascii.b2a_hex(command[0:3]) == "0A0168" : # Get Encrypted Ticket for AppServer
+                elif binascii.b2a_hex(command[0]) == "0A" : # Get Encrypted Ticket for AppServer
                     log.info(clientid + "Get Encrypted UserID Ticket To Send To AppServer")
                     print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "100168" : # Change Password
+                elif binascii.b2a_hex(command[0]) == "10" : # Change Password
                     log.info(clientid + "Change password")
                     print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "120168" : # Change Email
+                elif binascii.b2a_hex(command[0]) == "12" : # Change Email
                     log.info(clientid + "Change Email")
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
                     signature = encryption.rsa_sign_message_1024(encryption.main_key_sign, BERstring)
@@ -416,27 +415,19 @@ class authserver(TCPNetworkHandler):
                     plaintext = plaintext[0:plaintext_length]
                     print(blob_utilities.blob_unserialize(plaintext))
                     clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "110168" : # Change Personal Question
+                elif binascii.b2a_hex(command[0]) == "11" : # Change Personal Question
                     log.info(clientid + "Change Personal Question")
                     print(command)
                    # print blob_utilities.blob_unserialize(plaintext)
                     #clientsocket.send("\x01")
-                elif binascii.b2a_hex(command[0:3]) == "1C0168" : # Change Account Name
+                elif binascii.b2a_hex(command[0]) == "1C" : # Change Account Name
                     log.info(clientid + "Change Account Name")
                     print(binascii.b2a_hex(command))
                     clientsocket.send("\x01")   
-                elif binascii.b2a_hex(command[0:3]) == "090168" : # Retrieve Account Info
+                elif binascii.b2a_hex(command[0]) == "09" : # Retrieve Account Info
                     print("Request Account Information")
                     clientsocket.send("\x01") 
-                else :
-                    log.warning(clientid + "Invalid command: " + binascii.b2a_hex(command[0:3]))
-                    
-                    #log.warning(clientid + "Extra data:", binascii.b2a_hex(data))
-                    #print(binascii.b2a_hex(command[3:]))
-                    #log.info(clientid + "Ticket login")
-                    clientsocket.send("\x01")
-            elif len(command) == 1 :
-                if command == "\x1d" : #Create Account: Is Name in use
+                elif command == "\x1d" : #Create Account: Is Name in use
                     log.info(clientid + "command: query account name already in use")
                     #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
                     BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
@@ -702,8 +693,7 @@ class authserver(TCPNetworkHandler):
                     #print blob_utilities.blob_unserialize(plaintext)
                     print(clientsocket)
                     clientsocket.send("\x00")
-            else :
-                log.warning(clientid + "Invalid command length: " + str(len(command)))
+                #log.warning(clientid + "Invalid command length: " + str(len(command)))
 
         else :
             data = clientsocket.recv(65535)

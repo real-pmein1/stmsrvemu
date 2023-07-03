@@ -19,14 +19,16 @@ from gcf_to_storage import gcf2storage
 from time import sleep
 from Crypto.Hash import SHA
 from contentserverlist_utilities import send_removal, send_heartbeat
+from networkhandler import TCPNetworkHandler
 
 log = logging.getLogger("ContentSRV")
 app_list = []
 csConnectionCount = 0
 
 
-class contentserver(threading.Thread):
+class contentserver(TCPNetworkHandler):
     global log
+    
     def check_thread_status(self):
         while True:
             if self.thread2.is_alive():
@@ -38,21 +40,16 @@ class contentserver(threading.Thread):
         time.sleep(45 * 60)  # Delay for 45 minutes
 
     def __init__(self, port, config):
-        threading.Thread.__init__(self)
-        self.port = int(port)
-        self.config = config
-        self.socket = emu_socket.ImpSocket()
+        super(contentserver, self).__init__(config, port)  # Create an instance of NetworkHandler
         self.contentserver_info = {
             'ip_address': globalvars.serverip,
             'port': int(self.port),
             'region': globalvars.cs_region,
             'timestamp': 1623276000
         }
+        
         self.applist = self.parse_manifest_files(self.contentserver_info)
     
-        # Register the cleanup function using atexit
-        #atexit.register(send_removal(globalvars.serverip, int(self.port), globalvars.cs_region))
-        
         self.thread2 = threading.Thread(target=self.heartbeat_thread)
         self.thread2.daemon = True
         self.thread2.start()
@@ -66,14 +63,6 @@ class contentserver(threading.Thread):
             send_heartbeat(self.contentserver_info, self.applist)
             time.sleep(1800) # 30 minutes
             
-    def run(self):        
-        self.socket.bind((globalvars.serverip, self.port))
-        self.socket.listen(5)
-
-        while True:
-            (clientsocket, address) = self.socket.accept()
-            threading.Thread(target=self.handle_client, args=(clientsocket, address)).start()
-
     def handle_client(self, clientsocket, address):
         global csConnectionCount
         csConnectionCount += 1
@@ -347,7 +336,7 @@ class contentserver(threading.Thread):
                 elif command[0] == "\x09" or command[0] == "\x0a" : #09 is used by early clients without a ticket
 
                     if command[0] == "\x0a" :
-                        log.info(clientid + "Request Content Ticket - INOP")
+                        log.info(clientid + "Login packet used")
                     #else :
                         #log.error(clientid + "Not logged in")
 

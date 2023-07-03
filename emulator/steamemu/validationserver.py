@@ -32,7 +32,7 @@ class validationserver(TCPNetworkHandler):
 
         if command[1:5] == "\x00\x00\x00\x04" :
 
-            clientsocket.send("\x01" + pysocket.inet_aton(address[0])) #CRASHES IF NOT 01
+            clientsocket.send("\x01\xcb\x58\x30\x54" + pysocket.inet_aton(address[0])) #CRASHES IF NOT 01
             #log.debug((str(socket.inet_aton(self.address[0]))))
             #log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
             #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
