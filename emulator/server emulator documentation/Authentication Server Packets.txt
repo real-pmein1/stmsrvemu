@@ -1,6 +1,15 @@
 Auth Server packets and responses
 Family: 0x00000004
 
+
+Command:	
+	create new account
+send to server:
+	0x01
+	rsa encrypted, aes session key and raw payload
+Expected Response:
+	0 = success, 1 = account name already used, 2 = illegal characters in account name, 3 = illegal characters in email
+
 Command:
 	(authenticate) and request tgt (part 1)
 Send to server:
@@ -12,90 +21,11 @@ Expected Response:
 	> 4 = unknown error	
 
 Command:
-	authenticate and (request tgt) (part 2)
+	Delete Account
 Send to server:
-	(unknown)
-	rsa encrypted aes sessionkey with payload
+	0x03 +tgt +authenticator +payload
 Expected Response:
-	0 = success + client ticket in record and clockskew which needs to be < 0x11E1A300
-	or it will create a clock skew exception
-
-Command:
-	change email address
-send to server:
-	0x12 +tgt +authenticator +payload
-Expected Response:
-0 = success and/or record, > 0 = unknown error
-	
-Command:
-	change password
-send to server:
-	0x10 +tgt +authenticator +payload	
-Expected Response:
-0 = success , 1 = incorrect current password, > 1 = unknown error
-
-Command:
-	change question
-send to server:
-	0x11 +tgt +authenticator +payload
-Expected Response:
-	0 = success, 1 = incorrect password, > 1 = unknown error
-
-Command:	
-	change account name
-send to server:
-	0x1C +tgt +authenticator +payload
-Expected Response:
-	0 = success , 2 = name in use, 1 or > 2 = unknown error
-
-Command:	
-	change forgot password
-send to server:
-	(unknown command)
-	rsa encrypted, aes session key and raw payload
-Expected Response:
-	0 = success, 1 = user/account does not exist, 2 = incorrect email address verification key
-	3 = incorrect answer to personal question, > 3 unknown error
-
-Command:	
-	request forgot password email
-send to server:
-	(unknown command)
-	rsa encrypted, aes session key and raw payload
-Expected Response:
-	0 = success, 2 = account or user does not exist, 1 or > 2 unknown error
-
-Command:	
-	Lookup account name by email
-send to server:
-	0x20 <--**May be wrong, from csmania server code**
-	rsa encrypted, aes session key and raw payload
-Expected Response:
-	encrypted account names as record/blob
-
-Command:	
-	Generate suggested name
-send to server:
-	(unknown command)
-	rsa encrypted, aes session key and raw payload
-Expected Response:
-	encrypted account names as record/blob
-
-Command:	
-	query account name already in use / 'check login'
-send to server:
-	0x1D
-	rsa encrypted, aes session key and raw payload
-Expected Response:
-	0 = success +account name?, > 1 unknown error
-
-Command:	
-	create new account
-send to server:
-	0x01
-	rsa encrypted, aes session key and raw payload
-Expected Response:
-	0 = success +record, 1 = account name already in use, > 1 unknown error
+	None
 
 Command:
 	logout
@@ -105,46 +35,11 @@ Expected Response:
 	None
 
 Command:
-	Delete Account
-Send to server:
-	0x03 +tgt +authenticator +payload
-Expected Response:
-	None
-
-Command:
-	Request Verification Email
-Send to server:
-	0x14 +tgt +authenticator +payload
-Expected Response:
-	None
-
-Command:
-	Update Account Billing Info
-Send to server:
-	0x15 +tgt +authenticator +payload = (AddPaymentCardInfoFieldsToAccountPaymentCardInfoRecord)
-Expected Response:
-	None, expected to succeed
-
-Command:
-	Update Subscription Billing Info
-Send to server:
-	0x16 +tgt +authenticator +payload = (ConstructSubscriptionBillingInfoRecordFromSteamSubscriptionBillingInfo)
-Expected Response:
-	None, expected to succeed
-
-Command:
-	Query Subscription Rate exceeded
-Send to server:
-	(unknown)
-Expected Response:
-	(unknown)
-
-Command:
 	Subscribe
 Send to server:
 	0x05 +tgt +authenticator +payload (payload being SubscriptionBillingInfoRecordFromSteamSubscriptionBillingInfo)
 Expected Response:
-		0 = success and Record or 1 = subscription rate limit exceeded or 2 = unverified email or > 2 unknown
+	0 = success and Record/blob or 1 = subscription demand too high / rate limit exceeded or 2 = unverified email or > 2 unknown
 
 Command:
 	Unsubscribe
@@ -161,29 +56,155 @@ Expected Response:
 	0 = success and Record or > 0 unknown
 
 Command:
+	authenticate and (request tgt) (part 2)
+Send to server:
+	??
+	rsa encrypted aes sessionkey with payload
+Expected Response:
+	0 = success + client ticket in record and clockskew which needs to be < 0x11E1A300
+	or it will create a clock skew exception
+
+Command:
+	get encrypted userid ticket to send to appserver
+Send to server:
+	0x0c
+	u16
+	u16
+	gap
+	buffer
+	u16
+	u16
+	gap
+Response:	
+	(?)
+
+Command:	
+	request forgot password email
+send to server:
+	0x0E
+Expected Response:
+	byte <- return code
+	**if returncode = 1
+	2 bytes <- question length, if greater than 255, error too long
+	**if length > 0
+	buffer <-question
+return code:
+	0 = no personal question set or 1 = success, 2 = account or user does not exist, 3 user blocked, > 3 unknown error
+
+Command:	
+	change forgot password
+send to server:
+	0x0f
+	rsa encrypted, aes session key and raw payload
+Expected Response:
+	0 = success, 1 = user/account does not exist, 2 = incorrect email address verification key
+	3 = incorrect answer to personal question, > 3 unknown error
+
+Command:
+	change password
+send to server:
+	0x10 +tgt +authenticator +payload	
+Expected Response:
+0 = success , 1 = incorrect current password, > 1 = unknown error
+
+Command:
+	change question
+send to server:
+	0x11 +tgt +authenticator +payload
+Expected Response:
+	8u size buffer <- salt?
+	**client sends the following:
+		u16 <- size of next buffer
+		buffer <- blob
+	**server send return response:
+	8u <-return code
+return code:
+	0 = success, 1 = incorrect password, > 1 = unknown error
+
+Command:
+	change email address
+send to server:
+	0x12 +tgt +authenticator +payload
+Expected Response:
+0 = success and/or record, 1 = illegal characters, > 1 = unknown error
+
+Command:
 	Verify Email
 Send to server:
 	0x13 +tgt +authenticator +payload
 Expected Response:
-0 = success and Record or 1 = incorrect email verification key or >1 unknown	
+	0 = success and Record or 1 = incorrect email verification key or >1 unknown	
 
 Command:
-	Verify Protocol and receive client external ip	
+	Request Verification Email
 Send to server:
-	(unknown)
+	0x14 +tgt +authenticator +payload
 Expected Response:
-	0 = success, 1 = protocol out of date, 2 = auth server not master (removes auth server from list)
-	> 2 = unknown
+	None, expected to succeed
 
 Command:
-	Create Account
+	Update Account Billing Info
 Send to server:
-	(unknown command code) 
+	0x15 +tgt +authenticator +payload = (AddPaymentCardInfoFieldsToAccountPaymentCardInfoRecord)
+Expected Response:
+	None, expected to succeed
+
+Command:
+	Update Subscription Billing Info
+Send to server:
+	0x16 +tgt +authenticator +payload = (ConstructSubscriptionBillingInfoRecordFromSteamSubscriptionBillingInfo)
+Expected Response:
+	None, expected to succeed
+
+Command:	
+	change account name
+send to server:
+	0x1C +tgt +authenticator +payload
+Expected Response:
+	0 = success , 2 = name in use, 1 or > 2 = unknown error
+
+Command:	
+	query account name already in use / 'check login'
+send to server:
+	0x1D
+	rsa encrypted, aes session key and raw payload
+Expected Response:
+	0 = success +account name?, > 1 unknown error
+
+Command:	
+	Generate suggested name
+send to server:
+	0x1F <- this packet only contains 1 byte
+Expected Response:
+	encrypted packet structure:
+	4 bytes <- size of buffer/blob
+	buffer/gap <- blob containing name suggestions
+
+Command:	
+	Lookup account name by email
+send to server:
+	0x20 
+	rsa encrypted, aes session key and raw payload
+Expected Response:
+	encrypted account names as record/blob
+
+Command:
+	Request account name by cdkey
+Send to server:
+	0x21
 	rsa encrypted aes sessionkey and payload
 Expected Response:
-	0 = success, 1 = account name already used, 2 = illegal characters in account name, 3 = illegal characters in email
+	(unknown  what client expects for success), > 0 = unknown error	
 
-Added 2005 Packets:
+Command:
+	get number of accounts with this email
+Send to server:
+	0x22
+	rsa encrypted aes sessionkey and payload
+Expected Response:
+	byte <- return code
+	4 bytes <- number of accounts using this email
+	0 = success > 1 = unknown error
 
 Command:
 	Acknowledge subscription receipt
@@ -193,25 +214,8 @@ Expected Response:
 	none, expected to succeed
 
 Command:
-	Get account info
+	Query Subscription Rate exceeded
 Send to server:
-	0x09 +tgt +authenticator with payload
+	(unknown)
 Expected Response:
-	0 = success + record, > 0 = unknown error
-
-Command:
-	get number of accounts with this email
-Send to server:
-	(unknown command code) 
-	rsa encrypted aes sessionkey and payload
-Expected Response:
- 0 or 1 = success (maybe 1 means no accounts found using this email), > 2 = unknown error
-
-Command:
-	Request account name by cdkey
-Send to server:
-	(unknown command code) 
-	rsa encrypted aes sessionkey and payload
-Expected Response:
-	(unknown  qhat client expects for success), > 0 = unknown error	
-
+	(unknown)

@@ -21,7 +21,7 @@ def convertgcf() :
             if not os.path.isfile("files/cache/" + dirname + "/" + dirname + ".manifest") :
                 log.info("Found " + filename + " to convert")
                 log.info("Fixing files in " + dirname)
-                print "****************************************"
+                print("****************************************")
                 g = open("files/convert/" + dirname + ".gcf", "rb")
                 file = g.read()
                 g.close()
@@ -92,7 +92,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced directory server IP group 1"
+                    print("Replaced directory server IP group 1")
 
                 search = "207.173.177.11:27030 207.173.177.12:27030"
                 if config["public_ip"] != "0.0.0.0" :
@@ -106,13 +106,13 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced directory server IP group 5"
+                    print("Replaced directory server IP group 5")
 
                 search = "hlmaster1.hlauth.net:27010"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27010"
+                    ip = config["public_ip"] + config["masterhl1_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27010"
+                    ip = config["server_ip"] + config["masterhl1_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -120,13 +120,13 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL Master server DNS"
+                    print("Replaced default HL Master server DNS")
 
                 search = "207.173.177.11:27010"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27010"
+                    ip = config["public_ip"] + config["masterhl1_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27010"
+                    ip = config["server_ip"] + config["masterhl1_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -134,13 +134,13 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL Master server IP 1"
+                    print("Replaced default HL Master server IP 1")
 
                 search = "207.173.177.12:27010"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27010"
+                    ip = config["public_ip"] + config["masterhl1_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27010"
+                    ip = config["server_ip"] + config["masterhl1_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -148,13 +148,13 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL Master server IP 2"
+                    print("Replaced default HL Master server IP 2")
 
                 search = "207.173.177.11:27011"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27011"
+                    ip = config["public_ip"] + config["masterhl2_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27011"
+                    ip = config["server_ip"] + config["masterhl2_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -162,13 +162,13 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL2 Master server IP 1"
+                    print("Replaced default HL2 Master server IP 1")
 
                 search = "207.173.177.12:27011"
                 if config["public_ip"] != "0.0.0.0" :
-                    ip = config["public_ip"] + ":27011"
+                    ip = config["public_ip"] + config["masterhl2_server_port"]
                 else :
-                    ip = config["server_ip"] + ":27011"
+                    ip = config["server_ip"] + config["masterhl2_server_port"]
                 searchlength = len(search)
                 iplength = len(ip)
                 numtoreplace = searchlength // iplength
@@ -176,11 +176,11 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL2 Master server IP 2"
+                    print("Replaced default HL2 Master server IP 2")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = "tracker.valvesoftware.com:1200"
-                    ip = config["tracker_ip"] + ":1200"
+                    ip = config["tracker_ip"] + config["masterhl2_server_port"]
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -188,11 +188,11 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server DNS"
+                        print("Replaced Tracker Chat server DNS")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.42:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -200,11 +200,11 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 1"
+                        print("Replaced Tracker Chat server 1")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.43:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -212,11 +212,11 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 2"
+                        print("Replaced Tracker Chat server 2")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.44:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -224,11 +224,11 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 3"
+                        print("Replaced Tracker Chat server 3")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.45:1200"'
-                    ip = '"' + config["tracker_ip"] + ':1200"'
+                    ip = '"' + config["tracker_ip"] + config["masterhl2_server_port"] + '"'
                     searchlength = len(search)
                     iplength = len(ip)
                     numtoreplace = searchlength // iplength
@@ -236,7 +236,7 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 4"
+                        print("Replaced Tracker Chat server 4")
                     
                 for extraip in globalvars.extraips :
                     loc = file.find(extraip)
@@ -245,12 +245,12 @@ def convertgcf() :
                             server_ip = config["public_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %s at location %08x" % (extraip, loc)
+                            print("Found and replaced IP %s at location %08x" % (extraip, loc))
                         else :
                             server_ip = config["server_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %s at location %08x" % (extraip, loc)
+                            print("Found and replaced IP %s at location %08x" % (extraip, loc))
                     
                 for ip in globalvars.ip_addresses :
                     loc = file.find(ip)
@@ -259,12 +259,12 @@ def convertgcf() :
                             server_ip = config["public_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %16s at location %08x" % (ip, loc)
+                            print("Found and replaced IP %16s at location %08x" % (ip, loc))
                         else :
                             server_ip = config["server_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %16s at location %08x" % (ip, loc)
+                            print("Found and replaced IP %16s at location %08x" % (ip, loc))
 
                 time.sleep(1)
                 h = open("files/temp/" + dirname + ".neutered.gcf", "wb")
@@ -274,4 +274,4 @@ def convertgcf() :
                 gcf2storage("files/temp/" + dirname + ".neutered.gcf")
                 time.sleep(1)
                 os.remove("files/temp/" + dirname + ".neutered.gcf")
-                print "****************************************"
+                print("****************************************")

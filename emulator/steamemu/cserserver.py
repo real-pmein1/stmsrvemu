@@ -1,13 +1,19 @@
-import myimports
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, csv
+import threading, logging, struct, binascii, time, socket, ipaddress, atexit, os.path, ast, csv, datetime
 import os
 import utilities
 import config
 import steamemu.logger
 import globalvars
-import serverlist_utilities
 
+from networkhandler import UDPNetworkHandler
 
+def int_wrapper(value):
+    try:
+        val1=int(value, base=16)
+        return val1
+    except (ValueError, TypeError):
+        return 0
+    
 class IceKey(object):
     def __init__(self, key):
         self.key = key
@@ -28,36 +34,15 @@ class IceKey(object):
             sum -= delta
 
         return struct.pack('>LL', x[0], x[1])
-
-class cserserver(threading.Thread):
-    def __init__(self, host, port):
-        #threading.Thread.__init__(self)
-        self.host = host
-        self.port = port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
-       # Start the thread for dir registration heartbeat, only
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
-        
-    def heartbeat_thread(self):       
-        while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "cserserver", globalvars.peer_password )
-            time.sleep(1800) # 30 minutes
-            
-    def start(self):
-        
-        self.socket.bind((self.host, self.port))
+class cserserver(UDPNetworkHandler):
+    def __init__(self, config, port):
+        server_type = "cserserver"
+        super(masterhl, self).__init__(config, port, server_type)  # Create an instance of NetworkHandler
 
-        while True:
-            #recieve a packet
-            data, address = self.socket.recvfrom(1280)
-            # Start a new thread to process each packet
-            threading.Thread(target=self.process_packet, args=(data, address)).start()
-
-    def process_packet(self, data, address):
-        log = logging.getLogger("csersrv")
+    def handle_client(self, *args):
+        data, address = args
+        log = logging.getLogger("CSERSRV")
         # Process the received packet
         clientid = str(address) + ": "
         log.info(clientid + "Connected to CSER Server")
@@ -67,68 +52,86 @@ class cserserver(threading.Thread):
         ipactual = ipstr1[1]
         if data.startswith("e"):  # 65
             message = binascii.b2a_hex(data)
-            keylist = ["SuccessCount", "UnknownFailureCount", "ShutdownFailureCount",
-                       "UptimeCleanCounter", "UptimeCleanTotal", "UptimeFailureCounter",
-                       "UptimeFailureTotal"]
-            vallist = [str(int(message[24:26], base=16)),
-                       str(int(message[26:28], base=16)),
-                       str(int(message[28:30], base=16)),
-                       str(int(message[30:32], base=16)),
-                       str(int(message[32:34], base=16)),
-                       str(int(message[34:36], base=16)),
-                       str(int(message[36:38], base=16))]
-
-            try:
+            keylist = list(xrange(7))
+            vallist = list(xrange(7))
+            keylist[0] = "SuccessCount"
+            keylist[1] = "UnknownFailureCount"
+            keylist[2] = "ShutdownFailureCount"
+            keylist[3] = "UptimeCleanCounter"
+            keylist[4] = "UptimeCleanTotal"
+            keylist[5] = "UptimeFailureCounter"
+            keylist[6] = "UptimeFailureTotal"
+            try :
                 os.mkdir("clientstats")
-            except OSError as error:
+            except OSError as error :
                 log.debug("Client stats dir already exists")
-
-            if message.startswith("650a01537465616d2e657865"):  # Steam.exe
+            if message.startswith("650a01537465616d2e657865") : #Steam.exe
+                vallist[0] = str(int(message[24:26], base=16))
+                vallist[1] = str(int(message[26:28], base=16))
+                vallist[2] = str(int(message[28:30], base=16))
+                vallist[3] = str(int(message[30:32], base=16))
+                vallist[4] = str(int(message[32:34], base=16))
+                vallist[5] = str(int(message[34:36], base=16))
+                vallist[6] = str(int(message[36:38], base=16))
                 f = open("clientstats\\" + str(ipactual) + ".steamexe.csv", "w")
                 f.write(str(binascii.a2b_hex(message[6:24])))
                 f.write("\n")
-                f.write(",".join(keylist))
+                f.write(keylist[0] + "," + keylist[1] + "," + keylist[2] + "," + keylist[3] + "," + keylist[4] + "," + keylist[5] + "," + keylist[6])
                 f.write("\n")
-                f.write(",".join(vallist))
+                f.write(vallist[0] + "," + vallist[1] + "," + vallist[2] + "," + vallist[3] + "," + vallist[4] + "," + vallist[5] + "," + vallist[6])
                 f.close()
-                log.info(clientid + "Received steam client stats")
+                log.info(clientid + "Received client stats")
         elif data.startswith("c"):  # 63
             message = binascii.b2a_hex(data)
-            keylist = ["Unknown1", "Unknown2", "ModuleName", "FileName", "CodeFile", "ThrownAt",
-                       "Unknown3", "Unknown4", "AssertPreCondition", "Unknown5", "OsCode",
-                       "Unknown6", "Message"]
+            keylist = list(xrange(13))
+            vallist = list(xrange(13))
+            keylist[0] = "Unknown1"
+            keylist[1] = "Unknown2"
+            keylist[2] = "ModuleName"
+            keylist[3] = "FileName"
+            keylist[4] = "CodeFile"
+            keylist[5] = "ThrownAt"
+            keylist[6] = "Unknown3"
+            keylist[7] = "Unknown4"
+            keylist[8] = "AssertPreCondition"
+            keylist[9] = "Unknown5"
+            keylist[10] = "OsCode"
+            keylist[11] = "Unknown6"
+            keylist[12] = "Message"
+            try :
+                os.mkdir("crashlogs")
+            except OSError as error :
+                log.debug("Client crash reports dir already exists")
             templist = binascii.a2b_hex(message)
             templist2 = templist.split(b'\x00')
-            try:
-                vallist = [str(int(binascii.b2a_hex(templist2[0][2:4]), base=16)),
-                           str(int(binascii.b2a_hex(templist2[1]), base=16)),
-                           str(templist2[2]),
-                           str(templist2[3]),
-                           str(templist2[4]),
-                           str(int(binascii.b2a_hex(templist2[5]), base=16)),
-                           str(int(binascii.b2a_hex(templist2[7]), base=16)),
-                           str(int(binascii.b2a_hex(templist2[10]), base=16)),
-                           str(templist2[13]),
-                           str(int(binascii.b2a_hex(templist2[14]), base=16)),
-                           str(int(binascii.b2a_hex(templist2[15]), base=16)),
-                           str(int(binascii.b2a_hex(templist2[18]), base=16)),
-                           str(templist2[23])]
+            #try :
+            vallist[0] = str(int_wrapper(binascii.b2a_hex(templist2[0][2:4])))
+            vallist[1] = str(int_wrapper(binascii.b2a_hex(templist2[1])))
+            vallist[2] = str(templist2[2])
+            vallist[3] = str(templist2[3])
+            vallist[4] = str(templist2[4])
+            vallist[5] = str(int_wrapper(binascii.b2a_hex(templist2[5])))
+            vallist[6] = str(int_wrapper(binascii.b2a_hex(templist2[7])))
+            vallist[7] = str(int_wrapper(binascii.b2a_hex(templist2[10])))
+            vallist[8] = str(templist2[13])
+            vallist[9] = str(int_wrapper(binascii.b2a_hex(templist2[14])))
+            vallist[10] = str(int_wrapper(binascii.b2a_hex(templist2[15])))
+            vallist[11] = str(int_wrapper(binascii.b2a_hex(templist2[18])))
+            vallist[12] = str(templist2[23])
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = "crashlogs\\" + str(ipactual) + "_" + timestamp + ".csv"
+            
+            f = open(filename, "w")
+            f.write("SteamExceptionsData")
+            f.write("\n")
+            f.write(keylist[0] + "," + keylist[1] + "," + keylist[2] + "," + keylist[3] + "," + keylist[4] + "," + keylist[5] + "," + keylist[6] + "," + keylist[7] + "," + keylist[8] + "," + keylist[9] + "," + keylist[10] + "," + keylist[11] + "," + keylist[12])
+            f.write("\n")
+            f.write(vallist[0] + "," + vallist[1] + "," + vallist[2] + "," + vallist[3] + "," + vallist[4] + "," + vallist[5] + "," + vallist[6] + "," + vallist[7] + "," + vallist[8] + "," + vallist[9] + "," + vallist[10] + "," + vallist[11] + "," + vallist[12])
+            f.close()
+            log.info(clientid + "Received client crash report")
+            #except :
+                #log.debug(clientid + "Failed to receive client crash report")
 
-                try:
-                    os.mkdir("crashlogs")
-                except OSError as error:
-                    log.debug("Client crash reports dir already exists")
-
-                f = open("crashlogs\\" + str(ipactual) + ".csv", "w")
-                f.write("SteamExceptionsData")
-                f.write("\n")
-                f.write(",".join(keylist))
-                f.write("\n")
-                f.write(",".join(vallist))
-                f.close()
-                log.info(clientid + "Received client crash report")
-            except Exception as e:
-                log.debug(clientid + "Failed to receive client crash report: " + str(e))
                 #d =  message type
                 #then 1 = request denied, invalid message protocol
                 #2 = server accepts minidump, so client will send it now
@@ -151,66 +154,66 @@ class cserserver(threading.Thread):
                 #     for each value:
                 #         string(fieldname 32)
                 #         string(value 128)
-            """len = struct.unpack('H', data[1:3])[0]
-                sentData = data[3:]
+            len = struct.unpack('H', data[1:3])[0]
+            sentData = data[3:]
 
-                log.debug("Received crypted Steam client stats packet, from %s: %s" % (from_address, sentData))
+            log.debug("Received crypted Steam client stats packet, from %s: %s" % (from_address, sentData))
 
-                decrypted = ''
+            decrypted = ''
 
-                # Create the AES decryption object
-                aes = AES.new(CSER_ICE_KEY_q, AES.MODE_ECB)
+            # Create the AES decryption object
+            aes = AES.new(CSER_ICE_KEY_q, AES.MODE_ECB)
 
-                for ind in range(len / 8):
-                    encrypted_block = sentData[ind * 8:(ind + 1) * 8]
-                    decrypted_block = aes.decrypt(encrypted_block)
-                    decrypted += decrypted_block
+            for ind in range(len / 8):
+                encrypted_block = sentData[ind * 8:(ind + 1) * 8]
+                decrypted_block = aes.decrypt(encrypted_block)
+                decrypted += decrypted_block
 
-                log.debug("Received Steam client stats packet, from %s: %s" % (from_address, decrypted))
+            log.debug("Received Steam client stats packet, from %s: %s" % (from_address, decrypted))
 
-                debug = ''
+            debug = ''
 
-                header = struct.unpack('H', decrypted[:2])[0]
-                if header != 0x0101:
-                    log.debug("Invalid stats header, from %s: %s" % (from_address, decrypted))
-                    return 0
+            header = struct.unpack('H', decrypted[:2])[0]
+            if header != 0x0101:
+                log.debug("Invalid stats header, from %s: %s" % (from_address, decrypted))
+                return 0
 
-                subject = decrypted[2:]
+            subject = decrypted[2:]
 
-                keys = []
-                values = []
+            keys = []
+            values = []
 
-                debug += "\r\n%s : \r\n" % subject
-                next_index = 2 + len(subject) + 1
-                nbFields = ord(decrypted[next_index])
-                next_index += 1
+            debug += "\r\n%s : \r\n" % subject
+            next_index = 2 + len(subject) + 1
+            nbFields = ord(decrypted[next_index])
+            next_index += 1
 
-                for ind in range(nbFields):
-                    tmp = ""
-                    key = decrypted[next_index:].split('\x00', 1)[0]
-                    next_index += len(key) + 1
+            for ind in range(nbFields):
+                tmp = ""
+                key = decrypted[next_index:].split('\x00', 1)[0]
+                next_index += len(key) + 1
 
-                    value = decrypted[next_index:].split('\x00', 1)[0]
-                    next_index += len(value) + 1
+                value = decrypted[next_index:].split('\x00', 1)[0]
+                next_index += len(value) + 1
 
-                    keys.append(key)
-                    values.append(value)
-                    tmp = "  %s: %s\r\n" % (key, value)
-                    debug += tmp
+                keys.append(key)
+                values.append(value)
+                tmp = "  %s: %s\r\n" % (key, value)
+                debug += tmp
 
-                log.debug("Received Steam client stats, from %s: %s" % (from_address, debug))
+            log.debug("Received Steam client stats, from %s: %s" % (from_address, debug))
 
-                # Save key-value pairs to a CSV file
-                filename = os.path.join('./logs', from_address[0] + '.bugreport#' + decrypted[0] + '.csv')
-                with open(filename, 'w') as csvfile:
-                    writer = csv.writer(csvfile)
-                    for key, value in zip(keys, values):
-                        writer.writerow([key, value])
+            # Save key-value pairs to a CSV file
+            filename = os.path.join('./clientstats', from_address[0] + '.bugreport#' + decrypted[0] + '.csv')
+            with open(filename, 'w') as csvfile:
+                writer = csv.writer(csvfile)
+                for key, value in zip(keys, values):
+                    writer.writerow([key, value])
 
-                # Clean up
-                del aes
-                del decrypted
-                del debug"""
+            # Clean up
+            del aes
+            del decrypted
+            del debug
             self.socket.sendto("\xFF\xFF\xFF\xFF\x72\x01", address) # 72 = r command and the next byte is a bool, ok = 1, bad = 0
         
         elif data.startswith("a"):  # 61
@@ -277,13 +280,12 @@ class cserserver(threading.Thread):
                 decrypted[num_blocks * 8:] = block_out
 
             print decrypted
-            # Save decrypted data to a file
+            # Save decrypted data to a file"""
             ip_address = address[0]
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             filename = "clientstats/{}.{}.hwsurvey.txt".format(ip_address, timestamp)
 
-            with open(filename, "w") as f:
-                f.write(decrypted)"""
+
            #remove the following 2 lines when decryption is figured out
             with open(filename, "w") as f:
                 f.write(sentData)

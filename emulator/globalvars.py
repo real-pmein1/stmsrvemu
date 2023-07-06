@@ -1,4 +1,3 @@
-
 from Crypto.PublicKey import RSA
 from steamemu.config import read_config
 config = read_config()
@@ -9,14 +8,17 @@ converting = "0"
 checksum_temp_file = 0
 servernet = "0."
 serverip = ""
-udpdata = ""
-udpaddr = ""
 hl1serverlist = list(xrange(10000))
 hl1challengenum = 0
 hl2serverlist = list(xrange(10000))
 hl2challengenum = 0
 tracker = 0
 tgt_version = "2"
+validation_ip = 0
+validation_port = 0
+emuversion = "0"
+dir_ismaster = 1
+cs_region = "us"
 
 ip_addresses = (
 "69.28.148.250",

@@ -81,7 +81,7 @@ Expected Response:
 Command:
 	find all remote file harvest servers (minidump harvesting server)
 Send to server:
-	0xA0
+	0x0A
 Expected Response:
 	ip's or unknown error	
 
@@ -102,7 +102,7 @@ Expected Response:
 Command:
 	Find all VCDS Validation (New valve cdkey Authentication)
 Send to server:
-	0xB0
+	0x0B
 Expected Response:
 	ip's or unknown error	
 
@@ -123,14 +123,14 @@ Expected Response:
 Command:
 	find all MCS Content Administration Server's
 Send to server:
-	0xC0
+	0x0C
 Expected Response:
 	ip's or unknown error	
 
 Command:
 	Find all MCS Master Public Content Server's
 Send to server:
-	0xD0
+	0x0D
 Expected Response:
 	ip's or unknown error	
 

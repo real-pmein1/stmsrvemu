@@ -1,23 +1,23 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast
-
-from Crypto.Hash import SHA
-
+import threading, logging, struct, binascii, time, ipaddress, os.path, ast
 import utilities
 import encryption
 import config
 import serverlist_utilities
+import emu_socket
+import globalvars
+import steamemu.logger
 
-class vttserver(threading.Thread):
-    def __init__(self, (socket, address), config) :
-        threading.Thread.__init__(self)
-        self.socket = socket
-        self.address = address
-        self.config = config
-          
-    def run(self):
+from Crypto.Hash import SHA
+from tcp_socket import TCPNetworkHandler
+
+class vttserver(TCPNetworkHandler):
+    def __init__(self, port, config):
+        super(vttserver, self).__init__(emu_socket.ImpSocket(), config, port) 
+        
+    def handle_client(self, clientsocket, address):
         log = logging.getLogger("vttsrv")
 
-        clientid = str(self.address) + ": "
+        clientid = str(address) + ": "
 
         log.info(clientid + "Connected to VTT Server")
         
@@ -28,7 +28,7 @@ class vttserver(threading.Thread):
 
                 #config_update = read_config()
 
-                command = self.socket.recv(26)
+                command = clientsocket.recv(26)
                 
                 log.debug("COMMAND :" + binascii.b2a_hex(command) + ":")
                 
@@ -46,26 +46,26 @@ class vttserver(threading.Thread):
                         while mac_count < len(cafemacs) :
                             #print(cafemacs[mac_count])
                             if macaddress == cafemacs[mac_count] :
-                                self.socket.send("\x01\x00\x00\x00") #VALID
+                                clientsocket.send("\x01\x00\x00\x00") #VALID
                                 break
                             mac_count = mac_count + 1
                             if mac_count == len(cafemacs) :
-                                self.socket.send("\xfd\xff\xff\xff") #NO VALID MAC
+                                clientsocket.send("\xfd\xff\xff\xff") #NO VALID MAC
                                 break
                     else :
-                        self.socket.send("\x01\x00\x00\x00") #ALWAYS VALID
+                        clientsocket.send("\x01\x00\x00\x00") #ALWAYS VALID
                         
                 elif command[0:6] == "\x53\x45\x54\x4d\x41\x43" : #SETMAC (v1)
                     log.info(clientid + "SETMAC received")
-                    self.socket.send("\x01\x00\x00\x00")
+                    clientsocket.send("\x01\x00\x00\x00")
                         
                 elif command[0:4] == "\x00\x00\xff\xff" : #Response (v1)
                     log.info(clientid + "RESPONSE sent")
-                    self.socket.send("\x01\x00\x00\x00") #INCORRECT AND UNKNOWN FOR 1.4
+                    clientsocket.send("\x01\x00\x00\x00") #INCORRECT AND UNKNOWN FOR 1.4
                         
                 elif command[0:9] == "\x43\x48\x41\x4c\x4c\x45\x4e\x47\x45" : #CHALLENGE (v1)
                     log.info(clientid + "CHALLENGE received")
-                    self.socket.send("\xff\xff\x00\x00") #CHALLENGE reply (can be anything, is the inverse of the client reply)
+                    clientsocket.send("\xff\xff\x00\x00") #CHALLENGE reply (can be anything, is the inverse of the client reply)
                     
                 elif command[5:12] == "\x47\x45\x54\x49\x4e\x46\x4f" : #GETINFO
                     #print(binascii.b2a_hex(command))
@@ -78,13 +78,13 @@ class vttserver(threading.Thread):
                     #print(username_enc)
                     reply = struct.pack("<L", len(username_enc)) + username_enc
                     #print(binascii.b2a_hex(reply))
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
                     
                 elif command[0:8] == "\x53\x45\x4e\x44\x4d\x49\x4e\x53" or command[5:13] == "\x53\x45\x4e\x44\x4d\x49\x4e\x53" : #SENDMINS
                     log.info(clientid + "SENDMINS received")
-                    #self.socket.send("\x01\x00\x00\x00") #FAKE MINS
+                    #clientsocket.send("\x01\x00\x00\x00") #FAKE MINS
                     reply = struct.pack("<L", int(self.config["cafetime"]))
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
                     
                 elif command[0:8] == "\x47\x45\x54\x49\x4e\x46\x4f\x20" : #GETINFO AGAIN
                     #print(binascii.b2a_hex(command))
@@ -97,7 +97,7 @@ class vttserver(threading.Thread):
                     #print(username_enc)
                     reply = struct.pack("<L", len(username_enc)) + username_enc
                     #print(binascii.b2a_hex(reply))
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
                         
                 elif command[0:8] == "\x50\x49\x4e\x47\x20\x20\x20\x20" : #PING
                     log.info(clientid + "PING received")
@@ -108,7 +108,7 @@ class vttserver(threading.Thread):
                 elif len(command) == 0 :
                     log.info(clientid + "Client ended session")
                     break
-                
+                    
                 else :
                     if error_count == 1 :
                         log.info(clientid + "UNKNOWN VTT COMMAND " + binascii.b2a_hex(command[0:26]))
@@ -116,10 +116,10 @@ class vttserver(threading.Thread):
                     if error_count > 5 :
                         #log.info(clientid + "CAS client logged off or errored, disconnecting socket")
                         break
-                    
+                        
             except :
                 log.error(clientid + "An error occured between the client and the VTT")
                 break
 
-        self.socket.close()
+        clientsocket.close()
         log.info(clientid + "Disconnected from VTT Server")

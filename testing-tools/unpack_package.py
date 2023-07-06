@@ -62,10 +62,10 @@ if __name__ == '__main__':
         package_unpack(infilename, outpath)
 
         # Save output variables to file
-        output_filename = infilename + ".output"
-        output = {
-            "infilename": infilename,
-            "outpath": outpath
-        }
+        #output_filename = infilename + ".output"
+        #output = {
+        #    "infilename": infilename,
+        #    "outpath": outpath
+        #}
         with open(output_filename, "w") as output_file:
             output_file.write(str(output))

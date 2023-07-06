@@ -1,13 +1,18 @@
 import binascii, ConfigParser, threading, logging, time, os, shutil, zipfile
 import tempfile, zlib, os.path, ast, csv, sys, struct, string, random, logging
-import blob_utilities
+import blob_utilities, globalvars, dirs, socket
+import steamemu.logger
 
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 from steamemu.converter import convertgcf
 from steamemu.config import read_config
-config = read_config()
+from steamemu.config import save_config_value
 
+
+config = read_config()
+log = logging.getLogger('Utilities')
+    
 def decodeIP(string) :
     (oct1, oct2, oct3, oct4, port) = struct.unpack("<BBBBH", string)
     ip = "%d.%d.%d.%d" % (oct1, oct2, oct3, oct4)
@@ -19,6 +24,40 @@ def encodeIP((ip, port)) :
     oct = ip.split(".")
     string = struct.pack("<BBBBH", int(oct[0]), int(oct[1]), int(oct[2]), int(oct[3]), port)
     return string
+
+def convert_to_network_format(ip_address, port):
+    # Convert IP address to network format
+    ip_bytes = socket.inet_aton(ip_address)
+
+    # Convert port to network format
+    port_hex = struct.pack('<H', port)
+
+    # Combine IP and port hex values
+    result = ip_bytes + port_hex
+
+    # Convert to string representation
+    result_str = ''.join('{:02x}'.format(ord(byte)) for byte in result)
+
+    return result_str
+
+
+def convert_ip_port(ip_address, port):
+    # Convert IP address to 4-byte hex string
+    ip_bytes = socket.inet_aton(ip_address)
+    ip_hex = ''.join(['%02X' % ord(byte) for byte in ip_bytes])
+
+    # Convert port to 2-byte hex string
+    port_hex = struct.pack('>H', port).encode('hex')
+
+    # Combine IP and port hex strings
+    combined_hex = ip_hex + port_hex
+
+    return combined_hex
+
+def get_nanoseconds_since_time0():
+    time0 = time.time()  # Get the current time in seconds since the epoch
+    nanoseconds = int(time0 * 1e9)  # Convert seconds to nanoseconds
+    return nanoseconds
 
 def steamtime_to_unixtime(steamtime_bin) :
     steamtime = struct.unpack("<Q", steamtime_bin)[0]
@@ -75,7 +114,7 @@ def sortfunc(x, y) :
             return cmp(x, y)
 
 def initialise():
-    log = logging.getLogger('emulator')
+    log = logging.getLogger('Initializer')
 # create the Steam.exe file
     f = open(config["packagedir"] + config["steampkg"], "rb")
     pkg = Package(f.read())
@@ -102,8 +141,8 @@ def initialise():
         g.write(file)
         g.close()
             
-    if os.path.isfile("files/1stcdr.py") :
-        f = open("files/1stcdr.py", "r")
+    if os.path.isfile("files/firstblob.py") :
+        f = open("files/firstblob.py", "r")
         firstblob = f.read()
         f.close()
     else :
@@ -215,6 +254,68 @@ def initialise():
 
     log.info("Checking for gcf files to convert...")
     convertgcf()
+    
+def check_peerpassword():    
+    #this checks if there is a peer password, if not itll generate one
+    if "peer_password" in config and config["peer_password"]:
+        # The peer_password is present and not empty
+        globalvars.peer_password = config["peer_password"]
+        return 0
+    else:
+        # The peer_password is missing or empty
+        # Generate a new password
+        globalvars.peer_password = generate_password()
 
+        # Save the new password to the config file
+        save_config_value("peer_password", globalvars.peer_password)
+        return 1
+        
+def checklocalipnet(): 
+    if config["server_ip"].startswith("10.") :
+        globalvars.servernet = "('10."
+    elif config["server_ip"].startswith("172.16.") :
+        globalvars.servernet = "('172.16."
+    elif config["server_ip"].startswith("172.17.") :
+        globalvars.servernet = "('172.17."
+    elif config["server_ip"].startswith("172.18.") :
+        globalvars.servernet = "('172.18."
+    elif config["server_ip"].startswith("172.19.") :
+        globalvars.servernet = "('172.19."
+    elif config["server_ip"].startswith("172.20.") :
+        globalvars.servernet = "('172.20."
+    elif config["server_ip"].startswith("172.21.") :
+        globalvars.servernet = "('172.21."
+    elif config["server_ip"].startswith("172.22.") :
+        globalvars.servernet = "('172.22."
+    elif config["server_ip"].startswith("172.23.") :
+        globalvars.servernet = "('172.23."
+    elif config["server_ip"].startswith("172.24.") :
+        globalvars.servernet = "('172.24."
+    elif config["server_ip"].startswith("172.25.") :
+        globalvars.servernet = "('172.25."
+    elif config["server_ip"].startswith("172.26.") :
+        globalvars.servernet = "('172.26."
+    elif config["server_ip"].startswith("172.27.") :
+        globalvars.servernet = "('172.27."
+    elif config["server_ip"].startswith("172.28.") :
+        globalvars.servernet = "('172.28."
+    elif config["server_ip"].startswith("172.29.") :
+        globalvars.servernet = "('172.29."
+    elif config["server_ip"].startswith("172.30.") :
+        globalvars.servernet = "('172.30."
+    elif config["server_ip"].startswith("172.31.") :
+        globalvars.servernet = "('172.31."
+    elif config["server_ip"].startswith("192.168.") :
+        globalvars.servernet = "('192.168."
 
-   
+    #set serverip for the servers to use, depends on which config option is used.
+    if ("server_ip" not in config or not config["server_ip"]) and ("public_ip" not in config or not config["public_ip"]):
+        globalvars.serverip = "127.0.0.1"
+    elif "server_ip" in config and config["server_ip"]:
+        globalvars.serverip = config["server_ip"]
+    else:
+        globalvars.serverip = config["public_ip"]
+      
+        
+       
+

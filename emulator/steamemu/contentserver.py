@@ -1,13 +1,15 @@
-import threading, logging, struct, binascii, os.path, zlib, os, socket, shutil
-
-from Crypto.Hash import SHA
-
+import threading, logging, struct, binascii, os.path, zlib, os,  shutil, atexit
 import utilities
 import blob_utilities
 import storage_utilities
 import encryption
 import config
 import globalvars
+import emu_socket
+import time
+import steamemu.logger
+
+from Crypto.Hash import SHA
 from Steam2.manifest import *
 from Steam2.neuter import neuter
 from Steam2.manifest2 import Manifest2
@@ -15,28 +17,67 @@ from Steam2.checksum2 import Checksum2
 from Steam2.checksum3 import Checksum3
 from gcf_to_storage import gcf2storage
 from time import sleep
+from Crypto.Hash import SHA
+from contentserverlist_utilities import send_removal, send_heartbeat
+from networkhandler import TCPNetworkHandler
 
-class contentserver(threading.Thread):
-    def __init__(self, (socket, address), config) :
-        threading.Thread.__init__(self)
-        self.socket = socket
-        self.address = address
-        self.config = config
+log = logging.getLogger("ContentSRV")
+app_list = []
+csConnectionCount = 0
 
-    def run(self):
-        log = logging.getLogger("contentsrv")
-        clientid = str(self.address) + ": "
+
+class contentserver(TCPNetworkHandler):
+    global log
+    
+    def check_thread_status(self):
+        while True:
+            if self.thread2.is_alive():
+                log.error("[content server] Thread is alive")
+            else:
+                log.error("[content server] Thread has died... attempting restart")
+                self.thread2.start()
+                break
+        time.sleep(45 * 60)  # Delay for 45 minutes
+
+    def __init__(self, port, config):
+        super(contentserver, self).__init__(config, port)  # Create an instance of NetworkHandler
+        self.contentserver_info = {
+            'ip_address': globalvars.serverip,
+            'port': int(self.port),
+            'region': globalvars.cs_region,
+            'timestamp': 1623276000
+        }
+        
+        self.applist = self.parse_manifest_files(self.contentserver_info)
+    
+        self.thread2 = threading.Thread(target=self.heartbeat_thread)
+        self.thread2.daemon = True
+        self.thread2.start()
+        
+        #thread_status_checker = threading.Thread(target=self.check_thread_status)
+        #thread_status_checker.daemon = True
+        #thread_status_checker.start()
+    
+    def heartbeat_thread(self):       
+        while True:
+            send_heartbeat(self.contentserver_info, self.applist)
+            time.sleep(1800) # 30 minutes
+            
+    def handle_client(self, clientsocket, address):
+        global csConnectionCount
+        csConnectionCount += 1
+        clientid = str(address) + ": "
         log.info(clientid + "Connected to Content Server")
 
-        msg = self.socket.recv(4)
+        msg = clientsocket.recv(4)
 
         if len(msg) == 0 :
             log.info(clientid + "Got simple handshake. Closing connection.")
         elif msg == "\x00\x00\x00\x02" or msg == "\x00\x00\x00\x03" : #x02 for 2012
             log.info(clientid + "Package mode entered")
-            self.socket.send("\x01")
+            clientsocket.send("\x01")
             while True :
-                msg = self.socket.recv_withlen()
+                msg = clientsocket.recv_withlen()
 
                 if not msg :
                     log.info(clientid + "no message received")
@@ -45,7 +86,7 @@ class contentserver(threading.Thread):
                 command = struct.unpack(">L", msg[:4])[0]
 
                 if command == 2 :
-                    self.socket.send("\x00\x00\x00\x02")
+                    clientsocket.send("\x00\x00\x00\x02")
                     break
 
                 elif command == 3 :
@@ -95,7 +136,7 @@ class contentserver(threading.Thread):
 
                         reply = struct.pack('>LL', len(signature), len(signature)) + signature
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                     else :
                         if self.config["public_ip"] != "0.0.0.0" :
@@ -127,8 +168,8 @@ class contentserver(threading.Thread):
 
                         reply = struct.pack('>LL', len(file), len(file))
 
-                        self.socket.send( reply )
-                        self.socket.send(file, False)
+                        clientsocket.send( reply )
+                        clientsocket.send(file, False)
 
                 else :
                     log.warning(clientid +"invalid Command")
@@ -140,16 +181,16 @@ class contentserver(threading.Thread):
             storagesopen = 0
             storages = {}
 
-            self.socket.send("\x01") # this should just be the handshake
+            clientsocket.send("\x01") # this should just be the handshake
 
             while True :
 
-                command = self.socket.recv_withlen()
+                command = clientsocket.recv_withlen()
 
                 if command[0] == "\x00" :
 
                     if len(command) == 10 :
-                        self.socket.send("\x01")
+                        clientsocket.send("\x01")
                         break
                     elif len(command) > 1 :
                         log.info("Banner message: " + binascii.b2a_hex(command))
@@ -158,9 +199,9 @@ class contentserver(threading.Thread):
 
                         reply = struct.pack(">cH", "\x01", len(url)) + url
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
                     else :
-                        self.socket.send("")
+                        clientsocket.send("")
                         
                 elif command[0] == "\x02" :
 
@@ -168,10 +209,10 @@ class contentserver(threading.Thread):
                         f = open("files/cache/secondblob.bin", "rb")
                         blob = f.read()
                         f.close()
-                    elif os.path.isfile("files/2ndcdr.py") :
-                        if not os.path.isfile("files/2ndcdr.orig") :
-                            shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
-                        g = open("files/2ndcdr.py", "r")
+                    elif os.path.isfile("files/secondblob.py") :
+                        if not os.path.isfile("files/secondblob.py.orig") :
+                            shutil.copy2("files/secondblob.py","files/secondblob.py.orig")
+                        g = open("files/secondblob.py", "r")
                         file = g.read()
                         g.close()
                     
@@ -180,18 +221,18 @@ class contentserver(threading.Thread):
                             newlength = len(replace)
                             missinglength = fulllength - newlength
                             if missinglength < 0 :
-                                print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                             else :
                                 fileold = file
                                 file = file.replace(search, replace)
                                 if (search in fileold) and (replace in file) :
                                     print("Replaced " + info + " " + search + " with " + replace)
-                        h = open("files/2ndcdr.py", "w")
+                        h = open("files/secondblob.py", "w")
                         h.write(file)
                         h.close()
                         
                         execdict = {}
-                        execfile("files/2ndcdr.py", execdict)
+                        execfile("files/secondblob.py", execdict)
                         blob = blob_utilities.blob_serialize(execdict["blob"])
                     
                         if blob[0:2] == "\x01\x43" :
@@ -219,8 +260,8 @@ class contentserver(threading.Thread):
                             f.close()
                     
                     else :
-                        if not os.path.isfile("files/secondblob.orig") :
-                            shutil.copy2("files/secondblob.bin","files/secondblob.orig")
+                        if not os.path.isfile("files/secondblob.bin.orig") :
+                            shutil.copy2("files/secondblob.bin","files/secondblob.bin.orig")
                         f = open("files/secondblob.bin", "rb")
                         blob = f.read()
                         f.close()
@@ -232,12 +273,12 @@ class contentserver(threading.Thread):
                         file = "blob = " + blob3
                     
                         for (search, replace, info) in globalvars.replacestringsCDR :
-                            print "Fixing CDR"
+                            print("Fixing CDR")
                             fulllength = len(search)
                             newlength = len(replace)
                             missinglength = fulllength - newlength
                             if missinglength < 0 :
-                                print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                             else :
                                 file = file.replace(search, replace)
                                 print("Replaced " + info + " " + search + " with " + replace)
@@ -284,13 +325,13 @@ class contentserver(threading.Thread):
                         #log.info(clientid + "Client has matching checksum for secondblob")
                         #log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
 
-                        #self.socket.send("\x00\x00\x00\x00")
+                        #clientsocket.send("\x00\x00\x00\x00")
 
                     #else :
                     #log.info(clientid + "Client didn't match our checksum for secondblob")
                     log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
 
-                    self.socket.send_withlen(blob, False)
+                    clientsocket.send_withlen(blob, False)
 
                 elif command[0] == "\x09" or command[0] == "\x0a" : #09 is used by early clients without a ticket
 
@@ -300,7 +341,7 @@ class contentserver(threading.Thread):
                         #log.error(clientid + "Not logged in")
 
                         #reply = struct.pack(">LLc", connid, messageid, "\x01")
-                        #self.socket.send(reply)
+                        #clientsocket.send(reply)
 
                         #break
 
@@ -310,12 +351,12 @@ class contentserver(threading.Thread):
                     connid = pow(2,31) + connid
 
                     try :
-                        s = storage_utilities.Storage(app, self.config["storagedir"], version)
+                        s = storage_utilities.Storage(str(app), self.config["storagedir"], str(version))
                     except Exception :
                         log.error("Application not installed! %d %d" % (app, version))
 
                         reply = struct.pack(">LLc", connid, messageid, "\x01")
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                         break
 
@@ -338,13 +379,13 @@ class contentserver(threading.Thread):
                                     newlength = len(replace)
                                     missinglength = fulllength - newlength
                                     if missinglength < 0 :
-                                        print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        print("WARNING: Replacement text " + replace + " is too long! Not replaced!")
                                     elif missinglength == 0 :
                                         file = file.replace(search, replace)
-                                        print "Replaced", info
+                                        print("Replaced", info)
                                     else :
                                         file = file.replace(search, replace + ('\x00' * missinglength))
-                                        print "Replaced", info
+                                        print("Replaced", info)
 
                                 h = open("files/temp/" + str(app) + "_" + str(version) + ".neutered.gcf", "wb")
                                 h.write(file)
@@ -372,7 +413,7 @@ class contentserver(threading.Thread):
                         log.error("Manifest doesn't match requested file: (%s, %s) (%s, %s)" % (app, version, manifest_appid, manifest_verid))
 
                         reply = struct.pack(">LLc", connid, messageid, "\x01")
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                         break
                     
@@ -392,11 +433,11 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcLL", connid, messageid, "\x00", storageid, checksum)
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                 elif command[0] == "\x01" :
 
-                    self.socket.send("")
+                    clientsocket.send("")
                     break
 
                 elif command[0] == "\x03" :
@@ -409,7 +450,7 @@ class contentserver(threading.Thread):
 
                     log.info(clientid + "Closing down storage %d" % storageid)
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                 elif command[0] == "\x04" :
 
@@ -421,11 +462,11 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcL", storageid, messageid, "\x00", len(manifest))
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                     reply = struct.pack(">LLL", storageid, messageid, len(manifest))
 
-                    self.socket.send(reply + manifest, False)
+                    clientsocket.send(reply + manifest, False)
 
                 elif command[0] == "\x05" :
                     log.info(clientid + "Sending app update information")
@@ -480,10 +521,10 @@ class contentserver(threading.Thread):
 
                     if count == 0:
                         reply = struct.pack(">LLcL", storageid, messageid, "\x01", 0)
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
                     else:
                         reply = struct.pack(">LLcL", storageid, messageid, "\x02", count)
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
                         
                         changedFilesTmp = []
                         for fileid in changedFiles:
@@ -491,8 +532,8 @@ class contentserver(threading.Thread):
                         updatefiles = "".join(changedFilesTmp)
                         
                         reply = struct.pack(">LL", storageid, messageid)
-                        self.socket.send(reply)
-                        self.socket.send_withlen(updatefiles)
+                        clientsocket.send(reply)
+                        clientsocket.send_withlen(updatefiles)
                     
                 elif command[0] == "\x06" :
 
@@ -518,11 +559,11 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcL", storageid, messageid, "\x00", len(file))
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                     reply = struct.pack(">LLL", storageid, messageid, len(file))
 
-                    self.socket.send(reply + file, False)
+                    clientsocket.send(reply + file, False)
 
                 elif command[0] == "\x07" :
 
@@ -532,36 +573,55 @@ class contentserver(threading.Thread):
 
                     reply = struct.pack(">LLcLL", storageid, messageid, "\x00", len(chunks), filemode)
 
-                    self.socket.send(reply)
+                    clientsocket.send(reply)
 
                     for chunk in chunks :
 
                         reply = struct.pack(">LLL", storageid, messageid, len(chunk))
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
                         reply = struct.pack(">LLL", storageid, messageid, len(chunk))
 
-                        self.socket.send(reply)
+                        clientsocket.send(reply)
 
-                        self.socket.send(chunk, False)
+                        clientsocket.send(chunk, False)
 
                 elif command[0] == "\x08" :
 
                     log.warning("08 - Invalid Command!")
-                    self.socket.send("\x01")
+                    clientsocket.send("\x01")
 
                 else :
 
                     log.warning(binascii.b2a_hex(command[0]) + " - Invalid Command!")
-                    self.socket.send("\x01")
+                    clientsocket.send("\x01")
 
                     break
         elif msg == "\x03\x00\x00\x00" :
             log.info(clientid + "Unknown mode entered")
-            self.socket.send("\x00")
+            clientsocket.send("\x00")
         else :
             log.warning("Invalid Command: " + binascii.b2a_hex(msg))
 
-        self.socket.close()
+        clientsocket.close()
         log.info(clientid + "Disconnected from Content Server")
+
+    def parse_manifest_files(self, contentserver_info):
+        global app_list
+        # Define the locations to search for '.manifest' files
+        locations = ['files/cache/', self.config["v2manifestdir"], self.config["manifestdir"]]
+        app_buffer = ""
+        for location in locations:
+            for file_name in os.listdir(location):
+                if file_name.endswith('.manifest'):
+                    # Extract app ID and version from the file name
+                    app_id, version = file_name.split('_')
+                    version = version.rstrip('.manifest')
+                    #for appid, version in self.applist:
+                    #print("appid:", app_id)
+                    #print("version:", version)
+                    # Append app ID and version to app_list in this format
+                    app_buffer += str(app_id) + "\x00" + str(version) + "\x00\x00"
+                    app_list.append((app_id, version))
+        return app_buffer

@@ -2,7 +2,6 @@ import binascii, ConfigParser, zlib, sys
 import os.path, ast, csv, struct, utilities
 
 import dirs, globalvars
-from Steam2.package import Package
 
 def blob_dump(blob, spacer = "") :
 

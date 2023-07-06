@@ -1,6 +1,13 @@
 import sys
 import msvcrt #for keyboard escape key watcher
 import os
+import globalvars
+
+from steamemu.config import read_config
+
+config = read_config()
+
+globalvars.emuversion = str(config["emu_version"]);
 
 def check_python_version():
     # Get the major and minor version numbers

@@ -44,6 +44,23 @@ Command:
 Send to server:
 	0x0a +tgt +authenticator +payload
 Expected Response:
+u16
+
+
+u32
+u16 - contentticket version num
+u16 - u16SizeOfPlaintextClientReadableContentTicket
+u16 - u16SizeOfAESEncryptedClientReadableContentTicket
+gap - aes encrypted payload
+u16 - u16SizeOfServerReadableContentTicket
+gap - server readable content ticket
+gap - macWholeContentTicket/passphrase?
+len+data - 
+len+data - 
+len+data - 
+len+data - 
+len+data - 
+len+data - 
 	0 = success + content ticket
 
 these two go together:
@@ -69,3 +86,21 @@ recv from server:
 
 	validation context state
 0 = TValidationContext::eFree
+
+
+authentication ticket blob field numbers:
+0 - version
+1- unique accountname
+2- account username
+3- steaminstanceid
+4- steamlocaluserid
+5- clientexternalipaddr
+6- client local ipaddr
+7- userid ticket validation server ipaddr1
+8- userid ticket validation server port1
+9- userid ticket validation server ipaddr2
+10- userid ticket validation server port2
+11- client to server aes session key
+12- ticket creation time
+13- ticket valid until time
+14- server readable part (??? not very good description)

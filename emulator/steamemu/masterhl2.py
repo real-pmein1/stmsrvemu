@@ -1,40 +1,19 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast
+import threading, logging, struct, binascii, time, atexit, socket, ipaddress, os.path, ast
 import os
-import utilities
 import config
+import utilities
 import steamemu.logger
 import globalvars
-import serverlist_utilities
 
-class masterhl2(threading.Thread):
+from networkhandler import UDPNetworkHandler
 
-    def __init__(self, host, port):
-        #threading.Thread.__init__(self)
-        self.host = host
-        self.port = port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+class masterhl2(UDPNetworkHandler):
+
+    def __init__(self, config, port):
+        super(masterhl2, self).__init__(config, port)  # Create an instance of NetworkHandler
         
-       # Start the thread for dir registration heartbeat, only
-        thread2 = threading.Thread(target=self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
-        
-    def heartbeat_thread(self):       
-        while True:
-            serverlist_utilities.heartbeat(globalvars.serverip, self.port, "srcmasterserver", globalvars.peer_password )
-            time.sleep(1800) # 30 minutes
-            
-    def start(self):
-        
-        self.socket.bind((self.host, self.port))
-
-        while True:
-            #recieve a packet
-            data, address = self.socket.recvfrom(1280)
-            # Start a new thread to process each packet
-            threading.Thread(target=self.process_packet, args=(data, address)).start()
-
-    def process_packet(self, data, address):
+    def handle_client(self, *args):
+        data, address = args
         log = logging.getLogger("hl2mstr")
         clientid = str(address) + ": "
         log.info(clientid + "Connected to HL2 Master Server")
@@ -63,12 +42,33 @@ class masterhl2(threading.Thread):
                 i += 1
             nullip = struct.pack('>BBBB', 0, 0, 0, 0)
             nullport = struct.pack('>H', 0)
-            serversocket.sendto(header + nullip + nullport, address)
+            self.socket.sendto(header + nullip + nullport, address)
         elif data.startswith("q") :
             header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-            challenge = struct.pack("I", globalvars.hl2challengenum + 1)
-            serversocket.sendto(header + challenge, address)
-            globalvars.hl2challengenum += 1
+            ipstr = str(address)
+            ipstr1 = ipstr.split('\'')
+            ipactual = ipstr1[1]
+            portstr = ipstr1[2]
+            portstr1 = portstr.split(' ')
+            portstr2 = portstr1[1].split(')')
+            portactual_temp = portstr2[0]
+            if not str(len(portactual_temp)) == 5 :
+                portactual = "27015"
+            else :
+                portactual = str(portactual_temp)
+            registered = 0
+            for server in globalvars.hl2serverlist :
+                if len(str(server)) > 5 :
+                    if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                        log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                        challenge = struct.pack("I", int(server[4]))
+                        registered = 1
+                        break
+            if registered == 0 :
+                log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl2challengenum + 1))
+                challenge = struct.pack("I", globalvars.hl2challengenum + 1)
+                globalvars.hl2challengenum += 1
+            self.socket.sendto(header + challenge, address)
         elif data.startswith("0") :
             serverdata1 = data.split('\n')
             #print(serverdata1)
@@ -87,8 +87,8 @@ class masterhl2(threading.Thread):
             #print(tempserverlist[3])
             #print(tempserverlist[4])
             #print(tempserverlist[5])
-            print("This Challenge: %s" % tempserverlist[4])
-            print("Current Challenge: %s" % (globalvars.hl2challengenum))
+            log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
+            log.debug(clientid + "Current Challenge: %s" % (globalvars.hl2challengenum))
         elif data.startswith("b") :
             ipstr = str(address)
             ipstr1 = ipstr.split('\'')
@@ -111,9 +111,16 @@ class masterhl2(threading.Thread):
                     #print(type(portactual))
                     #print(type(globalvars.hl2serverlist[i][0]))
                     #print(type(globalvars.hl2serverlist[i][24]))
+                    #for server in globalvars.hl2serverlist :
+                    #print(server)
                     if globalvars.hl2serverlist[i][0] == ipactual and (str(globalvars.hl2serverlist[i][24]) == portactual or "27015" == portactual) :
+                        #print(type(globalvars.hl2serverlist[i]))
+                        #print(type(i))
+                        #print(type(globalvars.hl2serverlist))
+                        #print(globalvars.hl2serverlist[i][0])
+                        #print(str(globalvars.hl2serverlist[i][24]))
                         globalvars.hl2serverlist.pop(i)
-                        print("Removed game server: %s:%s" % (ipactual, portactual))
+                        log.info(clientid + "Unregistered server: %s:%s" % (ipactual, portactual))
                         running -= 1
                 i += 1
             print("Running servers: %s" % str(running))

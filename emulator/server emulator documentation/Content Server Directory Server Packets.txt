@@ -11,12 +11,6 @@ format of packets (from client to server) (taken from https://habr.com/en/articl
 
 
 (Family: 0x00000002 aka 0x02000000)
-Command:
-	find best public content server's	
-Send to server:
-	0x03
-Expected Response:
-	ip's or unknown error	
 
 Command:
 	find all public content server's
@@ -33,26 +27,48 @@ Expected Response:
 	ip's or unknown error	
 
 Command:
-	find best cellid csds
+	Recieve ContentServer ID With IP and Aport
 Send to server:
-	0x19
-	//packet structure:
-	//U32 - command 0x19
-	//1 byte - 0x00
-	//1 byte - 0x00
-	//1 byte - always 1
-	//U32
-	//U32
-	//U16
-	//U32
-	//U32 - 0xffffffff
-	//U32
+	0x0002
 Expected Response:
-	//u16 - number of content servers
-	//--next, loop according to number of servers--
-	//u32 - 
-	//gap - 6 bytes 0x00??
-	//gap - 6 bytes 0x00??
+	u16			<- server ID
+	Gap			<-ip address
+
+Command:
+	find best public content server's	
+Send to server:
+	0x03
+Expected Response:
+	ip's or unknown error	
+
+Command:
+	Request content ticket
+Send to server:
+	u16			<- constant 0x19			
+	0x00			<- constant
+	0x00			<- constant
+	0x01			<- constant
+	u16
+	u16
+	u32
+	u16
+	0xffff            <- constant
+	u16
+	**for loop, presumably for # of previous u16
+Expected Response:
+	u32	<- Number of content list directory servers
+	**for loop using previous number of servers**
+	u32
+	gap			<- 6 bytes
+	gap			<- 6 bytes
+
+Command:
+	Get CellID
+Sent to server:
+	\xD0\xE3\xA0\x00 or [0x00, 0xA0, 0xE3, 0xD0] ??think its in big endian
+Returned from server:
+	Contentserver list from same cellid
+
 
 Added 2005 packets:
 Command:

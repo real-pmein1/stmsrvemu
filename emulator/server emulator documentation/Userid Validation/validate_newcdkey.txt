@@ -10,7 +10,7 @@ Next:
 	Looks like we either generate an RSA Private key or we load it
 	end to server:
 		u32 		- packet size
-		u8  		- 0xC0 = command byte
+		u8  		- 0x0C = command byte
 		u32
 		u32
 		u32
