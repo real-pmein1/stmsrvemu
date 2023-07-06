@@ -22,7 +22,7 @@ class messagesserver(threading.Thread):
                     'timestamp': int(time.time())
                 }
         # Register the cleanup function using atexit
-        # atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))             
+        # atexit.register(remove_from_dir(globalvars.serverip, int(self.port), self.server_type))
         thread2 = threading.Thread(target=self.heartbeat_thread)
         thread2.daemon = True
         thread2.start()
