@@ -29,7 +29,7 @@ from steamemu.validationserver import validationserver
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-print("Steam 2004-2011 Server Emulator v0.61")
+print("Steam 2004-2011 Server Emulator v0.70")
 print("=====================================")
 print
 
@@ -219,8 +219,8 @@ class udplistener(threading.Thread):
                     serverdata3 = ipstr1[1] + serverdata2
                     tempserverlist = serverdata3.split('\\')
                     globalvars.hl1serverlist[int(tempserverlist[4])] = tempserverlist
-                    print("This Challenge: %s" % tempserverlist[4])
-                    print("Current Challenge: %s" % (globalvars.hl1challengenum))
+                    log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
+                    log.debug(clientid + "Current Challenge: %s" % (globalvars.hl1challengenum))
                     #globalvars.hl1servernum += 1
                 elif globalvars.data.startswith("b") :
                     ipstr = str(globalvars.addr)
@@ -585,6 +585,11 @@ steam_ver = str(int(steam_hex[14:16] + steam_hex[10:12] + steam_hex[6:8] + steam
 steamui_hex = firstblob_list[3][25:41]
 steamui_ver = int(steamui_hex[14:16] + steamui_hex[10:12] + steamui_hex[6:8] + steamui_hex[2:4], 16)
 
+if steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
+    globalvars.tgt_version = "1"
+else :
+    globalvars.tgt_version = "2" #config file states 2 as default
+
 if steamui_ver < 122 :
     if os.path.isfile("files/cafe/Steam.dll") :
         log.info("Cafe files found")
@@ -677,6 +682,21 @@ if os.path.isfile("Steam.cfg") :
 if os.path.isfile("w9xpopen.exe") :
     os.remove("w9xpopen.exe")
 
+if os.path.isfile("files/users.txt") :
+    users = {} #REMOVE LEGACY USERS
+    f = open("files/users.txt")
+    for line in f.readlines() :
+        if line[-1:] == "\n" :
+            line = line[:-1]
+        if line.find(":") != -1 :
+            (user, password) = line.split(":")
+            users[user] = user
+    f.close()
+    for user in users :
+        if (os.path.isfile("files/users/" + user + ".py")) :
+            os.rename("files/users/" + user + ".py", "files/users/" + user + ".legacy")
+    os.rename("files/users.txt", "files/users.off")
+
 log.info("Checking for gcf files to convert...")
 convertgcf()
 
@@ -741,5 +761,6 @@ time.sleep(0.2)
 if config["sdk_ip"] != "0.0.0.0" :
     log.info("Steamworks SDK Content Server configured on port " + str(config["sdk_port"]))
     time.sleep(0.2)
+log.debug("TGT set to version " + globalvars.tgt_version)
 log.info("Steam Server ready.")
 authlistener.join()

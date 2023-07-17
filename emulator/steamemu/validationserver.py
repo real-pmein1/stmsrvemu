@@ -25,69 +25,33 @@ class validationserver(threading.Thread):
         log.debug(":" + binascii.b2a_hex(command[1:5]) + ":")
         log.debug(":" + binascii.b2a_hex(command) + ":")
         
-        if command[1:5] == "\x00\x00\x00\x04" :
-
-            self.socket.send("\x01" + socket.inet_aton(self.address[0])) #CRASHES IF NOT 01
-            #log.debug((str(socket.inet_aton(self.address[0]))))
-            #log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
-            #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-            #signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-            #reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-            #self.socket.send(reply)
+        if command[1:5] == "\x00\x00\x00\x04" : #IMPLEMENT COMMAND 0C
+            self.socket.send("\x01" + socket.inet_aton(self.address[0])) #CRASHES IF NOT 01 (protocol)
             ticket_full = self.socket.recv_withlen()
             ticket_full = binascii.b2a_hex(ticket_full)
-            command = ticket_full[0:2]
-            unknown1 = ticket_full[2:10]
-            ip1 = ticket_full[10:18]
-            ip2 = ticket_full[18:26]
-            unknown2 = ticket_full[26:34]
-            unknown3 = ticket_full[34:36]
-            ticketLen = int(ticket_full[36:40], 16) * 2
-            print(ticket_full)
-            print(command)
-            print(unknown1)
-            print(ip1)
-            print(ip2)
-            print(unknown2)
-            print(unknown3)
-            print(ticketLen)
-            ticket = ticket_full[40:40+ticketLen]
-            print(ticket)
-            subcommand1 = ticket[0:4]
-            empty1_len = ticket[4:8]
-            outerIV = ticket[8:40]
-            empty1 = ticket[40:40+int(empty1_len, 16) * 2]
-            username_len = int(ticket[296:300], 16)
-            print(username_len)
-            username_len_short = username_len - 50
-            empty2_len = ticket[300:304]
-            empty2 = ticket[304:304+int(empty2_len, 16) * 2]
-            print(username_len_short)
-            username = binascii.unhexlify(ticket[304:304+username_len_short])
-            #accountId = ticket[304+int(empty2_len, 16)+4:304+int(empty2_len, 16)+4+16]
-            accountId = "1020304000000000"
-            print(accountId)
-            iv = ticket_full[40+ticketLen:40+ticketLen+32]
-            decr_len = ticket_full[40+ticketLen+32:40+ticketLen+32+4]
-            encr_len = ticket_full[40+ticketLen+36:40+ticketLen+40]
-            encr_data = ticket_full[40+ticketLen+40:40+ticketLen+104]
-            sha_key = ticket_full[40+ticketLen+104:40+ticketLen+144]
-            unknown1 = unknown1 + "\x01"
-            currtime = time.time()
-            tms = steam.unixtime_to_steamtime(currtime)
-            steamid_header = binascii.a2b_hex("0000") #CRASHES IF NOT 00
-            steamid = binascii.a2b_hex(accountId)
-            unknown_data = bytearray(0x80)
-            for ind in range(1, 9):
-                start_index = (ind - 1) * 16
-                value = (ind * 16) + ind
-                unknown_data[start_index:start_index+16] = bytes([value] * 16)
+            
+            ticket_len = int(ticket_full[36:40], 16) * 2
+            postticketdata = ticket_full[40 + ticket_len:]
+            key = binascii.a2b_hex("10231230211281239191238542314233")
+            iv = binascii.a2b_hex(postticketdata[0:32])
+            encdata_len = int(postticketdata[36:40], 16) * 2
+            encdata = postticketdata[40:40 + encdata_len]
+            decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+            username_len = decodedmessage[2:4] + decodedmessage[0:2]
+            username = binascii.a2b_hex(decodedmessage[4:4 + int(username_len, 16) * 2])
+            userblob = {}
+            if (os.path.isfile("files/users/" + username + ".py")) :
+                with open("files/users/" + username + ".py", 'r') as f:
+                    userblobstr = f.read()
+                    userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                steamId = userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00']
+                unknown1 = binascii.a2b_hex(ticket_full[2:10])
+                tms = steam.unixtime_to_steamtime(time.time())
+                #key = binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059")
+                ticket = "\x00\x97" + unknown1 + "\x01" + tms + "\x00\x00" + steamId
+                ticket_to_sign = unknown1 + "\x01" + tms + "\x00\x00" + steamId
+                ticket_signed = steam.rsa_sign_message(steam.network_key_sign, ticket_to_sign)
+                self.socket.send("\x00\x97" + unknown1 + "\x01" + tms + "\x00\x00" + steamId + ticket_signed)
 
-            reply = unknown1 + tms + steamid_header + steamid + unknown_data
-            replylen = struct.pack(">H", len(reply))
-            self.socket.send(replylen + reply)
-        
-        #self.socket.send("\x01")
-
-        #self.socket.close()
-        #log.info(clientid + "Disconnected from Validation Server")
+        self.socket.close()
+        log.info(clientid + "Disconnected from Validation Server")

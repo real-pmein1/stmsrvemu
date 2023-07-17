@@ -1,4 +1,4 @@
-import struct, zlib, os.path, logging
+import struct, zlib, os.path, logging, ConfigParser
 from steamemu.config import read_config
 
 config = read_config()
@@ -49,5 +49,12 @@ class Checksum2:
     def filename(cls, appId, verId):
         if os.path.isfile("files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + ".checksums") :
             return os.path.join("files/cache/" + str(appId) + "_" + str(verId) + "/", "%i.checksums" % (appId))
-        else :
+        elif os.path.isfile(os.path.join(config["storagedir"], "%i.checksums" % (appId))) :
             return os.path.join(config["storagedir"], "%i.checksums" % (appId))
+        elif os.path.isdir(config["v3manifestdir2"]) :
+            if os.path.isfile(os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))) :
+                return os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))
+            else :
+                log.error("Checksums not found for %s %s " % (appId, appVersion))
+        else :
+            log.error("Checksums not found for %s %s " % (appId, appVersion))

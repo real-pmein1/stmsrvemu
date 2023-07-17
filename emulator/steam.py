@@ -1,4 +1,4 @@
-import binascii, socket, struct, zlib, os, sys, logging
+import binascii, socket, struct, zlib, os, sys, logging, time
 from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA
 from Crypto.Cipher import AES
@@ -354,6 +354,7 @@ class Storage :
             #manifestpath = path[:-9] + "manifests/"
             manifestpathnew = config["manifestdir"]
             manifestpathold = config["v2manifestdir"]
+            manifestpathxtra = config["v3manifestdir2"]
 
         if os.path.isfile("files/cache/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + ".manifest") :
             self.indexfile  = "files/cache/" + self.name + "_" + self.ver + "/" + self.name + ".index"
@@ -367,6 +368,12 @@ class Storage :
 
             (self.indexes, self.filemodes) = readindexes_old(self.indexfile)
             self.new = False
+        elif os.path.isfile(manifestpathxtra + self.name + "_" + self.ver + ".manifest") :
+            self.indexfile  = config["v3storagedir2"] + self.name + ".index"
+            self.datafile   = config["v3storagedir2"] + self.name + ".data"
+
+            (self.indexes, self.filemodes) = readindexes(self.indexfile)
+            self.new = True
         else :
             self.indexfile  = config["storagedir"] + self.name + ".index"
             self.datafile   = config["storagedir"] + self.name + ".data"
@@ -1163,6 +1170,14 @@ def unixtime_to_steamtime(unixtime) :
     steamtime = (unixtime + 62135596800) * 1000000
     steamtime_bin = struct.pack("<Q", steamtime)
     return steamtime_bin
+    
+def get_nanoseconds_since_time0():
+    before_time0 = 62135596800
+    current = int(time.time())
+    now = current + before_time0
+    nano = 1000000
+    now *= nano
+    return now
 
 def sortfunc(x, y) :
 

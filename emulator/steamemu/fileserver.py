@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, os.path, zlib, os, socket, shutil
+import threading, logging, struct, binascii, os.path, zlib, os, socket, shutil, ast
 
 from Crypto.Hash import SHA
 
@@ -151,7 +151,7 @@ class fileserver(threading.Thread):
                     elif len(command) > 1 :
                         log.info("Banner message: " + binascii.b2a_hex(command))
                         
-                        url = "http://" + self.config["http_ip"] + self.config["http_port"] + self.config["banner_url"]
+                        url = "http://" + self.config["http_ip"] + self.config["http_port"] + "/platform/banner/random.php"
 
                         reply = struct.pack(">cH", "\x01", len(url)) + url
 
@@ -188,7 +188,31 @@ class fileserver(threading.Thread):
                         h.close()
                         
                         execdict = {}
+                        execdict_temp_01 = {}
+                        execdict_temp_02 = {}
                         execfile("files/2ndcdr.py", execdict)
+                        
+                        if os.path.isfile("files/extrablob.py") :
+                            execdict_update = {}
+                            with open("files/extrablob.py", 'r') as m :
+                                userblobstr_upd = m.read()
+                            execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                            for k in execdict_update :
+                                for j in execdict["blob"] :
+                                    if j == k :
+                                        execdict["blob"][j].update(execdict_update[k])
+                                    else :
+                                        if k == "\x01\x00\x00\x00" :
+                                            execdict_temp_01.update(execdict_update[k])
+                                        elif k == "\x02\x00\x00\x00" :
+                                            execdict_temp_02.update(execdict_update[k])
+
+                            for k,v in execdict_temp_01.items() :
+                                execdict["blob"].pop(k,v)
+
+                            for k,v in execdict_temp_02.items() :
+                                execdict["blob"].pop(k,v)
+                        
                         blob = steam.blob_serialize(execdict["blob"])
                     
                         if blob[0:2] == "\x01\x43" :
@@ -240,7 +264,31 @@ class fileserver(threading.Thread):
                                 print("Replaced " + info + " " + search + " with " + replace)
                     
                         execdict = {}
+                        execdict_temp_01 = {}
+                        execdict_temp_02 = {}
                         exec(file, execdict)
+                        
+                        if os.path.isfile("files/extrablob.py") :
+                            execdict_update = {}
+                            with open("files/extrablob.py", 'r') as m :
+                                userblobstr_upd = m.read()
+                            execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                            for k in execdict_update :
+                                for j in execdict["blob"] :
+                                    if j == k :
+                                        execdict["blob"][j].update(execdict_update[k])
+                                    else :
+                                        if k == "\x01\x00\x00\x00" :
+                                            execdict_temp_01.update(execdict_update[k])
+                                        elif k == "\x02\x00\x00\x00" :
+                                            execdict_temp_02.update(execdict_update[k])
+
+                            for k,v in execdict_temp_01.items() :
+                                execdict["blob"].pop(k,v)
+
+                            for k,v in execdict_temp_02.items() :
+                                execdict["blob"].pop(k,v)
+                                        
                         blob = steam.blob_serialize(execdict["blob"])
                     
                         h = open("files/secondblob.bin", "wb")
@@ -277,17 +325,17 @@ class fileserver(threading.Thread):
 
                     checksum = SHA.new(blob).digest()
 
-                    #if checksum == command[1:] :
-                        #log.info(clientid + "Client has matching checksum for secondblob")
-                        #log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
+                    if checksum == command[1:] :
+                        log.info(clientid + "Client has matching checksum for secondblob")
+                        log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
 
-                        #self.socket.send("\x00\x00\x00\x00")
+                        self.socket.send("\x00\x00\x00\x00")
 
-                    #else :
-                    #log.info(clientid + "Client didn't match our checksum for secondblob")
-                    log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
+                    else :
+                        log.info(clientid + "Client didn't match our checksum for secondblob")
+                        log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
 
-                    self.socket.send_withlen(blob, False)
+                        self.socket.send_withlen(blob, False)
 
                 elif command[0] == "\x09" or command[0] == "\x0a" : #09 is used by early clients without a ticket
 
@@ -356,9 +404,23 @@ class fileserver(threading.Thread):
                     elif os.path.isfile(self.config["v2manifestdir"] + str(app) + "_" + str(version) + ".manifest") :
                         f = open(self.config["v2manifestdir"] + str(app) + "_" + str(version) + ".manifest", "rb")
                         log.info(clientid + str(app) + "_" + str(version) + " is a v0.2 depot")
-                    else :
+                    elif os.path.isfile(self.config["manifestdir"] + str(app) + "_" + str(version) + ".manifest") :
                         f = open(self.config["manifestdir"] + str(app) + "_" + str(version) + ".manifest", "rb")
                         log.info(clientid + str(app) + "_" + str(version) + " is a v0.3 depot")
+                    elif os.path.isdir(self.config["v3manifestdir2"]) :
+                        if os.path.isfile(self.config["v3manifestdir2"] + str(app) + "_" + str(version) + ".manifest") :
+                            f = open(self.config["v3manifestdir2"] + str(app) + "_" + str(version) + ".manifest", "rb")
+                            log.info(clientid + str(app) + "_" + str(version) + " is a v0.3 extra depot")
+                        else :
+                            log.error("Manifest not found for %s %s " % (app, version))
+                            reply = struct.pack(">LLc", connid, messageid, "\x01")
+                            self.socket.send(reply)
+                            break
+                    else :
+                        log.error("Manifest not found for %s %s " % (app, version))
+                        reply = struct.pack(">LLc", connid, messageid, "\x01")
+                        self.socket.send(reply)
+                        break
                     manifest = f.read()
                     f.close()
                     
@@ -433,10 +495,12 @@ class fileserver(threading.Thread):
                     log.info("New GCF version: " + str(appid) + "_" + str(version))
                     manifestNew = Manifest2(appid, version)
                     manifestOld = Manifest2(appid, oldversion)
+                    
                     if os.path.isfile(self.config["v2manifestdir"] + str(appid) + "_" + str(version) + ".manifest") :
                         checksumNew = Checksum3(appid)
                     else :
                         checksumNew = Checksum2(appid, version)
+                        
                     if os.path.isfile(self.config["v2manifestdir"] + str(appid) + "_" + str(oldversion) + ".manifest") :
                         checksumOld = Checksum3(appid)
                     else :
@@ -501,8 +565,21 @@ class fileserver(threading.Thread):
                         filename = "files/cache/" + str(storages[storageid].app) + "_" + str(storages[storageid].version) + "/"  + str(storages[storageid].app) + ".checksums"
                     elif os.path.isfile(self.config["v2manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest") :
                         filename = self.config["v2storagedir"] + str(storages[storageid].app) + ".checksums"
-                    else :
+                    elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest") :
                         filename = self.config["storagedir"] + str(storages[storageid].app) + ".checksums"
+                    elif os.path.isdir(self.config["v3manifestdir2"]) :
+                        if os.path.isfile(self.config["v3manifestdir2"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest") :
+                            filename = self.config["v3storagedir2"] + str(storages[storageid].app) + ".checksums"
+                        else :
+                            log.error("Manifest not found for %s %s " % (app, version))
+                            reply = struct.pack(">LLc", connid, messageid, "\x01")
+                            self.socket.send(reply)
+                            break
+                    else :
+                        log.error("Checksums not found for %s %s " % (app, version))
+                        reply = struct.pack(">LLc", connid, messageid, "\x01")
+                        self.socket.send(reply)
+                        break
                     f = open(filename, "rb")
                     file = f.read()
                     f.close()

@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, socket, zlib, os, shutil
+import threading, logging, struct, binascii, socket, zlib, os, shutil, ast
 
 from Crypto.Hash import SHA
 
@@ -22,7 +22,7 @@ class configserver(threading.Thread):
 
         command = self.socket.recv(4)
 
-        if command == "\x00\x00\x00\x03" or command == "\x00\x00\x00\x02" :
+        if command == "\x00\x00\x00\x03" or command == "\x00\x00\x00\x02" or command == "\x00\x00\x00\x00" :
             self.socket.send("\x01" + socket.inet_aton(self.address[0]))
 
             command = self.socket.recv_withlen()
@@ -145,7 +145,31 @@ class configserver(threading.Thread):
                     h.close()
                     
                     execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
                     execfile("files/2ndcdr.py", execdict)
+                        
+                    if os.path.isfile("files/extrablob.py") :
+                        execdict_update = {}
+                        with open("files/extrablob.py", 'r') as m :
+                            userblobstr_upd = m.read()
+                        execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                        for k in execdict_update :
+                            for j in execdict["blob"] :
+                                if j == k :
+                                    execdict["blob"][j].update(execdict_update[k])
+                                else :
+                                    if k == "\x01\x00\x00\x00" :
+                                        execdict_temp_01.update(execdict_update[k])
+                                    elif k == "\x02\x00\x00\x00" :
+                                        execdict_temp_02.update(execdict_update[k])
+
+                        for k,v in execdict_temp_01.items() :
+                            execdict["blob"].pop(k,v)
+
+                        for k,v in execdict_temp_02.items() :
+                            execdict["blob"].pop(k,v)
+                            
                     blob = steam.blob_serialize(execdict["blob"])
                     
                     if blob[0:2] == "\x01\x43" :
@@ -201,7 +225,31 @@ class configserver(threading.Thread):
                             print("Replaced " + info + " " + search + " with " + replace)
                     
                     execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
                     exec(file, execdict)
+                        
+                    if os.path.isfile("files/extrablob.py") :
+                        execdict_update = {}
+                        with open("files/extrablob.py", 'r') as m :
+                            userblobstr_upd = m.read()
+                        execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                        for k in execdict_update :
+                            for j in execdict["blob"] :
+                                if j == k :
+                                    execdict["blob"][j].update(execdict_update[k])
+                                else :
+                                    if k == "\x01\x00\x00\x00" :
+                                        execdict_temp_01.update(execdict_update[k])
+                                    elif k == "\x02\x00\x00\x00" :
+                                        execdict_temp_02.update(execdict_update[k])
+
+                        for k,v in execdict_temp_01.items() :
+                            execdict["blob"].pop(k,v)
+
+                        for k,v in execdict_temp_02.items() :
+                            execdict["blob"].pop(k,v)
+                            
                     blob = steam.blob_serialize(execdict["blob"])
                     
                     h = open("files/secondblob.bin", "wb")
@@ -252,6 +300,7 @@ class configserver(threading.Thread):
                     log.info(clientid + "Client didn't match our checksum for secondblob")
                     log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
 
+                    #self.socket.send("\x00\x00\x00\x00")
                     self.socket.send_withlen(blob, False)
 
             else :

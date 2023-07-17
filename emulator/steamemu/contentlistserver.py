@@ -44,6 +44,17 @@ class contentlistserver(threading.Thread):
                         reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
                     elif os.path.isfile(self.config["manifestdir"] + str(appnum) + "_" + str(version) + ".manifest") :
                         reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
+                    elif os.path.isdir(self.config["v3manifestdir2"]) :
+                        if os.path.isfile(self.config["v3manifestdir2"] + str(appnum) + "_" + str(version) + ".manifest") :
+                            reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
+                        else :
+                            if self.config["sdk_ip"] == "0.0.0.0" :
+                                log.warning("%sNo servers found for app %s %s %s %s" % (clientid, appnum, version, numservers, region))
+                                reply = "\x00\x00" # no file servers for app
+                            else :
+                                log.info("%sHanding off to SDK server for app %s %s" % (clientid, appnum, version))
+                                bin_ip = steam.encodeIP((self.config["sdk_ip"], self.config["sdk_port"]))
+                                reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
                     else :
                         if self.config["sdk_ip"] == "0.0.0.0" :
                             log.warning("%sNo servers found for app %s %s %s %s" % (clientid, appnum, version, numservers, region))

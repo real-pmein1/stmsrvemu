@@ -30,10 +30,13 @@ class directoryserver(threading.Thread):
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                        #bin_ip = steam.encodeIP("172.21.0.20", "27039")
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                        #bin_ip = steam.encodeIP("172.21.0.20", "27039")
                 else :
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                    #bin_ip = steam.encodeIP("172.21.0.20", "27039")
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x03" : # send out config servers
                 log.info(clientid + "Sending out list of config servers")
@@ -106,16 +109,17 @@ class directoryserver(threading.Thread):
             command = msg[0]
             log.debug(binascii.b2a_hex(command))
             if command == "\x00" and len(msg) == 5 : # send out auth server for a specific username
-                log.info(clientid + "Sending out auth server for a specific username: " + binascii.b2a_hex(command))
+                log.info(clientid + "Sending out specific auth server: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
                 else :
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                #print(bin_ip)
-                #print(struct.pack(">H", 1) + bin_ip)
+                    #bin_ip = steam.encodeIP(("172.21.0.31", "28039"))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x03" : # send out config servers
                 log.info(clientid + "Sending out list of config servers")

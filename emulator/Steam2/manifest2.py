@@ -1,4 +1,4 @@
-import struct, os.path, ConfigParser
+import struct, os.path, ConfigParser, logging
 from bytebuffer import ByteBuffer
 from steamemu.config import read_config
 
@@ -70,5 +70,12 @@ class Manifest2 :
             return os.path.join("files/cache/" + str(appId) + "_" + str(appVersion) + "/",("%i_%i.manifest" % (appId, appVersion)))
         elif os.path.isfile(config["v2manifestdir"] + str(appId) + "_" + str(appVersion) + ".manifest") :
             return os.path.join(config["v2manifestdir"],("%i_%i.manifest" % (appId, appVersion)))
-        else :
+        elif os.path.isfile(config["manifestdir"] + str(appId) + "_" + str(appVersion) + ".manifest") :
             return os.path.join(config["manifestdir"],("%i_%i.manifest" % (appId, appVersion)))
+        elif os.path.isdir(config["v3manifestdir2"]) :
+            if os.path.isfile(config["v3manifestdir2"] + str(appId) + "_" + str(appVersion) + ".manifest") :
+                return os.path.join(config["v3manifestdir2"],("%i_%i.manifest" % (appId, appVersion)))
+            else :
+                log.error("Manifest not found for %s %s " % (appId, appVersion))
+        else :
+            log.error("Manifest not found for %s %s " % (appId, appVersion))
