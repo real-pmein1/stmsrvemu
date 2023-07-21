@@ -344,7 +344,7 @@ class authserver(threading.Thread):
                     tgt_ver = ticket_full[6:10]
                     data1_len = ticket_full[10:14]
                     username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len) * 2)])
+                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
                     
                     log.info(clientid + "Password change requested for: " + username)
                     
@@ -393,7 +393,7 @@ class authserver(threading.Thread):
                     tgt_ver = ticket_full[6:10]
                     data1_len = ticket_full[10:14]
                     username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len) * 2)])
+                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
                     
                     log.info(clientid + "Secret question change requested for: " + username)
                     
@@ -446,7 +446,7 @@ class authserver(threading.Thread):
                     data1_len = int(data1_len, 16) * 2
                     userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
                     username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len) * 2)])
+                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
                     ticket_len = int(ticket_len, 16) * 2
                     ticket = ticket_full[2:ticket_len + 2]
                     postticketdata = ticket_full[2 + ticket_len + 4:]
@@ -510,7 +510,7 @@ class authserver(threading.Thread):
                     data1_len = int(data1_len, 16) * 2
                     userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
                     username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len) * 2)])
+                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
                     ticket_len = int(ticket_len, 16) * 2
                     ticket = ticket_full[2:ticket_len + 2]
                     postticketdata = ticket_full[2 + ticket_len + 4:]
@@ -578,7 +578,7 @@ class authserver(threading.Thread):
                     data1_len = int(data1_len, 16) * 2
                     userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
                     username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len) * 2)])
+                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
                     log.info(clientid + "Ticket login for: " + username)
                     ticket_len = int(ticket_len, 16) * 2
                     postticketdata = ticket_full[2 + ticket_len + 4:]

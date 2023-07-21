@@ -29,7 +29,7 @@ from steamemu.validationserver import validationserver
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-print("Steam 2004-2011 Server Emulator v0.70")
+print("Steam 2004-2011 Server Emulator v0.71")
 print("=====================================")
 print
 
