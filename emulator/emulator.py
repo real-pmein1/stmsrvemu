@@ -19,6 +19,7 @@ from steamemu.authserver import authserver
 from steamemu.udpserver import udpserver
 from steamemu.masterhl import masterhl
 from steamemu.masterhl2 import masterhl2
+from steamemu.masterrdkf import masterrdkf
 from steamemu.friends import friends
 from steamemu.vttserver import vttserver
 from steamemu.twosevenzeroonefour import twosevenzeroonefour
@@ -29,7 +30,7 @@ from steamemu.validationserver import validationserver
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-print("Steam 2004-2011 Server Emulator v0.71")
+print("Steam 2004-2011 Server Emulator v0.72")
 print("=====================================")
 print
 
@@ -364,6 +365,118 @@ class udplistener(threading.Thread):
                     print("Running servers: %s" % str(running))
                 else :
                     print("UNKNOWN MASTER SERVER COMMAND")
+            elif self.port == 27012 :
+                log = logging.getLogger("rdkfmstr")
+                clientid = str(globalvars.addr) + ": "
+                log.info(clientid + "Connected to RDKF Master Server")
+                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
+                if globalvars.data.startswith("1") :
+                    i = 0
+                    header = bytearray()
+                    header += b'\xFF\xFF\xFF\xFF\x66\x0A'
+                    while i < 1000 : #also change in command "b" and in globalvars
+                        if not isinstance(globalvars.rdkfserverlist[i], int) :
+                            print(globalvars.rdkfserverlist[i])
+                            trueip = globalvars.rdkfserverlist[i][0].split('.')
+                            trueip_int = map(int, trueip)
+                            header += struct.pack('>BBBB', trueip_int[0], trueip_int[1], trueip_int[2], trueip_int[3])
+                            try :
+                                trueport_int_temp = int(globalvars.rdkfserverlist[i][24])
+                            except :
+                                trueport_int_temp = 1
+                            if not len(str(trueport_int_temp)) == 5 :
+                                trueport_int = 27015
+                            else :
+                                trueport_int = trueport_int_temp
+                            print(str(trueport_int))
+                            header += struct.pack('>H', trueport_int)
+                        i += 1
+                    nullip = struct.pack('>BBBB', 0, 0, 0, 0)
+                    nullport = struct.pack('>H', 0)
+                    serversocket.sendto(header + nullip + nullport, globalvars.addr)
+                elif globalvars.data.startswith("q") :
+                    header = b'\xFF\xFF\xFF\xFF\x73\x0A'
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    registered = 0
+                    for server in globalvars.rdkfserverlist :
+                        if len(str(server)) > 5 :
+                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
+                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
+                                challenge = struct.pack("I", int(server[4]))
+                                registered = 1
+                                break
+                    if registered == 0 :
+                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.rdkfchallengenum + 1))
+                        challenge = struct.pack("I", globalvars.rdkfchallengenum + 1)
+                        globalvars.rdkfchallengenum += 1
+                    serversocket.sendto(header + challenge, globalvars.addr)
+                elif globalvars.data.startswith("0") :
+                    serverdata1 = globalvars.data.split('\n')
+                    #print(serverdata1)
+                    serverdata2 = serverdata1[1]
+                    #print(serverdata2)
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    serverdata3 = ipstr1[1] + serverdata2
+                    #print(serverdata3)
+                    tempserverlist = serverdata3.split('\\')
+                    #print(tempserverlist)
+                    globalvars.rdkfserverlist[int(tempserverlist[4])] = tempserverlist
+                    #print(tempserverlist[0])
+                    #print(tempserverlist[1])
+                    #print(tempserverlist[2])
+                    #print(tempserverlist[3])
+                    #print(tempserverlist[4])
+                    #print(tempserverlist[5])
+                    log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
+                    log.debug(clientid + "Current Challenge: %s" % (globalvars.rdkfchallengenum))
+                elif globalvars.data.startswith("b") :
+                    ipstr = str(globalvars.addr)
+                    ipstr1 = ipstr.split('\'')
+                    ipactual = ipstr1[1]
+                    portstr = ipstr1[2]
+                    portstr1 = portstr.split(' ')
+                    portstr2 = portstr1[1].split(')')
+                    portactual_temp = portstr2[0]
+                    if not str(len(portactual_temp)) == 5 :
+                        portactual = "27015"
+                    else :
+                        portactual = str(portactual_temp)
+                    i = 0
+                    running = 0
+                    while i < 1000 :
+                        if not isinstance(globalvars.rdkfserverlist[i], int) :
+                            running += 1
+                            #print(ipactual + ":" + portactual)
+                            #print(type(ipactual))
+                            #print(type(portactual))
+                            #print(type(globalvars.rdkfserverlist[i][0]))
+                            #print(type(globalvars.rdkfserverlist[i][24]))
+                            #for server in globalvars.rdkfserverlist :
+                                #print(server)
+                            if globalvars.rdkfserverlist[i][0] == ipactual and (str(globalvars.rdkfserverlist[i][24]) == portactual or "27015" == portactual) :
+                                #print(type(globalvars.rdkfserverlist[i]))
+                                #print(type(i))
+                                #print(type(globalvars.rdkfserverlist))
+                                #print(globalvars.rdkfserverlist[i][0])
+                                #print(str(globalvars.rdkfserverlist[i][24]))
+                                globalvars.rdkfserverlist.pop(i)
+                                log.info(clientid + "Unregistered server: %s:%s" % (ipactual, portactual))
+                                running -= 1
+                        i += 1
+                    print("Running servers: %s" % str(running))
+                else :
+                    print("UNKNOWN MASTER SERVER COMMAND")
             elif self.port == 27013 :
                 log = logging.getLogger("csersrv")
                 clientid = str(globalvars.addr) + ": "
@@ -681,6 +794,8 @@ if os.path.isfile("Steam.cfg") :
     os.remove("Steam.cfg")
 if os.path.isfile("w9xpopen.exe") :
     os.remove("w9xpopen.exe")
+#if os.path.isfile("submanager.exe") :
+#    os.remove("submanager.exe")
 
 if os.path.isfile("files/users.txt") :
     users = {} #REMOVE LEGACY USERS
@@ -712,6 +827,10 @@ time.sleep(0.2)
 hl2masterlistener = udplistener(27011, masterhl2, config)
 hl2masterlistener.start()
 log.info("Master HL2 Server listening on port 27011")
+time.sleep(0.2)
+rdkfmasterlistener = udplistener(27012, masterrdkf, config)
+rdkfmasterlistener.start()
+log.info("Master RDKF Server listening on port 27012")
 time.sleep(0.2)
 #twosevenzeroonefourlistener = udplistener(27014, twosevenzeroonefour, config)
 #twosevenzeroonefourlistener.start()

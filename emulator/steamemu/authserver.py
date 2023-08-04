@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast
+import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, random, pprint, datetime
 
 from Crypto.Hash import SHA
 
@@ -137,7 +137,8 @@ class authserver(threading.Thread):
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
                         #steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        steamid = binascii.a2b_hex("0000" + binascii.b2a_hex(userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16]))
+                        steamUniverse = "0000"
+                        steamid = binascii.a2b_hex(steamUniverse + binascii.b2a_hex(userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16]))
                         #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
                         #authport = struct.pack("<L", int(port))
                         if self.config["public_ip"] != "0.0.0.0" :
@@ -536,18 +537,45 @@ class authserver(threading.Thread):
                         with open("files/users/" + username + ".py", 'r') as f:
                             userblobstr = f.read()
                             execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                        new_sub = {}
-                        new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': '\xe0\xe0\xe0\xe0\xe0\xe0\xe0\x00', '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x01\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x00\x00', '\x09\x00\x00\x00': '\x00'}}
-                        new_buy = {}
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': steamtime, '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x00\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}
                         new_buy = {blobnew["\x01\x00\x00\x00"]: blobnew["\x02\x00\x00\x00"]}
+                        receipt_dict = {}
+                        receipt_dict_01 = {}
+                        receipt_sub_dict = {}
+                        subid = new_buy.keys()[0]
                         execdict["\x07\x00\x00\x00"].update(new_sub)
-                        execdict["\x0f\x00\x00\x00"].update(new_buy)
-                        if execdict['\x0f\x00\x00\x00'][blobnew['\x01\x00\x00\x00']]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" :
-                            execdict['\x0f\x00\x00\x00'][blobnew['\x01\x00\x00\x00']].update({'\x01\x00\x00\x00': '\x06'})
-                        elif execdict['\x0f\x00\x00\x00'][blobnew['\x01\x00\x00\x00']]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
-                            execdict['\x0f\x00\x00\x00'][blobnew['\x01\x00\x00\x00']].update({'\x01\x00\x00\x00': '\x06'})
+                        #pprint.pprint(new_sub)
+                        #pprint.pprint(new_buy)
+                        #pprint.pprint(subid)
+                        if new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" or new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
+                            receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                            receipt_sub_dict["\x02\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00"
+                            receipt_dict_01["\x01\x00\x00\x00"] = "\x06"
+                            receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                            receipt_dict[subid] = receipt_dict_01
                         else :
-                            execdict['\x0f\x00\x00\x00'][blobnew['\x01\x00\x00\x00']].update({'\x01\x00\x00\x00': '\x07'}) #FORCING CC TO FREE TO SORT 2004 LOGIN ERROR
+                            receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                            receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][12:]
+                            receipt_sub_dict["\x03\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x03\x00\x00\x00"]
+                            receipt_sub_dict["\x07\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x07\x00\x00\x00"]
+                            receipt_sub_dict["\x08\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x08\x00\x00\x00"]
+                            receipt_sub_dict["\x09\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x09\x00\x00\x00"]
+                            receipt_sub_dict["\x0a\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0a\x00\x00\x00"]
+                            receipt_sub_dict["\x0b\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0b\x00\x00\x00"]
+                            receipt_sub_dict["\x0c\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0c\x00\x00\x00"]
+                            receipt_sub_dict["\x0d\x00\x00\x00"] = str(random.randint(111111, 999999)) + "\x00"
+                            receipt_sub_dict["\x0e\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x14\x00\x00\x00"]
+                            receipt_sub_dict["\x0f\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x15\x00\x00\x00"]
+                            receipt_sub_dict["\x10\x00\x00\x00"] = datetime.datetime.now().strftime("%d/%m/%Y") + "\x00"
+                            receipt_sub_dict["\x11\x00\x00\x00"] = datetime.datetime.now().strftime("%H:%M:%S") + "\x00"
+                            receipt_sub_dict["\x12\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00"
+                            receipt_sub_dict["\x13\x00\x00\x00"] = "\x00\x00\x00\x00"
+                            receipt_dict_01["\x01\x00\x00\x00"] = "\x05"
+                            receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                            receipt_dict[subid] = receipt_dict_01
+                        new_buy.clear()
+                        execdict["\x0f\x00\x00\x00"].update(receipt_dict)
                         with open("files/users/" + username + ".py", 'w') as g:
                             g.write("user_registry = " + str(execdict))
                         secretkey = {'\x05\x00\x00\x00'}
@@ -561,13 +589,12 @@ class authserver(threading.Thread):
                         bloblen = len(blob)
                         log.debug("Blob length: " + str(bloblen))
                         innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        #innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        innerIV = iv
+                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
                         blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
                         blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
                         blob_signature = steam.sign_message(innerkey, blob_encrypted)
-                        blob_encrypted_len = 10 + len(blob_encrypted)
-                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+                        blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
                         self.socket.send("\x00" + blob_encrypted)
                 elif binascii.b2a_hex(command[0:1]) == "09" : #Ticket Login
                     ticket_full = binascii.b2a_hex(command)
@@ -596,6 +623,15 @@ class authserver(threading.Thread):
                         with open("files/users/" + username + ".py", 'r') as f:
                             userblobstr = f.read()
                             execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        for sub_dict in execdict:
+                            if sub_dict == "\x07\x00\x00\x00":
+                                for sub_sub_dict in execdict[sub_dict]:
+                                    if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x00\x00":
+                                        execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                        execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x01"
+                                        execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                        with open("files/users/" + username + ".py", 'w') as g:
+                            g.write("user_registry = " + str(execdict))
                         secretkey = {'\x05\x00\x00\x00'}
                         def without_keys(d, keys) :
                             return {x: d[x] for x in d if x not in keys}
@@ -607,14 +643,27 @@ class authserver(threading.Thread):
                         bloblen = len(blob)
                         log.debug("Blob length: " + str(bloblen))
                         innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        #innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        innerIV = iv
+                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
                         blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
                         blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
                         blob_signature = steam.sign_message(innerkey, blob_encrypted)
                         blob_encrypted_len = 10 + len(blob_encrypted) + 20
-                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
-                        self.socket.send("\x00" + blob_encrypted + blob_signature)
+                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                        self.socket.send("\x00" + blob_encrypted)
+                        
+                        execdict = {}
+                        with open("files/users/" + username + ".py", 'r') as f:
+                            userblobstr = f.read()
+                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        for sub_dict in execdict:
+                            if sub_dict == "\x07\x00\x00\x00":
+                                for sub_sub_dict in execdict[sub_dict]:
+                                    if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x01\x00":
+                                        #execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                        execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x00"
+                                        #execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                        with open("files/users/" + username + ".py", 'w') as g:
+                            g.write("user_registry = " + str(execdict))
                 else :
                     log.debug(clientid + "Unknown command: " + binascii.b2a_hex(command[0:1])) #04 logoff
                     self.socket.send("\x01")

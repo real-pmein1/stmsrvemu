@@ -62,11 +62,14 @@ class directoryserver(threading.Thread):
                 log.info(clientid + "Requesting HL Master Server")
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["hlmaster_server_port"]))
+                        #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
+                        bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
                     else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["hlmaster_server_port"]))
+                        #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
+                        bin_ip = steam.encodeIP((self.config["public_ip"], 27010))
                 else :
-                    bin_ip = steam.encodeIP((self.config["server_ip"], self.config["hlmaster_server_port"]))
+                    #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
+                    bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x12" : # account retrieve server address, not supported
                 log.info(clientid + "Sending out list of account retrieval servers")
@@ -90,11 +93,25 @@ class directoryserver(threading.Thread):
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x18" : # source master server
                 log.info(clientid + "Requesting Source Master Server")
-                bin_ip = steam.encodeIP(("172.20.0.23", "27011"))
+                if self.config["public_ip"] != "0.0.0.0" :
+                    if clientid.startswith(globalvars.servernet) :
+                        bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
+                    else :
+                        bin_ip = steam.encodeIP((self.config["public_ip"], 27011))
+                else :
+                    bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
+                #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x1e" : # rdkf master server
                 log.info(clientid + "Requesting RDKF Master Server")
-                bin_ip = steam.encodeIP(("172.20.0.23", "27012"))
+                if self.config["public_ip"] != "0.0.0.0" :
+                    if clientid.startswith(globalvars.servernet) :
+                        bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
+                    else :
+                        bin_ip = steam.encodeIP((self.config["public_ip"], 27012))
+                else :
+                    bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
+                #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
             else :
                 log.info(clientid + "Invalid/not implemented command: " + binascii.b2a_hex(msg))
@@ -141,7 +158,7 @@ class directoryserver(threading.Thread):
                 else :
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["contlist_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
-            elif command == "\x0b" : # send out auth server for a specific username
+            elif command == "\x0b" or command == "\x1c" : # send out auth server for a specific username
                 log.info(clientid + "Sending out auth server for a specific username: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
                     if clientid.startswith(globalvars.servernet) :
@@ -196,26 +213,23 @@ class directoryserver(threading.Thread):
                     bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
                 #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
-            elif command == "\x1c" : # key server?
-                if binascii.b2a_hex(msg) == "1c600f2d40" :
-                    if self.config["public_ip"] != "0.0.0.0" :
-                        if clientid.startswith(globalvars.servernet) :
-                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
-                        else :
-                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
-                    reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x1e" : # rdkf master server
                 log.info(clientid + "Requesting RDKF Master Server")
-                bin_ip = steam.encodeIP(("172.20.0.23", "27012"))
+                if self.config["public_ip"] != "0.0.0.0" :
+                    if clientid.startswith(globalvars.servernet) :
+                        bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
+                    else :
+                        bin_ip = steam.encodeIP((self.config["public_ip"], 27012))
+                else :
+                    bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
+                #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
             else :
                 log.info(clientid + "Invalid/not implemented command: " + binascii.b2a_hex(msg))
                 reply = "\x00\x00"
 
             self.socket.send_withlen(reply)
-
+        
         else :
             log.error(clientid + "Invalid version message: " + binascii.b2a_hex(command))
 

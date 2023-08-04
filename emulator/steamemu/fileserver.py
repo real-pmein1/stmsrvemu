@@ -41,8 +41,8 @@ class fileserver(threading.Thread):
 
                 command = struct.unpack(">L", msg[:4])[0]
 
-                if command == 2 :
-                    self.socket.send("\x00\x00\x00\x02")
+                if command == 2 : #CELLID
+                    self.socket.send("\x00\x00\x00\x01")
                     break
 
                 elif command == 3 :

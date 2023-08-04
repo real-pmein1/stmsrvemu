@@ -300,7 +300,6 @@ class configserver(threading.Thread):
                     log.info(clientid + "Client didn't match our checksum for secondblob")
                     log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
 
-                    #self.socket.send("\x00\x00\x00\x00")
                     self.socket.send_withlen(blob, False)
 
             else :
