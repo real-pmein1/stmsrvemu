@@ -1,4 +1,4 @@
-import os, ConfigParser, threading, logging, socket, time, binascii
+import os, ConfigParser, threading, logging, socket, time, binascii, struct
 import globalvars
 from gcf_to_storage import gcf2storage
 from Steam.manifest import Manifest
@@ -17,68 +17,49 @@ def convertgcf() :
     #makeenc.make_encrypted("files/convert/281_0.manifest")
     for filename in os.listdir("files/convert/") :
         if str(filename.endswith(".gcf")) :
-            dirname = filename[0:-4]
+            #dirname = filename[0:-4]
+            with open("files/convert/" + filename, "rb") as g:
+                h = g.read(20)
+
+            depotid = struct.unpack("<L", h[12:16])[0]
+            versionid = struct.unpack("<L", h[16:20])[0]
+
+            dirname = str(depotid) + "_" + str(versionid)
             if not os.path.isfile("files/cache/" + dirname + "/" + dirname + ".manifest") :
                 log.info("Found " + filename + " to convert")
-                log.info("Fixing files in " + dirname)
-                print "****************************************"
-                g = open("files/convert/" + dirname + ".gcf", "rb")
+                log.info("Neutering Valve strings...")
+                log.debug("****************************************")
+                g = open("files/convert/" + filename, "rb")
                 file = g.read()
                 g.close()
-                if filename.startswith("0_") or filename.startswith("3_") or filename.startswith("5_") or filename.startswith("212_") :
-                    if config["public_ip"] != "0.0.0.0" :
-                        for (search, replace, info) in globalvars.replacestrings2003ext :
-                            fulllength = len(search)
-                            newlength = len(replace)
-                            missinglength = fulllength - newlength
-                            if missinglength < 0 :
-                                print("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
-                            elif missinglength == 0 :
-                                file = file.replace(search, replace)
-                                print("Replaced " + info + " " + search + " with " + replace)
-                            else :
-                                file = file.replace(search, replace + ('\x00' * missinglength))
-                                print("Replaced " + info + " " + search + " with " + replace)
-                    else :
-                        for (search, replace, info) in globalvars.replacestrings2003 :
-                            fulllength = len(search)
-                            newlength = len(replace)
-                            missinglength = fulllength - newlength
-                            if missinglength < 0 :
-                                print("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
-                            elif missinglength == 0 :
-                                file = file.replace(search, replace)
-                                print("Replaced " + info + " " + search + " with " + replace)
-                            else :
-                                file = file.replace(search, replace + ('\x00' * missinglength))
-                                print("Replaced " + info + " " + search + " with " + replace)
+                if config["public_ip"] != "0.0.0.0" :
+                    #for (search, replace, info) in globalvars.replacestringsext :
+                    for (search, replace, info) in globalvars.replace_string("wan") :
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            log.debug("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
+                        elif missinglength == 0 :
+                            file = file.replace(search, replace)
+                            log.debug("Replaced " + info + " " + search + " with " + replace)
+                        else :
+                            file = file.replace(search, replace + ('\x00' * missinglength))
+                            log.debug("Replaced " + info + " " + search + " with " + replace)   
                 else :
-                    if config["public_ip"] != "0.0.0.0" :
-                        for (search, replace, info) in globalvars.replacestringsext :
-                            fulllength = len(search)
-                            newlength = len(replace)
-                            missinglength = fulllength - newlength
-                            if missinglength < 0 :
-                                print("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
-                            elif missinglength == 0 :
-                                file = file.replace(search, replace)
-                                print("Replaced " + info + " " + search + " with " + replace)
-                            else :
-                                file = file.replace(search, replace + ('\x00' * missinglength))
-                                print("Replaced " + info + " " + search + " with " + replace)
-                    else :
-                        for (search, replace, info) in globalvars.replacestrings :
-                            fulllength = len(search)
-                            newlength = len(replace)
-                            missinglength = fulllength - newlength
-                            if missinglength < 0 :
-                                print("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
-                            elif missinglength == 0 :
-                                file = file.replace(search, replace)
-                                print("Replaced " + info + " " + search + " with " + replace)
-                            else :
-                                file = file.replace(search, replace + ('\x00' * missinglength))
-                                print("Replaced " + info + " " + search + " with " + replace)
+                    #for (search, replace, info) in globalvars.replacestrings :
+                    for (search, replace, info) in globalvars.replace_string("lan") :
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            log.debug("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
+                        elif missinglength == 0 :
+                            file = file.replace(search, replace)
+                            log.debug("Replaced " + info + " " + search + " with " + replace)
+                        else :
+                            file = file.replace(search, replace + ('\x00' * missinglength))
+                            log.debug("Replaced " + info + " " + search + " with " + replace)
 
                 search = "207.173.177.11:27030 207.173.177.12:27030 69.28.151.178:27038 69.28.153.82:27038 68.142.88.34:27038 68.142.72.250:27038"
                 if config["public_ip"] != "0.0.0.0" :
@@ -92,7 +73,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced directory server IP group 1"
+                    log.debug("Replaced directory server IP group 1")
 
                 search = "207.173.177.11:27030 207.173.177.12:27030"
                 if config["public_ip"] != "0.0.0.0" :
@@ -106,7 +87,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced directory server IP group 5"
+                    log.debug("Replaced directory server IP group 5")
 
                 search = "hlmaster1.hlauth.net:27010"
                 if config["public_ip"] != "0.0.0.0" :
@@ -120,7 +101,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL Master server DNS"
+                    log.debug("Replaced default HL Master server DNS")
 
                 search = "207.173.177.11:27010"
                 if config["public_ip"] != "0.0.0.0" :
@@ -134,7 +115,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL Master server IP 1"
+                    log.debug("Replaced default HL Master server IP 1")
 
                 search = "207.173.177.12:27010"
                 if config["public_ip"] != "0.0.0.0" :
@@ -148,7 +129,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL Master server IP 2"
+                    log.debug("Replaced default HL Master server IP 2")
 
                 search = "207.173.177.11:27011"
                 if config["public_ip"] != "0.0.0.0" :
@@ -162,7 +143,7 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL2 Master server IP 1"
+                    log.debug("Replaced default HL2 Master server IP 1")
 
                 search = "207.173.177.12:27011"
                 if config["public_ip"] != "0.0.0.0" :
@@ -176,12 +157,12 @@ def convertgcf() :
                 replace = ips.ljust(searchlength, '\x00')
                 if file.find(search) != -1 :
                     file = file.replace(search, replace)
-                    print "Replaced default HL2 Master server IP 2"
+                    log.debug("Replaced default HL2 Master server IP 2")
                     
                 search = binascii.a2b_hex("2245787069726174696F6E59656172436F6D626F220D0A09092278706F7322090922323632220D0A09092279706F7322090922313634220D0A09092277696465220909223636220D0A09092274616C6C220909223234220D0A0909226175746F526573697A652209092230220D0A09092270696E436F726E65722209092230220D0A09092276697369626C652209092231220D0A090922656E61626C65642209092231220D0A090922746162506F736974696F6E2209092234220D0A0909227465787448696464656E2209092230220D0A0909226564697461626C65220909223022")
                 replace = binascii.a2b_hex("2245787069726174696F6E59656172436F6D626F220D0A09092278706F7322090922323632220D0A09092279706F7322090922313634220D0A09092277696465220909223636220D0A09092274616C6C220909223234220D0A0909226175746F526573697A652209092230220D0A09092270696E436F726E65722209092230220D0A09092276697369626C652209092231220D0A090922656E61626C65642209092231220D0A090922746162506F736974696F6E2209092234220D0A0909227465787448696464656E2209092230220D0A0909226564697461626C65220909223122")
                 file = file.replace(search, replace)
-                print("Replaced CC expiry date field")
+                log.debug("Replaced CC expiry date field")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = "tracker.valvesoftware.com:1200"
@@ -193,7 +174,7 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server DNS"
+                        log.debug("Replaced Tracker Chat server DNS")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.42:1200"'
@@ -205,7 +186,7 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 1"
+                        log.debug("Replaced Tracker Chat server 1")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.43:1200"'
@@ -217,7 +198,7 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 2"
+                        log.debug("Replaced Tracker Chat server 2")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.44:1200"'
@@ -229,7 +210,7 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 3"
+                        log.debug("Replaced Tracker Chat server 3")
 
                 if config["tracker_ip"] != "0.0.0.0" :
                     search = '"207.173.177.45:1200"'
@@ -241,7 +222,7 @@ def convertgcf() :
                     replace = ips.ljust(searchlength, '\x00')
                     if file.find(search) != -1 :
                         file = file.replace(search, replace)
-                        print "Replaced Tracker Chat server 4"
+                        log.debug("Replaced Tracker Chat server 4")
                     
                 for extraip in globalvars.extraips :
                     loc = file.find(extraip)
@@ -250,12 +231,12 @@ def convertgcf() :
                             server_ip = config["public_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %s at location %08x" % (extraip, loc)
+                            log.debug("Found and replaced IP %s at location %08x" % (extraip, loc))
                         else :
                             server_ip = config["server_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %s at location %08x" % (extraip, loc)
+                            log.debug("Found and replaced IP %s at location %08x" % (extraip, loc))
                     
                 for ip in globalvars.ip_addresses :
                     loc = file.find(ip)
@@ -264,19 +245,92 @@ def convertgcf() :
                             server_ip = config["public_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %16s at location %08x" % (ip, loc)
+                            log.debug("Found and replaced IP %16s at location %08x" % (ip, loc))
                         else :
                             server_ip = config["server_ip"]
                             replace_ip = server_ip.ljust(16, "\x00")
                             file = file[:loc] + replace_ip + file[loc+16:]
-                            print "Found and replaced IP %16s at location %08x" % (ip, loc)
+                            log.debug("Found and replaced IP %16s at location %08x" % (ip, loc))
+    
+                if not config["server_ip"] == "127.0.0.1" :
+                    for ip in globalvars.loopback_ips :
+                        loc = file.find(ip)
+                        if loc != -1 :
+                            if config["public_ip"] != "0.0.0.0" :
+                                server_ip = config["public_ip"]
+                                replace_ip = server_ip.ljust(16, "\x00")
+                                file = file[:loc] + replace_ip + file[loc+16:]
+                                log.debug(filename + ": Found and replaced IP %16s at location %08x" % (ip, loc))
+                            else :
+                                server_ip = config["server_ip"]
+                                replace_ip = server_ip.ljust(16, "\x00")
+                                file = file[:loc] + replace_ip + file[loc+16:]
+                                log.debug(filename + ": Found and replaced IP %16s at location %08x" % (ip, loc))
+                            
+                if config["public_ip"] != "0.0.0.0" :
+                    if not config["http_port"] == "steam" :
+                        #for (search, replace, info) in globalvars.replacestrings_name_space_ext :
+                        for (search, replace, info) in globalvars.replace_string_name_space("wan") :
+                            fulllength = len(search)
+                            newlength = len(replace)
+                            missinglength = fulllength - newlength
+                            if missinglength < 0 :
+                                log.debug("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
+                            elif missinglength == 0 :
+                                file = file.replace(search, replace)
+                                log.debug("Replaced " + info + " " + search + " with " + replace)
+                            else :
+                                file = file.replace(search, replace + ('\x20' * missinglength))
+                                log.debug("Replaced " + info + " " + search + " with " + replace)   
+                        #for (search, replace, info) in globalvars.replacestrings_name_ext :
+                        for (search, replace, info) in globalvars.replace_string_name("wan") :
+                            fulllength = len(search)
+                            newlength = len(replace)
+                            missinglength = fulllength - newlength
+                            if missinglength < 0 :
+                                log.debug("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
+                            elif missinglength == 0 :
+                                file = file.replace(search, replace)
+                                log.debug("Replaced " + info + " " + search + " with " + replace)
+                            else :
+                                file = file.replace(search, replace + ('\x00' * missinglength))
+                                log.debug("Replaced " + info + " " + search + " with " + replace)   
+                else :
+                    if not config["http_port"] == "steam" :
+                        #for (search, replace, info) in globalvars.replacestrings_name_space :
+                        for (search, replace, info) in globalvars.replace_string_name_space("lan") :
+                            fulllength = len(search)
+                            newlength = len(replace)
+                            missinglength = fulllength - newlength
+                            if missinglength < 0 :
+                                log.debug("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
+                            elif missinglength == 0 :
+                                file = file.replace(search, replace)
+                                log.debug("Replaced " + info + " " + search + " with " + replace)
+                            else :
+                                file = file.replace(search, replace + ('\x20' * missinglength))
+                                log.debug("Replaced " + info + " " + search + " with " + replace)
+                        #for (search, replace, info) in globalvars.replacestrings_name :
+                        for (search, replace, info) in globalvars.replace_string_name("lan") :
+                            fulllength = len(search)
+                            newlength = len(replace)
+                            missinglength = fulllength - newlength
+                            if missinglength < 0 :
+                                log.debug("WARNING: Cannot replace " + info + " " + search + " with " + replace + " as it's too long")
+                            elif missinglength == 0 :
+                                file = file.replace(search, replace)
+                                log.debug("Replaced " + info + " " + search + " with " + replace)
+                            else :
+                                file = file.replace(search, replace + ('\x00' * missinglength))
+                                log.debug("Replaced " + info + " " + search + " with " + replace)
 
                 time.sleep(1)
                 h = open("files/temp/" + dirname + ".neutered.gcf", "wb")
                 h.write(file)
                 h.close()
                 time.sleep(1)
+                log.info("Converting fixed gcf to cache...")
                 gcf2storage("files/temp/" + dirname + ".neutered.gcf")
                 time.sleep(1)
                 os.remove("files/temp/" + dirname + ".neutered.gcf")
-                print "****************************************"
+                log.debug("****************************************")

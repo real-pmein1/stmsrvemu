@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii, os
+import threading, logging, struct, binascii, os, ipcalc
 
 import steam
 import config
@@ -16,13 +16,19 @@ class contentlistserver(threading.Thread):
         clientid = str(self.address) + ": "
         log.info(clientid + "Connected to Content List Server ")
         
-        if self.config["public_ip"] != "0.0.0.0" :
-            if clientid.startswith(globalvars.servernet) :
-                bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
-            else :
-                bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
-        else:
+        #if self.config["public_ip"] != "0.0.0.0" :
+        #    if clientid.startswith(globalvars.servernet) :
+        #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
+        #        pkg_ip = steam.encodeIP((self.config["server_ip"], self.config["clupd_server_port"]))
+        #    else :
+        #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
+        #        pkg_ip = steam.encodeIP((self.config["public_ip"], self.config["clupd_server_port"]))
+        if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
             bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
+            pkg_ip = steam.encodeIP((self.config["server_ip"], self.config["clupd_server_port"]))
+        else:
+            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
+            pkg_ip = steam.encodeIP((self.config["public_ip"], self.config["clupd_server_port"]))
         
         msg = self.socket.recv(4)
         if msg == "\x00\x00\x00\x02" :
@@ -32,8 +38,8 @@ class contentlistserver(threading.Thread):
             command = msg[0]
             if command == "\x00" :
                 if msg[2] == "\x00" and len(msg) == 21 :
-                    log.info(clientid + "Sending out file servers with packages")
-                    reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + bin_ip + bin_ip
+                    log.info(clientid + "Sending out client update servers")
+                    reply = struct.pack(">H", 1) + "\x00\x00\x00\x00" + pkg_ip + pkg_ip
                 elif msg[2] == "\x01" and len(msg) == 25 :
                     (appnum, version, numservers, region) = struct.unpack(">xxxLLHLxxxxxxxx", msg)
                     log.info("%ssend which server has content for app %s %s %s %s" % (clientid, appnum, version, numservers, region))
@@ -68,7 +74,7 @@ class contentlistserver(threading.Thread):
                     reply = "\x00\x00"
             elif command == "\x03" : # send out file servers (Which have the initial packages)
                 log.info(clientid + "Sending out file servers with packages")
-                reply = struct.pack(">H", 1) + bin_ip
+                reply = struct.pack(">H", 1) + pkg_ip
             else :
                 log.warning("Invalid message! " + binascii.b2a_hex(msg))
                 reply = ""

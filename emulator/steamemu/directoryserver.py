@@ -1,4 +1,4 @@
-import threading, logging, struct, binascii
+import threading, logging, struct, binascii, ipcalc
 
 import steam
 import globalvars
@@ -28,7 +28,8 @@ class directoryserver(threading.Thread):
             if command == "\x00" : # send out auth server for a specific username
                 log.info(clientid + "Sending out specific auth server: " + binascii.b2a_hex(command))
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                         #bin_ip = steam.encodeIP("172.21.0.20", "27039")
                     else :
@@ -41,7 +42,8 @@ class directoryserver(threading.Thread):
             elif command == "\x03" : # send out config servers
                 log.info(clientid + "Sending out list of config servers")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["conf_server_port"]))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], self.config["conf_server_port"]))
@@ -51,7 +53,8 @@ class directoryserver(threading.Thread):
             elif command == "\x06" : # send out content list servers
                 log.info(clientid + "Sending out list of content list servers")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["contlist_server_port"]))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], self.config["contlist_server_port"]))
@@ -61,20 +64,19 @@ class directoryserver(threading.Thread):
             elif command == "\x0f" : # hl master server
                 log.info(clientid + "Requesting HL Master Server")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
                     else :
-                        #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
                         bin_ip = steam.encodeIP((self.config["public_ip"], 27010))
                 else :
-                    #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
                     bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x12" : # account retrieve server address, not supported
                 log.info(clientid + "Sending out list of account retrieval servers")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
@@ -84,7 +86,8 @@ class directoryserver(threading.Thread):
             elif command == "\x14" : # send out CSER server (not implemented)
                 log.info(clientid + "Sending out list of CSER(?) servers")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], 27013))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], 27013))
@@ -94,7 +97,8 @@ class directoryserver(threading.Thread):
             elif command == "\x18" : # source master server
                 log.info(clientid + "Requesting Source Master Server")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], 27011))
@@ -105,7 +109,8 @@ class directoryserver(threading.Thread):
             elif command == "\x1e" : # rdkf master server
                 log.info(clientid + "Requesting RDKF Master Server")
                 if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
+                    #if clientid.startswith(globalvars.servernet) :
+                    if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                         bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
                     else :
                         bin_ip = steam.encodeIP((self.config["public_ip"], 27012))
@@ -127,101 +132,116 @@ class directoryserver(threading.Thread):
             log.debug(binascii.b2a_hex(command))
             if command == "\x00" and len(msg) == 5 : # send out auth server for a specific username
                 log.info(clientid + "Sending out specific auth server: " + binascii.b2a_hex(command))
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
-                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                #        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                #        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
                     #bin_ip = steam.encodeIP(("172.21.0.31", "28039"))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x03" : # send out config servers
                 log.info(clientid + "Sending out list of config servers")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["conf_server_port"]))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["conf_server_port"]))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["conf_server_port"]))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["conf_server_port"]))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["conf_server_port"]))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], self.config["conf_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x06" : # send out content list servers
                 log.info(clientid + "Sending out list of content list servers")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["contlist_server_port"]))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["contlist_server_port"]))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["contlist_server_port"]))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["contlist_server_port"]))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["contlist_server_port"]))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], self.config["contlist_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x0b" or command == "\x1c" : # send out auth server for a specific username
                 log.info(clientid + "Sending out auth server for a specific username: " + binascii.b2a_hex(command))
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x0f" : # hl master server
                 log.info(clientid + "Requesting HL Master Server")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
-                        bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
-                    else :
-                        #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
-                        bin_ip = steam.encodeIP((self.config["public_ip"], 27010))
-                else :
-                    #bin_ip = steam.encodeIP(("172.20.0.23", self.config["hlmaster_server_port"]))
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], 27010))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], 27010))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], 27010))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x12" : # account retrieve server address, not supported
                 log.info(clientid + "Sending out list of account retrieval servers")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], self.config["auth_server_port"]))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], self.config["auth_server_port"]))
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x14" : # send out CSER server (not implemented)
                 log.info(clientid + "Sending out list of CSER servers")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], 27013))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], 27013))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], 27013))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], 27013))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], 27013))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], 27013))
                 #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x18" : # source master server
                 log.info(clientid + "Requesting Source Master Server")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], 27011))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], 27011))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], 27011))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], 27011))
                 #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
             elif command == "\x1e" : # rdkf master server
                 log.info(clientid + "Requesting RDKF Master Server")
-                if self.config["public_ip"] != "0.0.0.0" :
-                    if clientid.startswith(globalvars.servernet) :
-                        bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
-                    else :
-                        bin_ip = steam.encodeIP((self.config["public_ip"], 27012))
-                else :
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
+                #    else :
+                #        bin_ip = steam.encodeIP((self.config["public_ip"], 27012))
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     bin_ip = steam.encodeIP((self.config["server_ip"], 27012))
+                else :
+                    bin_ip = steam.encodeIP((self.config["public_ip"], 27012))
                 #reply = struct.pack(">I", 8) + struct.pack(">H", 1) + bin_ip
                 reply = struct.pack(">H", 1) + bin_ip
             else :

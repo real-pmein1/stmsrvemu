@@ -1,5 +1,6 @@
 import sys, binascii, os, zlib, time, glob, logging
 
+from tqdm import tqdm
 from Steam.gcf import GCF
 from Steam.checksums import Checksums
 from Steam import oldsteam
@@ -76,8 +77,11 @@ def gcf2storage(filename) :
             f.close()
     
     #print "Checking files "
+    
+    progress_bar = tqdm(total=len(gcf.manifest.dir_entries.items()), unit=' files', unit_scale=False, ncols=80)
 
     for (dirid, d) in gcf.manifest.dir_entries.items() :
+        progress_bar.update(1)
         if d.fileid == 0xffffffff :
             continue
 

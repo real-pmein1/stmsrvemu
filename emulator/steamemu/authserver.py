@@ -1,6 +1,9 @@
-import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, random, pprint, datetime
+import threading, logging, struct, binascii, time, socket, ipaddress, os.path, ast, random, pprint, datetime, hmac, hashlib, ipaddress, ipcalc
+import zlib, os, shutil
 
 from Crypto.Hash import SHA
+#from Crypto.Signature import pkcs1_15
+#from Crypto.Cipher import PKCS1_OAEP
 
 import steam
 import config
@@ -25,58 +28,24 @@ class authserver(threading.Thread):
         log.debug(":" + binascii.b2a_hex(command[1:5]) + ":")
         log.debug(":" + binascii.b2a_hex(command) + ":")
 
-        if command[1:5] == "\x00\x00\x00\x04" or command[1:5] == "\x00\x00\x00\x01" or command[1:5] == "\x00\x00\x00\x02" or command[1:5] == "\x00\x00\x00\x03" :
+        if command[1:5] == "\x00\x00\x00\x01" : #\x01 for 2003 beta
 
+            log.debug(clientid + "Using 2003 beta auth protocol")
             self.socket.send("\x00" + socket.inet_aton(self.address[0]))
             log.debug((str(socket.inet_aton(self.address[0]))))
             log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
 
             command = self.socket.recv_withlen()
 
-            if len(command) > 1 and len(command) < 256 :
+            if command[0] == "\x02" : #LOGIN
             
                 usernamelen = struct.unpack(">H", command[1:3])[0]
-                
+                log.debug(clientid + "Main login command: " + binascii.b2a_hex(command[0]))
                 userblob = {}
 
                 username = command[3:3 + usernamelen]
                 
-                #------------ LEGACY ------------
-                #if os.path.isfile("files/users.txt") :
-                #    users = {} #OLD
-                #    f = open("files/users.txt")
-                #    for line in f.readlines() :
-                #        if line[-1:] == "\n" :
-                #            line = line[:-1]
-                #        if line.find(":") != -1 :
-                #            (user, password) = line.split(":")
-                #    #        users[user] = password
-                #            users[user] = user
-                #    f.close()
-                #    #example: 020005746573743100057465737431 (test1)
-                #    #02 = padding
-                #    for user in users :
-                #        if (os.path.isfile("files/users/" + username + ".py")) :
-                #            os.rename("files/users/" + username + ".py", "files/users/" + username + ".legacy")
-                #    os.rename("files/users.txt", "files/users.off")
-                #------------ LEGACY ------------
-                #print "user:" + username + ":"
-                log.info(clientid + "Processing logon for user: " + username) # 7465737431
-                log.debug(clientid + "Username length: " + str(usernamelen)) # 0005
-                #username length and username is then received again
-                #legacyuser = 0
-                #legacyblocked = 0
-                #try :
-                #    users[username]
-                #    legacyuser = 1
-                #    if users[username] == "blocked" :
-                #        legacyblocked = 1
-                #    else :
-                #        legacyblocked = 0
-                #except :
-                #    legacyuser = 0
-                
-                if (os.path.isfile("files/users/" + username + ".py")) :#and legacyuser == 0 :
+                if (os.path.isfile("files/users/" + username + ".py")) :
                     with open("files/users/" + username + ".py", 'r') as f:
                         userblobstr = f.read()
                         userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
@@ -121,9 +90,14 @@ class authserver(threading.Thread):
                         def without_keys(d, keys) :
                             return {x: d[x] for x in d if x not in keys}
                         execdict_new = without_keys(execdict, secretkey)
+                        secretkey2 = {'\x0f\x00\x00\x00'}
+                        def without_keys(d, keys2) :
+                            return {x: d[x] for x in d if x not in keys2}
+                        execdict_new2 = without_keys(execdict_new, secretkey2)
                         #print(execdict)
                         #print(execdict_new)
-                        blob = steam.blob_serialize(execdict_new)
+                        ##blob = steam.blob_serialize(execdict)
+                        blob = steam.blob_serialize(execdict_new2)
                         #print(blob)
                         bloblen = len(blob)
                         log.debug("Blob length: " + str(bloblen))
@@ -136,9 +110,2438 @@ class authserver(threading.Thread):
                         blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
                         currtime = time.time()
                         outerIV = binascii.a2b_hex("92183129534234231231312123123353")
-                        #steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                        steamUniverse = "0000"
-                        steamid = binascii.a2b_hex(steamUniverse + binascii.b2a_hex(userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16]))
+                        #steamid = binascii.a2b_hex("ffff" + "ffffffff" + "ffffffff")
+                        steamUniverse = struct.pack(">H", int(self.config["universe"]))
+                        steamid = steamUniverse + userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00']
+                        #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
+                        #authport = struct.pack("<L", int(port))
+                        #if self.config["public_ip"] != "0.0.0.0" :
+                        #    if clientid.startswith(globalvars.servernet) :
+                        #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
+                        #    else :
+                        #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["validation_port"]))
+                        if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
+                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
+                        else :
+                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["validation_port"]))
+                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
+                        servers = bin_ip + bin_ip
+                        times = steam.unixtime_to_steamtime(currtime) + steam.unixtime_to_steamtime(currtime + (60*60*24*28))
+                        subheader = innerkey + steamid + servers + times
+                        subheader_encrypted = steam.aes_encrypt(key, outerIV, subheader)
+                        subhead_decr_len = "\x00\x36"
+                        subhead_encr_len = "\x00\x40"
+                        subheader_encrypted = "\x00\x01" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted #TTicket_SubHeader (EncrData)
+                        log.debug(clientid + "TGT Version: 1") #v1/v2 Steam
+                        clientIP = socket.inet_aton(self.address[0])
+                        publicIP = clientIP[::-1]
+                        #subcommand3 = "\x00\x00\x00\x00"
+                        data1_len_str = "\x00\x80"
+                        #empty1 = ("\x00" * 0x80) #TTicketHeader unknown encrypted
+                        data1 = username + username + "\x00\x01" + publicIP + clientIP + servers + key + times
+                        data1_len_empty = int(0x80 * 2) - len(binascii.b2a_hex(data1))
+                        data1_full = data1 + ("\x00" * (data1_len_empty / 2))
+                        empty3 = ("\x00" * 0x80) #unknown encrypted - RSA sig?
+                        username_len = len(username)
+                        #username_len_packed = struct.pack(">H", 50 + username_len)
+                        accountId = userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #SteamID
+                        data2 = struct.pack(">L", len(username))
+                        subcommand1 = "\x00\x01" #for TGT v1
+                        subcommand2 = "" #missing for TGT v1
+                        empty2_dec_len = "\x00\x42"
+                        empty2_enc_len = "\x00\x50"
+                        #empty2 = ("\x00" * 0x50) #160 chars long (80 int bytes) unknown encrypted
+                        data2_len_empty = int(0x50 * 2) - len(binascii.b2a_hex(data2))
+                        data2_full = data2 + ("\x00" * (data2_len_empty / 2))
+                        
+                        #empty2 = username + empty2_empty[(len(username)):]
+                        real_ticket = subcommand1 + data1_len_str + data1_full + IV + empty2_dec_len + empty2_enc_len + data2_full + subcommand2 + empty3
+                        real_ticket_len = struct.pack(">H", len(real_ticket)) #TicketLen
+                        #ticket = subheader_encrypted + unknown_part + blob_encrypted
+                        ticket = subheader_encrypted + real_ticket_len + real_ticket + blob_encrypted
+                        
+                        ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                        
+                        if wrongpass == "1" :
+                            tgt_command = "\x00" #Incorrect password
+                        else :
+                            tgt_command = "\x01" #Authenticated # AuthenticateAndRequestTGT command
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        clock_skew_tolerance = "\x00\xd2\x49\x6b\x00\x00\x00\x00"
+                        authenticate = tgt_command + steamtime + clock_skew_tolerance
+                        writeAccountInformation = struct.pack(">L", len(ticket_signed)) + ticket_signed #FULL TICKET (steamticket.bin)
+                        self.socket.send(authenticate + writeAccountInformation)
+                        #print(bloblen)
+                    
+                else :
+                    log.info(clientid + "Unknown user: " + username)
+                    self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    tgt_command = "\x00" #UNKNOWN USER
+                    padding = "\x00" * 1222
+                    ticket_full = tgt_command + steamtime + padding
+                    self.socket.send(ticket_full)
+            elif command[0] == "\x10" : #Change password
+                #log.info(clientid + "Change password")
+                
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Password change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                #print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[10:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    #print(blob)
+                    #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username)
+                        self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Password change failed for: " + username)
+                    self.socket.send("\x01")
+            elif command[0] == "\x11" : #Change question
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Secret question change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                #print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[10:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    #print(blob)
+                    #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x03\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x04\x00\x00\x00'] = blob["\x04\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x05\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Secret question changed for: " + username)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Secret question change failed for: " + username)
+                        self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Secret question change failed for: " + username)
+                    self.socket.send("\x01")
+            elif command[0] == "\x12" : #Change email
+                log.info(clientid + "Change email")
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                new_email_addr = blob[:-padding_int[0]]
+                new_email_addr = new_email_addr + "\x00"
+                
+                userblob = {}
+                execdict_new = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                new_email = {}
+                new_email = {"\x0b\x00\x00\x00": new_email_addr}
+                userblob.update(new_email)
+                with open("files/users/" + username + ".py", 'w') as g:
+                    g.write("user_registry = " + str(userblob))
+                secretkey = {'\x05\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                execdict_new = without_keys(userblob, secretkey)
+                #print(userblob)
+                #print(execdict_new)
+                blob = steam.blob_serialize(execdict_new)
+                #print(blob)
+                bloblen = len(blob)
+                log.debug("Blob length: " + str(bloblen))
+                innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                #innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                innerIV = userIV
+                blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+                ticket = ticket + blob_encrypted
+                ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                self.socket.send("\x00" + blob_encrypted + blob_signature)
+            elif command[0] == "\x05" : #Subscribe
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                blobnew = steam.blob_unserialize(decodedmessage[header:header + blob_len])
+                log.info(clientid + "Subscribe to package " + str(struct.unpack("<L", blobnew["\x01\x00\x00\x00"])[0]))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    execdict = {}
+                    execdict_new = {}
+                    execdict_new2 = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': steamtime, '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x00\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}
+                    #if "\x02\x00\x00\x00" in blobnew :
+                    #    new_buy = {blobnew["\x01\x00\x00\x00"]: blobnew["\x02\x00\x00\x00"]}
+                    #else :
+                    #    new_buy = {blobnew["\x01\x00\x00\x00"]: {}} #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                    #receipt_dict = {}
+                    #receipt_dict_01 = {}
+                    #receipt_sub_dict = {}
+                    #subid = new_buy.keys()[0]
+                    execdict["\x07\x00\x00\x00"].update(new_sub)
+                    #pprint.pprint(new_sub)
+                    #pprint.pprint(new_buy)
+                    #pprint.pprint(subid)
+                    #if "\x02\x00\x00\x00" in blobnew :
+                    #    if new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" or new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
+                    #        receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                    #        #receipt_sub_dict["\x02\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00" #should be 8 digit hash of key, FIX ME
+                    #        receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]['\x02\x00\x00\x00']['\x02\x00\x00\x00'] + "\x00" #saving key for now for verification
+                    #        receipt_dict_01["\x01\x00\x00\x00"] = "\x06"
+                    #        receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                    #        receipt_dict[subid] = receipt_dict_01
+                    #    else :
+                    #        receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                    #        receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][12:]
+                    #        receipt_sub_dict["\x03\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x03\x00\x00\x00"]
+                    #        receipt_sub_dict["\x07\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x07\x00\x00\x00"]
+                    #        receipt_sub_dict["\x08\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x08\x00\x00\x00"]
+                    #        receipt_sub_dict["\x09\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x09\x00\x00\x00"]
+                    #        receipt_sub_dict["\x0a\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0a\x00\x00\x00"]
+                    #        receipt_sub_dict["\x0b\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0b\x00\x00\x00"]
+                    #        receipt_sub_dict["\x0c\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0c\x00\x00\x00"]
+                    #        receipt_sub_dict["\x0d\x00\x00\x00"] = str(random.randint(111111, 999999)) + "\x00"
+                    #        receipt_sub_dict["\x0e\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x14\x00\x00\x00"]
+                    #        receipt_sub_dict["\x0f\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x15\x00\x00\x00"]
+                    #        receipt_sub_dict["\x10\x00\x00\x00"] = datetime.datetime.now().strftime("%d/%m/%Y") + "\x00"
+                    #        receipt_sub_dict["\x11\x00\x00\x00"] = datetime.datetime.now().strftime("%H:%M:%S") + "\x00"
+                    #        receipt_sub_dict["\x12\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00"
+                    #        receipt_sub_dict["\x13\x00\x00\x00"] = "\x00\x00\x00\x00"
+                    #        receipt_dict_01["\x01\x00\x00\x00"] = "\x05"
+                    #        receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                    #        receipt_dict[subid] = receipt_dict_01
+                    #else :
+                    #    receipt_dict_01["\x01\x00\x00\x00"] = "\x07" #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                    #    receipt_dict_01["\x02\x00\x00\x00"] = {}
+                    #    receipt_dict[subid] = receipt_dict_01
+                    #new_buy.clear()
+                    #execdict["\x0f\x00\x00\x00"].update(receipt_dict)
+                    execdict_pprint = pprint.pformat(execdict)
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict_pprint))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    secretkey2 = {'\x0f\x00\x00\x00'} #NEEDS TO BE LEFT IN FOR 2007 BUT NOT FOR 2003
+                    def without_keys(d, keys2) :
+                        return {x: d[x] for x in d if x not in keys2}
+                    execdict_new2 = without_keys(execdict_new, secretkey2)
+                    #print(execdict)
+                    #print(execdict_new)
+                    ##blob = steam.blob_serialize(execdict)
+                    blob = steam.blob_serialize(execdict_new2)
+                    #print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    #self.socket.send("\x01" + blob_encrypted)
+                    self.socket.send(blob_encrypted)
+            elif command[0] == "\x06" : #Unsubscribe
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                padding_byte = decodedmessage[-1:]
+                padding_int, = struct.unpack(">B", padding_byte)
+                sub_id, = struct.unpack("<L", decodedmessage[header:-padding_int])
+                log.info(clientid + "Unsubscribe from package " + str(sub_id))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    execdict = {}
+                    execdict_new = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    del execdict["\x07\x00\x00\x00"][struct.pack("<L", sub_id)]
+                    execdict_pprint = pprint.pformat(execdict)
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict_pprint))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    secretkey2 = {'\x0f\x00\x00\x00'}
+                    def without_keys(d, keys2) :
+                        return {x: d[x] for x in d if x not in keys2}
+                    execdict_new2 = without_keys(execdict_new, secretkey2)
+                    blob = steam.blob_serialize(execdict_new2)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    self.socket.send(blob_encrypted)
+            elif command[0] == "\x09" : #Ticket Login/refresh games list
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Ticket login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    #self.socket.send("\x00")
+                    # create login ticket
+                    execdict = {}
+                    execdict_new = {}
+                    execdict_new2 = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x00\x00":
+                                    execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x01"
+                                    execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    secretkey2 = {'\x0f\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new2 = without_keys(execdict_new, secretkey2)
+                    #print(execdict)
+                    #print(execdict_new)
+                    blob = steam.blob_serialize(execdict_new2)
+                    #print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    #self.socket.send("\x00" + blob_encrypted)
+                    self.socket.send(blob_encrypted)
+                    
+                    execdict = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x01\x00":
+                                    #execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x00"
+                                    #execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+            elif command[0] == "\x04" : #Logout
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "User " + username + " logged out")
+            elif command[0] == "\x0a" : #Request content ticket Steam v1
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Content login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                #------------------------------------------------------------------
+                
+                # Incompatible ContentTicket VersionNum
+                # u16SizeOfPlaintextClientReadableContentTicket
+                # Bad u16SizeOfAESEncryptedClientReadableContentTicket
+                
+                # u16SizeOfServerReadableContentTicket
+                
+                currtime = time.time()
+                
+                client_ticket = b"\x69" * 0x10 # key used for MAC signature
+                client_ticket += steam.unixtime_to_steamtime(currtime)            # TicketCreationTime
+                client_ticket += steam.unixtime_to_steamtime(currtime + 86400)    # TicketValidUntilTime
+                client_ticket += os.urandom(4) #struct.pack("<I", 1)
+                client_ticket += os.urandom(8) # struct.pack("<II", 1, 2)
+                #if self.config["public_ip"] != "0.0.0.0" :
+                #    if clientid.startswith(globalvars.servernet) :
+                #        client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                #    else :
+                #        client_ticket += steam.encodeIP((self.config["public_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
+                    client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                else :
+                    client_ticket += steam.encodeIP((self.config["public_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                
+                server_ticket = b"\x55" * 0x80
+                
+                innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344")
+
+                client_ticket_encrypted = steam.aes_encrypt(key, innerIV, client_ticket) #steam.encrypt_with_pad(client_ticket, key, innerIV)
+
+                ticket = b"\x00\x01" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted #FOR BETA 2003
+                ticket += struct.pack(">H", len(server_ticket)) + server_ticket
+                
+                #ticket_signed = ticket + hmac.digest(client_ticket[0:16], ticket, hashlib.sha1)
+                ticket_signed = ticket + hmac.new(client_ticket[0:16], ticket, hashlib.sha1).digest()
+                
+                self.socket.send(b"\x00\x01" + struct.pack(">I", len(ticket_signed)) + ticket_signed)
+            elif command[0] == "\x1d" or command[0] == "\x1e" : #Check username - new user
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                #print(len(username_str))
+                log.info(clientid + "New user: check username exists: " + username_str)
+                if (os.path.isfile("files/users/" + username_str + ".py")) :
+                    log.warn(clientid + "New user: username already exists")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: username not found")
+                    self.socket.send("\x00")
+            elif command[0] == "\x22" : #Check email - new user
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                email = plainblob['\x01\x00\x00\x00']
+                email_str = email.rstrip('\x00')
+                #print(len(username_str))
+                log.info(clientid + "New user: check email exists: " + email_str)
+                email_exists = False
+                for file in os.listdir("files/users/"):
+                    if file.endswith("py"):
+                        with open("files/users/" + file, 'r') as f:
+                            userblobstr = f.read()
+                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        email_addr = userblob['\x0b\x00\x00\x00']
+                        if email_addr.rstrip('\x00') == email_str :
+                            email_exists = True
+                            break
+                if email_exists == True  :
+                    log.warn(clientid + "New user: email already in use")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: email ok to use")
+                    self.socket.send("\x00")
+            elif command[0] == "\x01" : #New user
+                log.info(clientid + "New user: Create user")
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #signature = pkcs1_15.new(steam.network_key).sign(SHA.new(BERstring))
+                signature = steam.rsa_sign_message(steam.network_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                encr_key_len, = struct.unpack(">H", reply[0:2])
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10] #modified for Steam '03 support
+            
+                #encr_key = reply[2:2 + encr_key_len]
+                #key = PKCS1_OAEP.new(steam.network_key).decrypt(encr_key)
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                
+                #invalid6 = {'\x06\x00\x00\x00'}
+                #def without_keys(d, keys) :
+                #    return {x: d[x] for x in d if x not in keys}
+                
+                #plainblob_fixed = without_keys(plainblob, invalid6)
+                
+                #dict6 = {}
+                #dict6 = {'\x06\x00\x00\x00': {username_str: {'\x01\x00\x00\x00': '\x10\x20\x30\x40\x00\x00\x00\x00', '\x02\x00\x00\x00': '\x00\x01', '\x03\x00\x00\x00': {}}}}
+                
+                #plainblob_fixed.update(dict6)
+                
+                newsteamid = os.urandom(4) + "\x00\x00\x00\x00" #generate random steamId
+                plainblob['\x06\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = newsteamid
+                plainblob["\x0f\x00\x00\x00"] = {} #adding for subscribe support
+                
+                plainblob_fixed = pprint.pformat(plainblob)
+                    
+                with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                    userblobfile.write("user_registry = ")
+                    userblobfile.write(str(plainblob))
+                
+                self.socket.send("\x01") #TO DO SEND \x00 FOR EMAIL IN USE
+            elif command[0] == "\x0e" : #Check username - password reset
+                log.info(clientid + "Password reset: check username exists")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                print(plaintext)
+                blobdict = steam.blob_unserialize(plaintext)
+                print(blobdict)
+                usernamechk = blobdict['\x01\x00\x00\x00']
+                username_str = usernamechk.rstrip('\x00')
+                if os.path.isfile("files/users/" + username_str + ".py") :
+                    self.socket.send("\x00")
+                else :
+                    self.socket.send("\x01")
+            elif command[0] == "\x0f" : #Reset password
+                log.info(clientid + "Password reset by client")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    usernamechk = blobdict['\x01\x00\x00\x00']
+                    username_str = usernamechk.rstrip('\x00')
+                    with open("files/users/" + username_str + ".py", 'r') as userblobfile:
+                        userblobstr = userblobfile.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    #print(userblob)
+                    questionsalt = userblob['\x05\x00\x00\x00'][username_str]['\x05\x00\x00\x00']
+                    #print(questionsalt)
+                    self.socket.send(questionsalt) #USER'S QUESTION SALT
+                    reply2 = self.socket.recv_withlen()
+                
+                    header = reply2[0:2]
+                    enc_len = reply2[2:6]
+                    zeros = reply2[6:10]
+                    blob_len = reply2[10:14]
+                    innerIV = reply2[14:30]
+                    enc_blob = reply2[30:-20]
+                    sig = reply2[-20:]
+                    dec_blob = steam.aes_decrypt(key, innerIV, enc_blob)
+                    padding_byte = dec_blob[-1:]
+                    padding_int = struct.unpack(">B", padding_byte)
+                    unser_blob = steam.blob_unserialize(dec_blob[:-padding_int[0]])
+                    
+                    if unser_blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username_str]['\x04\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = unser_blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00'] = unser_blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username_str + ".py")) :
+                            with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username_str)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username_str)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username_str)
+                        self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Password change message could not be decrypted")
+                    self.socket.send("\x01")
+                    
+                reply = {}
+                reply2 = {}
+            elif command[0] == "\x20" : #Check email - password reset
+                log.info(clientid + "Password reset by email")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    emailchk = blobdict['\x01\x00\x00\x00']
+                    email_str = emailchk.rstrip('\x00')
+                    email_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            email_addr = userblob['\x0b\x00\x00\x00']
+                            if email_addr.rstrip('\x00') == email_str :
+                                email_found = True
+                                break
+                    if email_found :
+                        self.socket.send("\x00")
+                    else :
+                        self.socket.send("\x01")
+            elif command[0] == "\x21" : #Check key - password reset
+                log.info(clientid + "Password reset by CD key")
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    keychk = blobdict['\x01\x00\x00\x00']
+                    key_str = keychk.rstrip('\x00')
+                    key_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            for sub in userblob["\x0f\x00\x00\x00"] :
+                                for prodcdkey in userblob["\x0f\x00\x00\x00"][sub]["\x01\x00\x00\x00"] :
+                                    if prodcdkey == "\x06" :
+                                        key = userblob["\x0f\x00\x00\x00"][sub]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][:-1]
+                                        if key == key_str :
+                                            key_found = True
+                                            break
+                    if key_found :
+                        self.socket.send("\x00")
+                    else :
+                        self.socket.send("\x01")
+            elif command[0] == "\x0b" : #Send CDR for v2 beta
+                if os.path.isfile("files/cache/secondblob.bin") :
+                    with open("files/cache/secondblob.bin", "rb") as f:
+                        blob = f.read()
+                elif os.path.isfile("files/2ndcdr.py") or os.path.isfile("files/secondblob.py"):
+                    if os.path.isfile("files/2ndcdr.orig") :
+                        #shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
+                        os.remove("files/2ndcdr.py")
+                        shutil.copy2("files/2ndcdr.orig","files/secondblob.py")
+                        os.remove("files/2ndcdr.orig")
+                    if os.path.isfile("files/2ndcdr.py"):
+                        shutil.copy2("files/2ndcdr.py","files/secondblob.py")
+                        os.remove("files/2ndcdr.py")
+                    with open("files/secondblob.py", "r") as g:
+                        file = g.read()
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            fileold = file
+                            file = file.replace(search, replace)
+                            if (search in fileold) and (replace in file) :
+                                print("Replaced " + info + " " + search + " with " + replace)
+                    #h = open("files/2ndcdr.py", "w")
+                    #h.write(file)
+                    #h.close()
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    #execfile("files/2ndcdr.py", execdict)
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                #if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 1"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 2"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    #cache_option = self.config["use_cached_blob"]
+                    #if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+                    
+                else :
+                    if os.path.isfile("files/secondblob.orig") :
+                        os.remove("files/secondblob.bin")
+                        shutil.copy2("files/secondblob.orig","files/secondblob.bin")
+                        os.remove("files/secondblob.orig")
+                    with open("files/secondblob.bin", "rb") as g:
+                        blob = g.read()
+                    
+                    if blob[0:2] == "\x01\x43":
+                        blob = zlib.decompress(blob[20:])
+                    blob2 = steam.blob_unserialize(blob)
+                    blob3 = steam.blob_dump(blob2)
+                    file = "blob = " + blob3
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        print "Fixing CDR 3"
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            file = file.replace(search, replace)
+                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                #if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 4"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 5"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    #h = open("files/secondblob.bin", "wb")
+                    #h.write(blob)
+                    #h.close()
+                    
+                    #g = open("files/secondblob.bin", "rb")
+                    #blob = g.read()
+                    #g.close()
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    #cache_option = self.config["use_cached_blob"]
+                    #if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+
+                checksum = SHA.new(blob).digest()
+
+                if checksum == command[1:] :
+                    log.info(clientid + "Client has matching checksum for secondblob")
+                    log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
+
+                    self.socket.send("\x00\x00\x00\x00")
+
+                else :
+                    log.info(clientid + "Client didn't match our checksum for secondblob")
+                    log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
+
+                    self.socket.send_withlen(blob, True) #false for not showing in log
+            else :
+                log.debug(clientid + "Unknown command: " + binascii.b2a_hex(command[0:1])) #23 ?
+                self.socket.send("\x01")
+
+        elif command[1:5] == "\x00\x00\x00\x03" : #\x03 for 2003 release
+
+            log.debug(clientid + "Using 2003 auth protocol")
+            self.socket.send("\x00" + socket.inet_aton(self.address[0]))
+            log.debug((str(socket.inet_aton(self.address[0]))))
+            log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
+
+            command = self.socket.recv_withlen()
+
+            if command[0] == "\x02" : #LOGIN
+            
+                usernamelen = struct.unpack(">H", command[1:3])[0]
+                log.debug(clientid + "Main login command: " + binascii.b2a_hex(command[0]))
+                userblob = {}
+
+                username = command[3:3 + usernamelen]
+                
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    #print(userblob)
+                    blocked = binascii.b2a_hex(userblob['\x0c\x00\x00\x00'])
+                    if blocked == "0001" :
+                        log.info(clientid + "Blocked user: " + username)
+                        self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                        command = self.socket.recv_withlen()
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        tgt_command = "\x04" #BLOCKED
+                        padding = "\x00" * 1222
+                        ticket_full = tgt_command + steamtime + padding
+                        self.socket.send(ticket_full)
+                    else :
+                        personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                        #print(personalsalt)
+                        self.socket.send(personalsalt) #NEW SALT PER USER
+                        command = self.socket.recv_withlen()
+                        key = userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #password hash generated by client on user creation, passwordCypherRijndaelKey/authenticationRijndaelKey in TINserver
+                        #print(binascii.b2a_hex(key))
+                        IV = command[0:16]
+                        #print(binascii.b2a_hex(IV))
+                        encrypted = command[20:36]
+                        #print(binascii.b2a_hex(encrypted))
+                        decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, IV, encrypted))
+                        log.debug(clientid + "Authentication package: " + decodedmessage)
+                
+                        if not decodedmessage.endswith("04040404") :
+                            wrongpass = "1"
+                            log.info(clientid + "Incorrect password entered for: " + username)
+                        else :
+                            wrongpass = "0"                
+                
+                        # create login ticket
+                        execdict = {}
+                        execdict_new = {}
+                        execdict_new2 = {}
+                        with open("files/users/" + username + ".py", 'r') as f:
+                            userblobstr = f.read()
+                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        secretkey = {'\x05\x00\x00\x00'}
+                        def without_keys(d, keys) :
+                            return {x: d[x] for x in d if x not in keys}
+                        execdict_new = without_keys(execdict, secretkey)
+                        secretkey2 = {'\x0f\x00\x00\x00'} #NEEDS TO BE LEFT IN FOR 2007 BUT NOT FOR 2003
+                        def without_keys(d, keys2) :
+                            return {x: d[x] for x in d if x not in keys2}
+                        execdict_new2 = without_keys(execdict_new, secretkey2)
+                        #print(execdict)
+                        #print(execdict_new)
+                        ##blob = steam.blob_serialize(execdict)
+                        blob = steam.blob_serialize(execdict_new2)
+                        #print(blob)
+                        bloblen = len(blob)
+                        log.debug("Blob length: " + str(bloblen))
+                        innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                        blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                        blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                        blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                        currtime = time.time()
+                        outerIV = binascii.a2b_hex("92183129534234231231312123123353")
+                        #steamid = binascii.a2b_hex("ffff" + "ffffffff" + "ffffffff")
+                        steamUniverse = struct.pack(">H", int(self.config["universe"]))
+                        steamid = steamUniverse + userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00']
+                        #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
+                        #authport = struct.pack("<L", int(port))
+                        if self.config["public_ip"] != "0.0.0.0" :
+                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["validation_port"]))
+                        else :
+                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
+                        #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
+                        servers = bin_ip + bin_ip
+                        times = steam.unixtime_to_steamtime(currtime) + steam.unixtime_to_steamtime(currtime + (60*60*24*28))
+                        subheader = innerkey + steamid + servers + times
+                        subheader_encrypted = steam.aes_encrypt(key, outerIV, subheader)
+                        subhead_decr_len = "\x00\x36"
+                        subhead_encr_len = "\x00\x40"
+                        subheader_encrypted = "\x00\x01" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted #TTicket_SubHeader (EncrData)
+                        log.debug(clientid + "TGT Version: 1") #v1/v2 Steam
+                        clientIP = socket.inet_aton(self.address[0])
+                        publicIP = clientIP[::-1]
+                        #subcommand3 = "\x00\x00\x00\x00"
+                        data1_len_str = "\x00\x80"
+                        #empty1 = ("\x00" * 0x80) #TTicketHeader unknown encrypted
+                        data1 = username + username + "\x00\x01" + publicIP + clientIP + servers + key + times
+                        data1_len_empty = int(0x80 * 2) - len(binascii.b2a_hex(data1))
+                        data1_full = data1 + ("\x00" * (data1_len_empty / 2))
+                        empty3 = ("\x00" * 0x80) #unknown encrypted - RSA sig?
+                        username_len = len(username)
+                        #username_len_packed = struct.pack(">H", 50 + username_len)
+                        accountId = userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #SteamID
+                        data2 = struct.pack(">L", len(username))
+                        subcommand1 = "\x00\x01" #for TGT v1
+                        subcommand2 = "" #missing for TGT v1
+                        empty2_dec_len = "\x00\x42"
+                        empty2_enc_len = "\x00\x50"
+                        #empty2 = ("\x00" * 0x50) #160 chars long (80 int bytes) unknown encrypted
+                        data2_len_empty = int(0x50 * 2) - len(binascii.b2a_hex(data2))
+                        data2_full = data2 + ("\x00" * (data2_len_empty / 2))
+                        
+                        #empty2 = username + empty2_empty[(len(username)):]
+                        real_ticket = subcommand1 + data1_len_str + data1_full + IV + empty2_dec_len + empty2_enc_len + data2_full + subcommand2 + empty3
+                        real_ticket_len = struct.pack(">H", len(real_ticket)) #TicketLen
+                        #ticket = subheader_encrypted + unknown_part + blob_encrypted
+                        ticket = subheader_encrypted + real_ticket_len + real_ticket + blob_encrypted
+                        
+                        ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                        
+                        if wrongpass == "1" :
+                            tgt_command = "\x00" #Incorrect password
+                        else :
+                            tgt_command = "\x01" #Authenticated # AuthenticateAndRequestTGT command
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        clock_skew_tolerance = "\x00\xd2\x49\x6b\x00\x00\x00\x00"
+                        authenticate = tgt_command + steamtime + clock_skew_tolerance
+                        writeAccountInformation = struct.pack(">L", len(ticket_signed)) + ticket_signed #FULL TICKET (steamticket.bin)
+                        self.socket.send(authenticate + writeAccountInformation)
+                        #print(bloblen)
+                    
+                else :
+                    log.info(clientid + "Unknown user: " + username)
+                    self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    tgt_command = "\x00" #UNKNOWN USER
+                    padding = "\x00" * 1222
+                    ticket_full = tgt_command + steamtime + padding
+                    self.socket.send(ticket_full)
+            elif command[0] == "\x10" : #Change password
+                #log.info(clientid + "Change password")
+                
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Password change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                #print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[14:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    #print(blob)
+                    #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username)
+                            self.socket.send("\x01")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username)
+                            self.socket.send("\x00")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username)
+                        self.socket.send("\x00")
+                else :
+                    log.warn(clientid + "Password change failed for: " + username)
+                    self.socket.send("\x00")
+            elif command[0] == "\x11" : #Change question
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Secret question change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                #print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[14:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    #print(blob)
+                    #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x03\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x04\x00\x00\x00'] = blob["\x04\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x05\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Secret question changed for: " + username)
+                            self.socket.send("\x01")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username)
+                            self.socket.send("\x00")
+                    else :
+                        log.warn(clientid + "Secret question change failed for: " + username)
+                        self.socket.send("\x00")
+                else :
+                    log.warn(clientid + "Secret question change failed for: " + username)
+                    self.socket.send("\x00")
+            elif command[0] == "\x12" : #Change email
+                log.info(clientid + "Change email")
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                new_email_addr = blob[:-padding_int[0]]
+                new_email_addr = new_email_addr + "\x00"
+                
+                userblob = {}
+                execdict_new = {}
+                execdict_new2 = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                new_email = {}
+                new_email = {"\x0b\x00\x00\x00": new_email_addr}
+                userblob.update(new_email)
+                with open("files/users/" + username + ".py", 'w') as g:
+                    g.write("user_registry = " + str(userblob))
+                secretkey = {'\x05\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                execdict_new = without_keys(userblob, secretkey)
+                secretkey2 = {'\x05\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                execdict_new2 = without_keys(execdict_new, secretkey2)
+                #print(userblob)
+                #print(execdict_new)
+                blob = steam.blob_serialize(execdict_new2)
+                #print(blob)
+                bloblen = len(blob)
+                log.debug("Blob length: " + str(bloblen))
+                innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                #innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                innerIV = userIV
+                blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+                ticket = ticket + blob_encrypted
+                ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                self.socket.send("\x00" + blob_encrypted + blob_signature)
+            elif command[0] == "\x05" : #Subscribe
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                blobnew = steam.blob_unserialize(decodedmessage[header:header + blob_len])
+                log.info(clientid + "Subscribe to package " + str(struct.unpack("<L", blobnew["\x01\x00\x00\x00"])[0]))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    execdict = {}
+                    execdict_new = {}
+                    execdict_new2 = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': steamtime, '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x00\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}
+                    if "\x02\x00\x00\x00" in blobnew :
+                        new_buy = {blobnew["\x01\x00\x00\x00"]: blobnew["\x02\x00\x00\x00"]}
+                    else :
+                        new_buy = {blobnew["\x01\x00\x00\x00"]: {}} #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                    receipt_dict = {}
+                    receipt_dict_01 = {}
+                    receipt_sub_dict = {}
+                    subid = new_buy.keys()[0]
+                    execdict["\x07\x00\x00\x00"].update(new_sub)
+                    #pprint.pprint(new_sub)
+                    #pprint.pprint(new_buy)
+                    #pprint.pprint(subid)
+                    if "\x02\x00\x00\x00" in blobnew :
+                        if new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" or new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
+                            receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                            #receipt_sub_dict["\x02\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00" #should be 8 digit hash of key, FIX ME
+                            receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]['\x02\x00\x00\x00']['\x02\x00\x00\x00'] + "\x00" #saving key for now for verification
+                            receipt_dict_01["\x01\x00\x00\x00"] = "\x06"
+                            receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                            receipt_dict[subid] = receipt_dict_01
+                        else :
+                            receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                            receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][12:]
+                            receipt_sub_dict["\x03\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x03\x00\x00\x00"]
+                            receipt_sub_dict["\x07\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x07\x00\x00\x00"]
+                            receipt_sub_dict["\x08\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x08\x00\x00\x00"]
+                            receipt_sub_dict["\x09\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x09\x00\x00\x00"]
+                            receipt_sub_dict["\x0a\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0a\x00\x00\x00"]
+                            receipt_sub_dict["\x0b\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0b\x00\x00\x00"]
+                            receipt_sub_dict["\x0c\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0c\x00\x00\x00"]
+                            receipt_sub_dict["\x0d\x00\x00\x00"] = str(random.randint(111111, 999999)) + "\x00"
+                            receipt_sub_dict["\x0e\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x14\x00\x00\x00"]
+                            receipt_sub_dict["\x0f\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x15\x00\x00\x00"]
+                            receipt_sub_dict["\x10\x00\x00\x00"] = datetime.datetime.now().strftime("%d/%m/%Y") + "\x00"
+                            receipt_sub_dict["\x11\x00\x00\x00"] = datetime.datetime.now().strftime("%H:%M:%S") + "\x00"
+                            receipt_sub_dict["\x12\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00"
+                            receipt_sub_dict["\x13\x00\x00\x00"] = "\x00\x00\x00\x00"
+                            receipt_dict_01["\x01\x00\x00\x00"] = "\x05"
+                            receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                            receipt_dict[subid] = receipt_dict_01
+                    else :
+                        receipt_dict_01["\x01\x00\x00\x00"] = "\x07" #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                        receipt_dict_01["\x02\x00\x00\x00"] = {}
+                        receipt_dict[subid] = receipt_dict_01
+                    new_buy.clear()
+                    execdict["\x0f\x00\x00\x00"].update(receipt_dict)
+                    execdict_pprint = pprint.pformat(execdict)
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict_pprint))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    secretkey2 = {'\x0f\x00\x00\x00'} #NEEDS TO BE LEFT IN FOR 2007 BUT NOT FOR 2003
+                    def without_keys(d, keys2) :
+                        return {x: d[x] for x in d if x not in keys2}
+                    execdict_new2 = without_keys(execdict_new, secretkey2)
+                    #print(execdict)
+                    #print(execdict_new)
+                    ##blob = steam.blob_serialize(execdict)
+                    blob = steam.blob_serialize(execdict_new2)
+                    #print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    #self.socket.send("\x01" + blob_encrypted)
+                    self.socket.send(blob_encrypted)
+            elif command[0] == "\x09" : #Ticket Login
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Ticket login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    #self.socket.send("\x00")
+                    # create login ticket
+                    execdict = {}
+                    execdict_new = {}
+                    execdict_new2 = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x00\x00":
+                                    execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x01"
+                                    execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    secretkey2 = {'\x0f\x00\x00\x00'} #NEEDS TO BE LEFT IN FOR 2007 BUT NOT FOR 2003
+                    def without_keys(d, keys2) :
+                        return {x: d[x] for x in d if x not in keys2}
+                    execdict_new2 = without_keys(execdict_new, secretkey2)
+                    #print(execdict)
+                    #print(execdict_new)
+                    ##blob = steam.blob_serialize(execdict)
+                    blob = steam.blob_serialize(execdict_new2)
+                    #print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    
+                    self.socket.send(blob_encrypted)
+                    #print(bloblen)
+                    
+                    execdict = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x01\x00":
+                                    #execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x00"
+                                    #execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+            elif command[0] == "\x04" : #Logout
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "User " + username + " logged out")
+            elif command[0] == "\x0a" : #Request content ticket Steam v2 beta
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Content login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                #------------------------------------------------------------------
+                
+                # Incompatible ContentTicket VersionNum
+                # u16SizeOfPlaintextClientReadableContentTicket
+                # Bad u16SizeOfAESEncryptedClientReadableContentTicket
+                
+                # u16SizeOfServerReadableContentTicket
+                
+                currtime = time.time()
+                
+                client_ticket = b"\x69" * 0x10 # key used for MAC signature
+                client_ticket += steam.unixtime_to_steamtime(currtime)            # TicketCreationTime
+                client_ticket += steam.unixtime_to_steamtime(currtime + 86400)    # TicketValidUntilTime
+                client_ticket += os.urandom(4) #struct.pack("<I", 1)
+                client_ticket += os.urandom(8) # struct.pack("<II", 1, 2)
+                if self.config["public_ip"] != "0.0.0.0" :
+                    client_ticket += steam.encodeIP((self.config["public_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                else:
+                    client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                
+                server_ticket = b"\x55" * 0x80
+                
+                innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344")
+
+                client_ticket_encrypted = steam.aes_encrypt(key, innerIV, client_ticket) #steam.encrypt_with_pad(client_ticket, key, innerIV)
+
+                ticket = b"\x00\x02" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted
+                #ticket = b"\x00\x01" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted #FOR BETA 2003
+                ticket += struct.pack(">H", len(server_ticket)) + server_ticket
+                
+                #ticket_signed = ticket + hmac.digest(client_ticket[0:16], ticket, hashlib.sha1)
+                ticket_signed = ticket + hmac.new(client_ticket[0:16], ticket, hashlib.sha1).digest()
+                
+                self.socket.send(b"\x00\x01" + struct.pack(">I", len(ticket_signed)) + ticket_signed)
+            elif command[0] == "\x1d" or command[0] == "\x1e" : #Check username - new user
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                #print(len(username_str))
+                log.info(clientid + "New user: check username exists: " + username_str)
+                if (os.path.isfile("files/users/" + username_str + ".py")) :
+                    log.warn(clientid + "New user: username already exists")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: username not found")
+                    self.socket.send("\x00")
+            elif command[0] == "\x22" : #Check email - new user
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                email = plainblob['\x01\x00\x00\x00']
+                email_str = email.rstrip('\x00')
+                #print(len(username_str))
+                log.info(clientid + "New user: check email exists: " + email_str)
+                email_exists = False
+                for file in os.listdir("files/users/"):
+                    if file.endswith("py"):
+                        with open("files/users/" + file, 'r') as f:
+                            userblobstr = f.read()
+                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        email_addr = userblob['\x0b\x00\x00\x00']
+                        if email_addr.rstrip('\x00') == email_str :
+                            email_exists = True
+                            break
+                if email_exists == True  :
+                    log.warn(clientid + "New user: email already in use")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: email ok to use")
+                    self.socket.send("\x00")
+            elif command[0] == "\x01" : #New user
+                log.info(clientid + "New user: Create user")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                #signature = steam.rsa_sign_message(steam.network_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10] #modified for Steam '03 support
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                
+                #invalid6 = {'\x06\x00\x00\x00'}
+                #def without_keys(d, keys) :
+                #    return {x: d[x] for x in d if x not in keys}
+                
+                #plainblob_fixed = without_keys(plainblob, invalid6)
+                
+                #dict6 = {}
+                #dict6 = {'\x06\x00\x00\x00': {username_str: {'\x01\x00\x00\x00': '\x10\x20\x30\x40\x00\x00\x00\x00', '\x02\x00\x00\x00': '\x00\x01', '\x03\x00\x00\x00': {}}}}
+                
+                #plainblob_fixed.update(dict6)
+                
+                newsteamid = os.urandom(4) + "\x00\x00\x00\x00" #generate random steamId
+                plainblob['\x06\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = newsteamid
+                
+                invalid7 = {'\x07\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                
+                plainblob_fixed = without_keys(plainblob, invalid7)
+                
+                dict7 = {}
+                dict7 = {'\x07\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\xe0\xe0\xe0\xe0\xe0\xe0\xe0\x00', '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x01\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}}
+                
+                plainblob_fixed.update(dict7)
+                
+                dictf = {}
+                dictf = {'\x0f\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\x07', '\x02\x00\x00\x00': {}}}}
+                
+                plainblob_fixed.update(dictf)
+                
+                plainblob_fixed = pprint.pformat(plainblob_fixed)
+                    
+                with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                    userblobfile.write("user_registry = ")
+                    userblobfile.write(str(plainblob))
+                
+                self.socket.send("\x01")
+            elif command[0] == "\x0e" : #Check username - password reset
+                log.info(clientid + "Password reset: check username exists")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                print(plaintext)
+                blobdict = steam.blob_unserialize(plaintext)
+                print(blobdict)
+                usernamechk = blobdict['\x01\x00\x00\x00']
+                username_str = usernamechk.rstrip('\x00')
+                if os.path.isfile("files/users/" + username_str + ".py") : #NEED TO FIX
+                    self.socket.send("\x01")
+                else :
+                    self.socket.send("\x00")
+            elif command[0] == "\x0f" : #Reset password
+                log.info(clientid + "Password reset by client")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    usernamechk = blobdict['\x01\x00\x00\x00']
+                    username_str = usernamechk.rstrip('\x00')
+                    with open("files/users/" + username_str + ".py", 'r') as userblobfile:
+                        userblobstr = userblobfile.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    #print(userblob)
+                    questionsalt = userblob['\x05\x00\x00\x00'][username_str]['\x05\x00\x00\x00']
+                    #print(questionsalt)
+                    self.socket.send(questionsalt) #USER'S QUESTION SALT
+                    reply2 = self.socket.recv_withlen()
+                
+                    header = reply2[0:2]
+                    enc_len = reply2[2:6]
+                    zeros = reply2[6:10]
+                    blob_len = reply2[10:14]
+                    innerIV = reply2[14:30]
+                    enc_blob = reply2[30:-20]
+                    sig = reply2[-20:]
+                    dec_blob = steam.aes_decrypt(key, innerIV, enc_blob)
+                    padding_byte = dec_blob[-1:]
+                    padding_int = struct.unpack(">B", padding_byte)
+                    unser_blob = steam.blob_unserialize(dec_blob[:-padding_int[0]])
+                    
+                    if unser_blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username_str]['\x04\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = unser_blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00'] = unser_blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username_str + ".py")) :
+                            with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username_str)
+                            self.socket.send("\x01")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username_str)
+                            self.socket.send("\x00")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username_str)
+                        self.socket.send("\x00")
+                else :
+                    log.warn(clientid + "Password change message could not be decrypted")
+                    self.socket.send("\x00")
+                    
+                reply = {}
+                reply2 = {}
+            elif command[0] == "\x20" : #Check email - password reset
+                log.info(clientid + "Password reset by email")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    emailchk = blobdict['\x01\x00\x00\x00']
+                    email_str = emailchk.rstrip('\x00')
+                    email_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            email_addr = userblob['\x0b\x00\x00\x00']
+                            if email_addr.rstrip('\x00') == email_str :
+                                email_found = True
+                                break
+                    if email_found :
+                        self.socket.send("\x01")
+                    else :
+                        self.socket.send("\x00")
+            elif command[0] == "\x21" : #Check key - password reset
+                log.info(clientid + "Password reset by CD key")
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    keychk = blobdict['\x01\x00\x00\x00']
+                    key_str = keychk.rstrip('\x00')
+                    key_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            for sub in userblob["\x0f\x00\x00\x00"] :
+                                for prodcdkey in userblob["\x0f\x00\x00\x00"][sub]["\x01\x00\x00\x00"] :
+                                    if prodcdkey == "\x06" :
+                                        key = userblob["\x0f\x00\x00\x00"][sub]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][:-1]
+                                        if key == key_str :
+                                            key_found = True
+                                            break
+                    if key_found :
+                        self.socket.send("\x01")
+                    else :
+                        self.socket.send("\x00")
+            elif command[0] == "\x0b" : #Send CDR for v2 beta
+                if os.path.isfile("files/cache/secondblob.bin") :
+                    with open("files/cache/secondblob.bin", "rb") as f:
+                        blob = f.read()
+                elif os.path.isfile("files/2ndcdr.py") or os.path.isfile("files/secondblob.py"):
+                    if os.path.isfile("files/2ndcdr.orig") :
+                        #shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
+                        os.remove("files/2ndcdr.py")
+                        shutil.copy2("files/2ndcdr.orig","files/secondblob.py")
+                        os.remove("files/2ndcdr.orig")
+                    if os.path.isfile("files/2ndcdr.py"):
+                        shutil.copy2("files/2ndcdr.py","files/secondblob.py")
+                        os.remove("files/2ndcdr.py")
+                    with open("files/secondblob.py", "r") as g:
+                        file = g.read()
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            fileold = file
+                            file = file.replace(search, replace)
+                            if (search in fileold) and (replace in file) :
+                                print("Replaced " + info + " " + search + " with " + replace)
+                    #h = open("files/2ndcdr.py", "w")
+                    #h.write(file)
+                    #h.close()
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    #execfile("files/2ndcdr.py", execdict)
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                #if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 6"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 7"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    #cache_option = self.config["use_cached_blob"]
+                    #if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+                    
+                else :
+                    if os.path.isfile("files/secondblob.orig") :
+                        os.remove("files/secondblob.bin")
+                        shutil.copy2("files/secondblob.orig","files/secondblob.bin")
+                        os.remove("files/secondblob.orig")
+                    with open("files/secondblob.bin", "rb") as g:
+                        blob = g.read()
+                    
+                    if blob[0:2] == "\x01\x43":
+                        blob = zlib.decompress(blob[20:])
+                    blob2 = steam.blob_unserialize(blob)
+                    blob3 = steam.blob_dump(blob2)
+                    file = "blob = " + blob3
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        print "Fixing CDR 8"
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            file = file.replace(search, replace)
+                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                #if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 9"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 10"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    #h = open("files/secondblob.bin", "wb")
+                    #h.write(blob)
+                    #h.close()
+                    
+                    #g = open("files/secondblob.bin", "rb")
+                    #blob = g.read()
+                    #g.close()
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    #cache_option = self.config["use_cached_blob"]
+                    #if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+
+                checksum = SHA.new(blob).digest()
+
+                if checksum == command[1:] :
+                    log.info(clientid + "Client has matching checksum for secondblob")
+                    log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
+
+                    self.socket.send("\x00\x00\x00\x00")
+
+                else :
+                    log.info(clientid + "Client didn't match our checksum for secondblob")
+                    log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
+
+                    self.socket.send_withlen(blob, True) #false for not showing in log
+            else :
+                log.debug(clientid + "Unknown command: " + binascii.b2a_hex(command[0:1])) #23 ?
+                self.socket.send("\x01")
+
+        elif command[1:5] == "\x00\x00\x00\x04":# and globalvars.steamui_ver < 336 :#or command[1:5] == "\x00\x00\x00\x02" : #\x04 for 2004-2007
+
+            log.debug(clientid + "Using 2004 auth protocol")
+            self.socket.send("\x00" + socket.inet_aton(self.address[0]))
+            log.debug((str(socket.inet_aton(self.address[0]))))
+            log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
+
+            command = self.socket.recv_withlen()
+
+            if command[0] == "\x02" : #LOGIN
+            
+                usernamelen = struct.unpack(">H", command[1:3])[0]
+                log.debug(clientid + "Main login command: " + binascii.b2a_hex(command[0]))
+                userblob = {}
+
+                username = command[3:3 + usernamelen]
+                
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    #print(userblob)
+                    blocked = binascii.b2a_hex(userblob['\x0c\x00\x00\x00'])
+                    if blocked == "0001" :
+                        log.info(clientid + "Blocked user: " + username)
+                        self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                        command = self.socket.recv_withlen()
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        tgt_command = "\x04" #BLOCKED
+                        padding = "\x00" * 1222
+                        ticket_full = tgt_command + steamtime + padding
+                        self.socket.send(ticket_full)
+                    else :
+                        personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                        #print(personalsalt)
+                        self.socket.send(personalsalt) #NEW SALT PER USER
+                        command = self.socket.recv_withlen()
+                        key = userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #password hash generated by client on user creation, passwordCypherRijndaelKey/authenticationRijndaelKey in TINserver
+                        #print(binascii.b2a_hex(key))
+                        IV = command[0:16]
+                        #print(binascii.b2a_hex(IV))
+                        encrypted = command[20:36]
+                        #print(binascii.b2a_hex(encrypted))
+                        decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, IV, encrypted))
+                        log.debug(clientid + "Authentication package: " + decodedmessage)
+                
+                        if not decodedmessage.endswith("04040404") :
+                            wrongpass = "1"
+                            log.info(clientid + "Incorrect password entered for: " + username)
+                        else :
+                            wrongpass = "0"                
+                
+                        # create login ticket
+                        execdict = {}
+                        execdict_new = {}
+                        execdict_new2 = {}
+                        with open("files/users/" + username + ".py", 'r') as f:
+                            userblobstr = f.read()
+                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        secretkey = {'\x05\x00\x00\x00'}
+                        def without_keys(d, keys) :
+                            return {x: d[x] for x in d if x not in keys}
+                        execdict_new = without_keys(execdict, secretkey)
+                        secretkey2 = {'\x0f\x00\x00\x00'}
+                        def without_keys(d, keys) :
+                            return {x: d[x] for x in d if x not in keys}
+                        execdict_new2 = without_keys(execdict_new, secretkey2)
+                        #print(execdict)
+                        #print(execdict_new)
+                        ##blob = steam.blob_serialize(execdict)
+                        if globalvars.steamui_ver < 24:
+                            blob = steam.blob_serialize(execdict_new2)
+                        else:
+                            blob = steam.blob_serialize(execdict_new)
+                        #print(blob)
+                        bloblen = len(blob)
+                        log.debug("Blob length: " + str(bloblen))
+                        innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                        blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                        blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                        blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                        currtime = time.time()
+                        outerIV = binascii.a2b_hex("92183129534234231231312123123353")
+                        #steamid = binascii.a2b_hex("ffff" + "ffffffff" + "ffffffff")
+                        steamUniverse = struct.pack(">H", int(self.config["universe"]))
+                        steamid = steamUniverse + userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00']
                         #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
                         #authport = struct.pack("<L", int(port))
                         if self.config["public_ip"] != "0.0.0.0" :
@@ -154,29 +2557,13 @@ class authserver(threading.Thread):
                         subhead_encr_len = "\x00\x40"
                         if globalvars.tgt_version == "1" : #nullData1
                             subheader_encrypted = "\x00\x01" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted #TTicket_SubHeader (EncrData)
-                            log.debug(clientid + "TGT Version: 1") #v2 Steam
+                            log.debug(clientid + "TGT Version: 1") #v1/v2 Steam
                         elif globalvars.tgt_version == "2" :
                             subheader_encrypted = "\x00\x02" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted
                             log.debug(clientid + "TGT Version: 2") #v3 Steam
                         else :
                             subheader_encrypted = "\x00\x02" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted
                             log.debug(clientid + "TGT Version: 2") #Assume v3 Steam
-                        #unknown_part = "\x01\x68" + ("\xff" * 0x168) #THE ACTUAL TICKET!!!
-                        #0 = eVersionNum
-                        #1=eUniqueAccountName
-                        #2=eAccountUserName
-                        #3=eSteamInstanceID
-                        #4=eSteamLocalUserID
-                        #5=eClientExternalIPAddr
-                        #6=eClientLocalIPAddr
-                        #7=eUserIDTicketValidationServerIPAddr1
-                        #8=eUserIDTicketValidationServerport1
-                        #9=eUserIDTicketValidationServerIPAddr2
-                        #10=eUserIDTicketValidationServerport2
-                        #11=eClientToServerAESSessionKey
-                        #12=eTicketCreationTime
-                        #13=TicketValidUntilTime
-                        #14=ServerReadablePart
                         clientIP = socket.inet_aton(self.address[0])
                         publicIP = clientIP[::-1]
                         #subcommand3 = "\x00\x00\x00\x00"
@@ -225,105 +2612,23 @@ class authserver(threading.Thread):
                         
                         ticket_signed = ticket + steam.sign_message(innerkey, ticket)
                         
-                        #tgt_command = "\x03" #Clock-skew too far out
-                        if wrongpass == "1" :
-                            tgt_command = "\x02" #Incorrect password
-                        else :
-                            tgt_command = "\x00" #Authenticated # AuthenticateAndRequestTGT command
+                        if globalvars.steamui_ver < 24:
+                            if wrongpass == "1" :
+                                tgt_command = "\x00" #Incorrect password
+                            else :
+                                tgt_command = "\x01" #Authenticated # AuthenticateAndRequestTGT command
+                        else:
+                            #tgt_command = "\x03" #Clock-skew too far out
+                            if wrongpass == "1" :
+                                tgt_command = "\x02" #Incorrect password
+                            else :
+                                tgt_command = "\x00" #Authenticated # AuthenticateAndRequestTGT command
                         steamtime = steam.unixtime_to_steamtime(time.time())
                         clock_skew_tolerance = "\x00\xd2\x49\x6b\x00\x00\x00\x00"
                         authenticate = tgt_command + steamtime + clock_skew_tolerance
                         writeAccountInformation = struct.pack(">L", len(ticket_signed)) + ticket_signed #FULL TICKET (steamticket.bin)
                         self.socket.send(authenticate + writeAccountInformation)
-                        
-                #elif legacyblocked == 1 :
-                #    log.warning(clientid + "Blocked legacy user: " + username)
-                #    self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
-                #    steamtime = steam.unixtime_to_steamtime(time.time())
-                #    tgt_command = "\x04" #BLOCKED
-                #    padding = "\x00" * 1222
-                #    ticket_full = tgt_command + steamtime + padding
-                #    self.socket.send(ticket_full)
-                    
-                #elif legacyuser == 1 :
-                #    log.warning("Legacy user: " + username)
-                
-                #    self.socket.send("\x01\x23\x45\x67\x89\xab\xcd\xef") # salt - OLD
-                #    command = self.socket.recv_withlen()
-
-                #    key = SHA.new("\x01\x23\x45\x67" + users[username] + "\x89\xab\xcd\xef").digest()[:16]
-                #    #print(binascii.b2a_hex(key))
-                #    IV = command[0:16]
-                #    #print(binascii.b2a_hex(IV))
-                #    encrypted = command[20:36]
-                #    #print(binascii.b2a_hex(encrypted))
-                #    decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, IV, encrypted))
-                #    log.debug(clientid + "Decoded message: " + decodedmessage)
-                
-                #    if not decodedmessage.endswith("04040404") :
-                #        wrongpass = "1"
-                #        log.info(clientid + "Incorrect password entered for: " + username)
-                #        #wrongpass = "0"  
-                #    else :
-                #        wrongpass = "0"                
-                
-                #    # create login ticket
-                #    execdict = {}
-                #    execdict_new = {}
-                #    #execfile("files/users/%s.py" % username, execdict)
-                #    with open("files/users/" + username + ".py", 'r') as f:
-                #        userblobstr = f.read()
-                #        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                #    #blob = steam.blob_serialize(execdict["user_registry"])
-                #    secretkey = {'\x05\x00\x00\x00'}
-                #    def without_keys(d, keys) :
-                #        return {x: d[x] for x in d if x not in keys}
-                #    execdict_new = without_keys(execdict, secretkey)
-                #    blob = steam.blob_serialize(execdict_new)
-                #    bloblen = len(blob)
-                #    log.debug("Blob length: " + str(bloblen))
-                #    innerkey = binascii.a2b_hex("10231230211281239191238542314233")
-                #    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344")
-                #    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
-                #    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
-                #    blob_signature = steam.sign_message(innerkey, blob_encrypted)
-                #    blob_encrypted_len = 10 + len(blob_encrypted) + 20
-                #    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
-                #    currtime = time.time()
-                #    outerIV = binascii.a2b_hex("92183129534234231231312123123353")
-                #    steamid = binascii.a2b_hex("0000" + "80808000" + "00000000")
-                #    #steamid = binascii.a2b_hex("0000" + "0b000000" + "00000000")
-                #    #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
-                #    bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
-                #    #bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
-                #    servers = bin_ip + bin_ip
-                #    times = steam.unixtime_to_steamtime(currtime) + steam.unixtime_to_steamtime(currtime + (60*60*24*28))
-                #    subheader = innerkey + steamid + servers + times
-                #    subheader_encrypted = steam.aes_encrypt(key, outerIV, subheader)
-                #    #if self.config["tgt_version"] == "1" :
-                #    if globalvars.tgt_version == "1" :
-                #        subheader_encrypted = "\x00\x01" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
-                #        log.debug(clientid + "TGT Version: 1") #v2 Steam
-                #    #elif self.config["tgt_version"] == "2" :
-                #    elif globalvars.tgt_version == "2" :
-                #        subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
-                #        log.debug(clientid + "TGT Version: 2") #v3 Steam
-                #    else :
-                #        subheader_encrypted = "\x00\x02" + outerIV + "\x00\x36\x00\x40" + subheader_encrypted
-                #        log.debug(clientid + "TGT Version: 2")
-                #    with open("files/users/" + username + ".py", 'r') as f:
-                #        userblobstr = f.read()
-                #        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                #    unknown_part = "\x01\x68" + ("\xff" * 0x168) #THE ACTUAL TICKET!!!
-                #    ticket = subheader_encrypted + unknown_part + blob_encrypted
-                #    ticket_signed = ticket + steam.sign_message(innerkey, ticket)
-                #    if wrongpass == "1" :
-                #        tgt_command = "\x02"
-                #    else :
-                #        tgt_command = "\x00" # AuthenticateAndRequestTGT command
-                #    steamtime = steam.unixtime_to_steamtime(time.time())
-                #    ticket_full = tgt_command + steamtime + "\x00\xd2\x49\x6b\x00\x00\x00\x00" + struct.pack(">L", len(ticket_signed)) + ticket_signed
-                #    self.socket.send(ticket_full)
+                        #print(bloblen)
                     
                 else :
                     log.info(clientid + "Unknown user: " + username)
@@ -333,228 +2638,233 @@ class authserver(threading.Thread):
                     padding = "\x00" * 1222
                     ticket_full = tgt_command + steamtime + padding
                     self.socket.send(ticket_full)
-
-            elif len(command) >= 256 :
-                #print(binascii.b2a_hex(command[0:3]))
-                if binascii.b2a_hex(command[0:1]) == "10" : #Change password
-                    #log.info(clientid + "Change password")
-                    
-                    ticket_full = binascii.b2a_hex(command)
-                    command = ticket_full[0:2]
-                    ticket_len = ticket_full[2:6]
-                    tgt_ver = ticket_full[6:10]
-                    data1_len = ticket_full[10:14]
-                    username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
-                    
-                    log.info(clientid + "Password change requested for: " + username)
-                    
-                    userblob = {}
-                    if (os.path.isfile("files/users/" + username + ".py")) :
-                        with open("files/users/" + username + ".py", 'r') as f:
-                            userblobstr = f.read()
-                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                    personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
-                    #print(personalsalt)
-                    self.socket.send(personalsalt) #NEW SALT PER USER
-                    blobtext = self.socket.recv_withlen()
-                    key = binascii.a2b_hex("10231230211281239191238542314233")
-                    IV = binascii.a2b_hex("12899c8312213a123321321321543344")
-                    crypted_blob = blobtext[10:]
-                    if repr(steam.verify_message(key, crypted_blob)) :
-                        plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
-                        blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
-                        blob_len = len(plaintext) - 16 - blob_len
-                        blob = steam.blob_unserialize(plaintext[16:-blob_len])
-                        #print(blob)
-                        #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
-                        #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
-                        if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
-                            userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
-                            userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
-                            if (os.path.isfile("files/users/" + username + ".py")) :
-                                with open("files/users/" + username + ".py", 'w') as userblobfile :
-                                    userblobfile.write("user_registry = ")
-                                    userblobfile.write(str(userblob))                              
-                                log.info(clientid + "Password changed for: " + username)
-                                self.socket.send("\x00")
-                            else :
-                                log.warn(clientid + "SADB file error for: " + username)
-                                self.socket.send("\x01")
+            elif command[0] == "\x10" : #Change password
+                #log.info(clientid + "Change password")
+                
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Password change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                #print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[10:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    #print(blob)
+                    #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username)
+                            self.socket.send("\x00")
                         else :
-                            log.warn(clientid + "Password change failed for: " + username)
+                            log.warn(clientid + "SADB file error for: " + username)
                             self.socket.send("\x01")
                     else :
                         log.warn(clientid + "Password change failed for: " + username)
                         self.socket.send("\x01")
-                elif binascii.b2a_hex(command[0:1]) == "11" : #Change question
-                    ticket_full = binascii.b2a_hex(command)
-                    command = ticket_full[0:2]
-                    ticket_len = ticket_full[2:6]
-                    tgt_ver = ticket_full[6:10]
-                    data1_len = ticket_full[10:14]
-                    username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
-                    
-                    log.info(clientid + "Secret question change requested for: " + username)
-                    
-                    userblob = {}
-                    if (os.path.isfile("files/users/" + username + ".py")) :
-                        with open("files/users/" + username + ".py", 'r') as f:
-                            userblobstr = f.read()
-                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                    personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
-                    #print(personalsalt)
-                    self.socket.send(personalsalt) #NEW SALT PER USER
-                    blobtext = self.socket.recv_withlen()
-                    key = binascii.a2b_hex("10231230211281239191238542314233")
-                    IV = binascii.a2b_hex("12899c8312213a123321321321543344")
-                    crypted_blob = blobtext[10:]
-                    if repr(steam.verify_message(key, crypted_blob)) :
-                        plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
-                        blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
-                        blob_len = len(plaintext) - 16 - blob_len
-                        blob = steam.blob_unserialize(plaintext[16:-blob_len])
-                        #print(blob)
-                        #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
-                        #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
-                        if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
-                            userblob['\x05\x00\x00\x00'][username]['\x03\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
-                            userblob['\x05\x00\x00\x00'][username]['\x04\x00\x00\x00'] = blob["\x04\x00\x00\x00"]
-                            userblob['\x05\x00\x00\x00'][username]['\x05\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
-                            if (os.path.isfile("files/users/" + username + ".py")) :
-                                with open("files/users/" + username + ".py", 'w') as userblobfile :
-                                    userblobfile.write("user_registry = ")
-                                    userblobfile.write(str(userblob))                              
-                                log.info(clientid + "Secret question changed for: " + username)
-                                self.socket.send("\x00")
-                            else :
-                                log.warn(clientid + "SADB file error for: " + username)
-                                self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Password change failed for: " + username)
+                    self.socket.send("\x01")
+            elif command[0] == "\x11" : #Change question
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Secret question change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                #print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[10:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    #print(blob)
+                    #print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    #print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x03\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x04\x00\x00\x00'] = blob["\x04\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x05\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Secret question changed for: " + username)
+                            self.socket.send("\x00")
                         else :
-                            log.warn(clientid + "Secret question change failed for: " + username)
+                            log.warn(clientid + "SADB file error for: " + username)
                             self.socket.send("\x01")
                     else :
                         log.warn(clientid + "Secret question change failed for: " + username)
                         self.socket.send("\x01")
-                elif binascii.b2a_hex(command[0:1]) == "12" : #Change email
-                    log.info(clientid + "Change email")
-                    ticket_full = binascii.b2a_hex(command)
-                    command = ticket_full[0:2]
-                    ticket_len = ticket_full[2:6]
-                    tgt_ver = ticket_full[6:10]
-                    data1_len = ticket_full[10:14]
-                    data1_len = int(data1_len, 16) * 2
-                    userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
-                    username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
-                    ticket_len = int(ticket_len, 16) * 2
-                    ticket = ticket_full[2:ticket_len + 2]
-                    postticketdata = ticket_full[2 + ticket_len + 4:]
-                    key = binascii.a2b_hex("10231230211281239191238542314233")
-                    iv = binascii.a2b_hex(postticketdata[0:32])
-                    encdata_len = int(postticketdata[36:40], 16) * 2
-                    encdata = postticketdata[40:40 + encdata_len]
-                    decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
-                    decodedmessage = binascii.a2b_hex(decodedmessage)
-                    username_len_new = struct.unpack("<H", decodedmessage[0:2])
-                    username_len_new = (2 + username_len_new[0]) * 2
-                    header = username_len_new + 8
-                    blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
-                    blob_len = (blob_len[0])
-                    blob = (decodedmessage[header:header + blob_len])
-                    padding_byte = blob[-1:]
-                    padding_int = struct.unpack(">B", padding_byte)
-                    new_email_addr = blob[:-padding_int[0]]
-                    new_email_addr = new_email_addr + "\x00"
-                    
-                    userblob = {}
+                else :
+                    log.warn(clientid + "Secret question change failed for: " + username)
+                    self.socket.send("\x01")
+            elif command[0] == "\x12" : #Change email
+                log.info(clientid + "Change email")
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                new_email_addr = blob[:-padding_int[0]]
+                new_email_addr = new_email_addr + "\x00"
+                
+                userblob = {}
+                execdict_new = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                new_email = {}
+                new_email = {"\x0b\x00\x00\x00": new_email_addr}
+                userblob.update(new_email)
+                with open("files/users/" + username + ".py", 'w') as g:
+                    g.write("user_registry = " + str(userblob))
+                secretkey = {'\x05\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                execdict_new = without_keys(userblob, secretkey)
+                #print(userblob)
+                #print(execdict_new)
+                blob = steam.blob_serialize(execdict_new)
+                #print(blob)
+                bloblen = len(blob)
+                log.debug("Blob length: " + str(bloblen))
+                innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                #innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                innerIV = userIV
+                blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+                ticket = ticket + blob_encrypted
+                ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                self.socket.send("\x00" + blob_encrypted + blob_signature)
+            elif command[0] == "\x05" : #Subscribe
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                blobnew = steam.blob_unserialize(decodedmessage[header:header + blob_len])
+                log.info(clientid + "Subscribe to package " + str(struct.unpack("<L", blobnew["\x01\x00\x00\x00"])[0]))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    execdict = {}
                     execdict_new = {}
-                    if (os.path.isfile("files/users/" + username + ".py")) :
-                        with open("files/users/" + username + ".py", 'r') as f:
-                            userblobstr = f.read()
-                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                    personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
-                    new_email = {}
-                    new_email = {"\x0b\x00\x00\x00": new_email_addr}
-                    userblob.update(new_email)
-                    with open("files/users/" + username + ".py", 'w') as g:
-                        g.write("user_registry = " + str(userblob))
-                    secretkey = {'\x05\x00\x00\x00'}
-                    def without_keys(d, keys) :
-                        return {x: d[x] for x in d if x not in keys}
-                    execdict_new = without_keys(userblob, secretkey)
-                    #print(userblob)
-                    #print(execdict_new)
-                    blob = steam.blob_serialize(execdict_new)
-                    #print(blob)
-                    bloblen = len(blob)
-                    log.debug("Blob length: " + str(bloblen))
-                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                    #innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                    innerIV = userIV
-                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
-                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
-                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
-                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
-                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
-                    ticket = ticket + blob_encrypted
-                    ticket_signed = ticket + steam.sign_message(innerkey, ticket)
-                    self.socket.send("\x00" + blob_encrypted + blob_signature)
-                elif binascii.b2a_hex(command[0:1]) == "05" : #Subscribe
-                    log.info(clientid + "Subscribe to package")
-                    ticket_full = binascii.b2a_hex(command)
-                    command = ticket_full[0:2]
-                    ticket_len = ticket_full[2:6]
-                    tgt_ver = ticket_full[6:10]
-                    data1_len = ticket_full[10:14]
-                    data1_len = int(data1_len, 16) * 2
-                    userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
-                    username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
-                    ticket_len = int(ticket_len, 16) * 2
-                    ticket = ticket_full[2:ticket_len + 2]
-                    postticketdata = ticket_full[2 + ticket_len + 4:]
-                    key = binascii.a2b_hex("10231230211281239191238542314233")
-                    iv = binascii.a2b_hex(postticketdata[0:32])
-                    encdata_len = int(postticketdata[36:40], 16) * 2
-                    encdata = postticketdata[40:40 + encdata_len]
-                    decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
-                    decodedmessage = binascii.a2b_hex(decodedmessage)
-                    username_len_new = struct.unpack("<H", decodedmessage[0:2])
-                    username_len_new = (2 + username_len_new[0]) * 2
-                    header = username_len_new + 8
-                    blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
-                    blob_len = (blob_len[0])
-                    blob = (decodedmessage[header:header + blob_len])
-                    padding_byte = blob[-1:]
-                    padding_int = struct.unpack(">B", padding_byte)
-                    blobnew = steam.blob_unserialize(decodedmessage[header:header + blob_len])
-                    #------------------------------------------------------------------
-                    if (os.path.isfile("files/users/" + username + ".py")) :
-                        execdict = {}
-                        execdict_new = {}
-                        with open("files/users/" + username + ".py", 'r') as f:
-                            userblobstr = f.read()
-                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                        steamtime = steam.unixtime_to_steamtime(time.time())
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    if "\x02\x00\x00\x00" in blobnew :
                         new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': steamtime, '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x00\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}
                         new_buy = {blobnew["\x01\x00\x00\x00"]: blobnew["\x02\x00\x00\x00"]}
-                        receipt_dict = {}
-                        receipt_dict_01 = {}
-                        receipt_sub_dict = {}
-                        subid = new_buy.keys()[0]
-                        execdict["\x07\x00\x00\x00"].update(new_sub)
-                        #pprint.pprint(new_sub)
-                        #pprint.pprint(new_buy)
-                        #pprint.pprint(subid)
-                        if new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" or new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
+                    else :
+                        log.debug(clientid + "Subscribing to default subscription")
+                        new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': steamtime, '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x01\x00', '\x05\x00\x00\x00': '\x01', '\x06\x00\x00\x00': '\x00\x00'}}
+                        new_buy = {blobnew["\x01\x00\x00\x00"]: {}} #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                    receipt_dict = {}
+                    receipt_dict_01 = {}
+                    receipt_sub_dict = {}
+                    subid = new_buy.keys()[0]
+                    execdict["\x07\x00\x00\x00"].update(new_sub)
+                    #pprint.pprint(new_sub)
+                    #pprint.pprint(new_buy)
+                    #pprint.pprint(subid)
+                    if "\x02\x00\x00\x00" in blobnew :
+                        #if new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" or new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
+                        if new_buy[subid]['\x01\x00\x00\x00'] == "\x02": #PREPURCHASED
                             receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
-                            receipt_sub_dict["\x02\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00"
+                            #receipt_sub_dict["\x02\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00" #should be 8 digit hash of key, FIX ME
+                            receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]['\x02\x00\x00\x00']['\x02\x00\x00\x00'] + "\x00" #saving key for now for verification
                             receipt_dict_01["\x01\x00\x00\x00"] = "\x06"
                             receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
                             receipt_dict[subid] = receipt_dict_01
-                        else :
+                        elif new_buy[subid]['\x01\x00\x00\x00'] == "\x01": #PAYMENTCARD
                             receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
                             receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][12:]
                             receipt_sub_dict["\x03\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x03\x00\x00\x00"]
@@ -574,301 +2884,366 @@ class authserver(threading.Thread):
                             receipt_dict_01["\x01\x00\x00\x00"] = "\x05"
                             receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
                             receipt_dict[subid] = receipt_dict_01
-                        new_buy.clear()
-                        execdict["\x0f\x00\x00\x00"].update(receipt_dict)
-                        with open("files/users/" + username + ".py", 'w') as g:
-                            g.write("user_registry = " + str(execdict))
-                        secretkey = {'\x05\x00\x00\x00'}
-                        def without_keys(d, keys) :
-                            return {x: d[x] for x in d if x not in keys}
-                        execdict_new = without_keys(execdict, secretkey)
-                        #print(execdict)
-                        #print(execdict_new)
-                        blob = steam.blob_serialize(execdict_new)
-                        #print(blob)
-                        bloblen = len(blob)
-                        log.debug("Blob length: " + str(bloblen))
-                        innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
-                        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
-                        blob_signature = steam.sign_message(innerkey, blob_encrypted)
-                        blob_encrypted_len = 10 + len(blob_encrypted) + 20
-                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
-                        self.socket.send("\x00" + blob_encrypted)
-                elif binascii.b2a_hex(command[0:1]) == "09" : #Ticket Login
-                    ticket_full = binascii.b2a_hex(command)
-                    command = ticket_full[0:2]
-                    ticket_len = ticket_full[2:6]
-                    tgt_ver = ticket_full[6:10]
-                    data1_len = ticket_full[10:14]
-                    data1_len = int(data1_len, 16) * 2
-                    userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
-                    username_len = ticket_full[314:318]
-                    username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
-                    log.info(clientid + "Ticket login for: " + username)
-                    ticket_len = int(ticket_len, 16) * 2
-                    postticketdata = ticket_full[2 + ticket_len + 4:]
-                    key = binascii.a2b_hex("10231230211281239191238542314233")
-                    iv = binascii.a2b_hex(postticketdata[0:32])
-                    encdata_len = int(postticketdata[36:40], 16) * 2
-                    encdata = postticketdata[40:40 + encdata_len]
-                    decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
-                    #------------------------------------------------------------------
-                    if (os.path.isfile("files/users/" + username + ".py")) :
-                        #self.socket.send("\x00")
-                        # create login ticket
-                        execdict = {}
-                        execdict_new = {}
-                        with open("files/users/" + username + ".py", 'r') as f:
-                            userblobstr = f.read()
-                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                        for sub_dict in execdict:
-                            if sub_dict == "\x07\x00\x00\x00":
-                                for sub_sub_dict in execdict[sub_dict]:
-                                    if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x00\x00":
-                                        execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
-                                        execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x01"
-                                        execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
-                        with open("files/users/" + username + ".py", 'w') as g:
-                            g.write("user_registry = " + str(execdict))
-                        secretkey = {'\x05\x00\x00\x00'}
-                        def without_keys(d, keys) :
-                            return {x: d[x] for x in d if x not in keys}
-                        execdict_new = without_keys(execdict, secretkey)
-                        #print(execdict)
-                        #print(execdict_new)
-                        blob = steam.blob_serialize(execdict_new)
-                        #print(blob)
-                        bloblen = len(blob)
-                        log.debug("Blob length: " + str(bloblen))
-                        innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
-                        blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
-                        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
-                        blob_signature = steam.sign_message(innerkey, blob_encrypted)
-                        blob_encrypted_len = 10 + len(blob_encrypted) + 20
-                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
-                        self.socket.send("\x00" + blob_encrypted)
-                        
-                        execdict = {}
-                        with open("files/users/" + username + ".py", 'r') as f:
-                            userblobstr = f.read()
-                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                        for sub_dict in execdict:
-                            if sub_dict == "\x07\x00\x00\x00":
-                                for sub_sub_dict in execdict[sub_dict]:
-                                    if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x01\x00":
-                                        #execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
-                                        execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x00"
-                                        #execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
-                        with open("files/users/" + username + ".py", 'w') as g:
-                            g.write("user_registry = " + str(execdict))
-                else :
-                    log.debug(clientid + "Unknown command: " + binascii.b2a_hex(command[0:1])) #04 logoff
-                    self.socket.send("\x01")
-            elif len(command) == 1 :
-                if command == "\x1d" or command == "\x1e" : #Check username - new user
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
-                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
-                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-
-                    reply = self.socket.recv_withlen()
-                
-                    RSAdata = reply[2:130]
-                    datalength = struct.unpack(">L", reply[130:134])[0]
-                    cryptedblob_signature = reply[134:136]
-                    cryptedblob_length = reply[136:140]
-                    cryptedblob_slack = reply[140:144]
-                    cryptedblob = reply[144:]
-                
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
-                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
-                    IV = cryptedblob[4:20]
-                    ciphertext = cryptedblob[20:-20]
-                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
-                    plaintext = plaintext[0:plaintext_length]
-                    #print(plaintext)
-                    plainblob = steam.blob_unserialize(plaintext)
-                    #print(plainblob)
-                    username = plainblob['\x01\x00\x00\x00']
-                    username_str = username.rstrip('\x00')
-                    #print(len(username_str))
-                    log.info(clientid + "New user: check username exists: " + username_str)
-                    if (os.path.isfile("files/users/" + username_str + ".py")) :
-                        log.warn(clientid + "New user: username already exists")
-                        self.socket.send("\xff")#not working
                     else :
-                        log.info(clientid + "New user: username not found")
-                        self.socket.send("\x00")
-                elif command == "\x22" : #Check email - new user
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
-                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
-                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-
-                    reply = self.socket.recv_withlen()
-                
-                    RSAdata = reply[2:130]
-                    datalength = struct.unpack(">L", reply[130:134])[0]
-                    cryptedblob_signature = reply[134:136]
-                    cryptedblob_length = reply[136:140]
-                    cryptedblob_slack = reply[140:144]
-                    cryptedblob = reply[144:]
-                
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
-                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
-                    IV = cryptedblob[4:20]
-                    ciphertext = cryptedblob[20:-20]
-                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
-                    plaintext = plaintext[0:plaintext_length]
-                    #print(plaintext)
-                    plainblob = steam.blob_unserialize(plaintext)
-                    #print(plainblob)
-                    email = plainblob['\x01\x00\x00\x00']
-                    email_str = email.rstrip('\x00')
-                    #print(len(username_str))
-                    log.info(clientid + "New user: check email exists: " + email_str)
-                    email_exists = False
-                    for file in os.listdir("files/users/"):
-                        if file.endswith("py"):
-                            with open("files/users/" + file, 'r') as f:
-                                userblobstr = f.read()
-                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
-                            email_addr = userblob['\x0b\x00\x00\x00']
-                            if email_addr.rstrip('\x00') == email_str :
-                                email_exists = True
-                                break
-                    if email_exists == True  :
-                        log.warn(clientid + "New user: email already in use")
-                        self.socket.send("\xff")#not working
-                    else :
-                        log.info(clientid + "New user: email ok to use")
-                        self.socket.send("\x00")
-                elif command == "\x01" : #New user
-                    log.info(clientid + "New user: Create user")
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
-                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
-                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-
-                    reply = self.socket.recv_withlen()
-                
-                    RSAdata = reply[2:130]
-                    datalength = struct.unpack(">L", reply[130:134])[0]
-                    cryptedblob_signature = reply[134:136]
-                    cryptedblob_length = reply[136:140]
-                    cryptedblob_slack = reply[140:144]
-                    cryptedblob = reply[144:]
-                
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
-                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
-                    IV = cryptedblob[4:20]
-                    ciphertext = cryptedblob[20:-20]
-                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
-                    plaintext = plaintext[0:plaintext_length]
-                    #print(plaintext)
-                    plainblob = steam.blob_unserialize(plaintext)
-                    #print(plainblob)
-                    
-                    username = plainblob['\x01\x00\x00\x00']
-                    username_str = username.rstrip('\x00')
-                    
-                    #invalid6 = {'\x06\x00\x00\x00'}
-                    #def without_keys(d, keys) :
-                    #    return {x: d[x] for x in d if x not in keys}
-                    
-                    #plainblob_fixed = without_keys(plainblob, invalid6)
-                    
-                    #dict6 = {}
-                    #dict6 = {'\x06\x00\x00\x00': {username_str: {'\x01\x00\x00\x00': '\x10\x20\x30\x40\x00\x00\x00\x00', '\x02\x00\x00\x00': '\x00\x01', '\x03\x00\x00\x00': {}}}}
-                    
-                    #plainblob_fixed.update(dict6)
-                    
-                    newsteamid = os.urandom(4) + "\x00\x00\x00\x00" #generate random steamId
-                    plainblob['\x06\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = newsteamid
-                    
-                    invalid7 = {'\x07\x00\x00\x00'}
+                        receipt_dict_01["\x01\x00\x00\x00"] = "\x07" #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                        receipt_dict_01["\x02\x00\x00\x00"] = {}
+                        receipt_dict[subid] = receipt_dict_01
+                    new_buy.clear()
+                    execdict["\x0f\x00\x00\x00"].update(receipt_dict)
+                    execdict_pprint = pprint.pformat(execdict)
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict_pprint))
+                    secretkey = {'\x05\x00\x00\x00'}
                     def without_keys(d, keys) :
                         return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    #print(execdict)
+                    #print(execdict_new)
+                    blob = steam.blob_serialize(execdict_new)
+                    #print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    self.socket.send("\x00" + blob_encrypted)
+            elif command[0] == "\x09" : #Ticket Login
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Ticket login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                #------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    #self.socket.send("\x00")
+                    # create login ticket
+                    execdict = {}
+                    execdict_new = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x00\x00":
+                                    execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x01"
+                                    execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    #print(execdict)
+                    #print(execdict_new)
+                    blob = steam.blob_serialize(execdict_new)
+                    #print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    self.socket.send("\x00" + blob_encrypted)
                     
-                    plainblob_fixed = without_keys(plainblob, invalid7)
-                    
-                    dict7 = {}
-                    dict7 = {'\x07\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\xe0\xe0\xe0\xe0\xe0\xe0\xe0\x00', '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x01\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}}
-                    
-                    plainblob_fixed.update(dict7)
-                    
-                    dictf = {}
-                    dictf = {'\x0f\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\x07', '\x02\x00\x00\x00': {}}}}
-                    
-                    plainblob_fixed.update(dictf)
-                        
-                    with open("files/users/" + username_str + ".py", 'w') as userblobfile :
-                        userblobfile.write("user_registry = ")
-                        userblobfile.write(str(plainblob_fixed))
-                    
+                    execdict = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x01\x00":
+                                    #execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x00"
+                                    #execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+            elif command[0] == "\x04" : #Logout
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "User " + username + " logged out")
+            elif command[0] == "\x0a" : #Request content ticket Steam v1
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Content login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                #------------------------------------------------------------------
+                
+                # Incompatible ContentTicket VersionNum
+                # u16SizeOfPlaintextClientReadableContentTicket
+                # Bad u16SizeOfAESEncryptedClientReadableContentTicket
+                
+                # u16SizeOfServerReadableContentTicket
+                
+                currtime = time.time()
+                
+                client_ticket = b"\x69" * 0x10 # key used for MAC signature
+                client_ticket += steam.unixtime_to_steamtime(currtime)            # TicketCreationTime
+                client_ticket += steam.unixtime_to_steamtime(currtime + 86400)    # TicketValidUntilTime
+                client_ticket += os.urandom(4) #struct.pack("<I", 1)
+                client_ticket += os.urandom(8) # struct.pack("<II", 1, 2)
+                client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                
+                server_ticket = b"\x55" * 0x80
+                
+                innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344")
+
+                client_ticket_encrypted = steam.aes_encrypt(key, innerIV, client_ticket) #steam.encrypt_with_pad(client_ticket, key, innerIV)
+
+                ticket = b"\x00\x02" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted
+                #ticket = b"\x00\x01" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted #FOR BETA 2003
+                ticket += struct.pack(">H", len(server_ticket)) + server_ticket
+                
+                #ticket_signed = ticket + hmac.digest(client_ticket[0:16], ticket, hashlib.sha1)
+                ticket_signed = ticket + hmac.new(client_ticket[0:16], ticket, hashlib.sha1).digest()
+                
+                self.socket.send(b"\x00\x01" + struct.pack(">I", len(ticket_signed)) + ticket_signed)
+            elif command[0] == "\x1d" or command[0] == "\x1e" : #Check username - new user
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                #print(len(username_str))
+                log.info(clientid + "New user: check username exists: " + username_str)
+                if (os.path.isfile("files/users/" + username_str + ".py")) :
+                    log.warn(clientid + "New user: username already exists")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: username not found")
                     self.socket.send("\x00")
-                elif command == "\x0e" :
-                    log.info(clientid + "command: Lost password - username check")
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
-                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-                    reply = self.socket.recv_withlen()
+            elif command[0] == "\x22" : #Check email - new user
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
+                email = plainblob['\x01\x00\x00\x00']
+                email_str = email.rstrip('\x00')
+                #print(len(username_str))
+                log.info(clientid + "New user: check email exists: " + email_str)
+                email_exists = False
+                for file in os.listdir("files/users/"):
+                    if file.endswith("py"):
+                        with open("files/users/" + file, 'r') as f:
+                            userblobstr = f.read()
+                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        email_addr = userblob['\x0b\x00\x00\x00']
+                        if email_addr.rstrip('\x00') == email_str :
+                            email_exists = True
+                            break
+                if email_exists == True  :
+                    log.warn(clientid + "New user: email already in use")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: email ok to use")
+                    self.socket.send("\x00")
+            elif command[0] == "\x01" : #New user
+                log.info(clientid + "New user: Create user")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                #signature = steam.rsa_sign_message(steam.network_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10] #modified for Steam '03 support
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                #print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                #print(plainblob)
                 
-                    RSAdata = reply[2:130]
-                    datalength = struct.unpack(">L", reply[130:134])[0]
-                    cryptedblob_signature = reply[134:136]
-                    cryptedblob_length = reply[136:140]
-                    cryptedblob_slack = reply[140:144]
-                    cryptedblob = reply[144:]
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
                 
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
-                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
-                    IV = cryptedblob[4:20]
-                    ciphertext = cryptedblob[20:-20]
-                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
-                    plaintext = plaintext[0:plaintext_length]
-                    print(plaintext)
-                    blobdict = steam.blob_unserialize(plaintext)
-                    print(blobdict)
-                    usernamechk = blobdict['\x01\x00\x00\x00']
-                    username_str = usernamechk.rstrip('\x00')
-                    if os.path.isfile("files/users/" + username_str + ".py") :
-                        self.socket.send("\x00")
-                    else :
-                        self.socket.send("\x01")
-                elif command == "\x0f" :
-                    log.info(clientid + "command: Lost password - reset")
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
-                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-                    reply = self.socket.recv_withlen()
+                #invalid6 = {'\x06\x00\x00\x00'}
+                #def without_keys(d, keys) :
+                #    return {x: d[x] for x in d if x not in keys}
                 
-                    RSAdata = reply[2:130]
-                    datalength = struct.unpack(">L", reply[130:134])[0]
-                    cryptedblob_signature = reply[134:136]
-                    cryptedblob_length = reply[136:140]
-                    cryptedblob_slack = reply[140:144]
-                    cryptedblob = reply[144:]
+                #plainblob_fixed = without_keys(plainblob, invalid6)
                 
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                #dict6 = {}
+                #dict6 = {'\x06\x00\x00\x00': {username_str: {'\x01\x00\x00\x00': '\x10\x20\x30\x40\x00\x00\x00\x00', '\x02\x00\x00\x00': '\x00\x01', '\x03\x00\x00\x00': {}}}}
+                
+                #plainblob_fixed.update(dict6)
+                
+                newsteamid = os.urandom(4) + "\x00\x00\x00\x00" #generate random steamId
+                plainblob['\x06\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = newsteamid
+                
+                invalid7 = {'\x07\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                
+                plainblob_fixed = without_keys(plainblob, invalid7)
+                
+                dict7 = {}
+                dict7 = {'\x07\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\xe0\xe0\xe0\xe0\xe0\xe0\xe0\x00', '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x01\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}}
+                
+                plainblob_fixed.update(dict7)
+                
+                dictf = {}
+                dictf = {'\x0f\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\x07', '\x02\x00\x00\x00': {}}}}
+                
+                plainblob_fixed.update(dictf)
+                
+                plainblob_fixed = pprint.pformat(plainblob_fixed)
+                    
+                with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                    userblobfile.write("user_registry = ")
+                    userblobfile.write(str(plainblob))
+                
+                self.socket.send("\x00")
+            elif command[0] == "\x0e" : #Check username - password reset
+                log.info(clientid + "Password reset: check username exists")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                print(plaintext)
+                blobdict = steam.blob_unserialize(plaintext)
+                print(blobdict)
+                usernamechk = blobdict['\x01\x00\x00\x00']
+                username_str = usernamechk.rstrip('\x00')
+                if os.path.isfile("files/users/" + username_str + ".py") :
+                    self.socket.send("\x00")
+                else :
+                    self.socket.send("\x01")
+            elif command[0] == "\x0f" : #Reset password
+                log.info(clientid + "Password reset by client")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
                     plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
                     IV = cryptedblob[4:20]
                     ciphertext = cryptedblob[20:-20]
@@ -883,61 +3258,1613 @@ class authserver(threading.Thread):
                         userblobstr = userblobfile.read()
                         userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
                     #print(userblob)
-                    personalsalt = userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00']
-                    #print(personalsalt)
-                    self.socket.send(personalsalt) #NEW SALT PER USER
+                    questionsalt = userblob['\x05\x00\x00\x00'][username_str]['\x05\x00\x00\x00']
+                    #print(questionsalt)
+                    self.socket.send(questionsalt) #USER'S QUESTION SALT
                     reply2 = self.socket.recv_withlen()
                 
-                    RSAdata = reply2[2:130]
-                    datalength = struct.unpack(">L", reply2[130:134])[0]
-                    cryptedblob_signature = reply2[134:136]
-                    cryptedblob_length = reply2[136:140]
-                    cryptedblob_slack = reply2[140:144]
-                    cryptedblob = reply2[144:]
-                
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
-                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
-                    IV = cryptedblob[4:20]
-                    ciphertext = cryptedblob[20:-20]
-                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
-                    plaintext = plaintext[0:plaintext_length]
-                    #print steam.blob_unserialize(plaintext)
+                    header = reply2[0:2]
+                    enc_len = reply2[2:6]
+                    zeros = reply2[6:10]
+                    blob_len = reply2[10:14]
+                    innerIV = reply2[14:30]
+                    enc_blob = reply2[30:-20]
+                    sig = reply2[-20:]
+                    dec_blob = steam.aes_decrypt(key, innerIV, enc_blob)
+                    padding_byte = dec_blob[-1:]
+                    padding_int = struct.unpack(">B", padding_byte)
+                    unser_blob = steam.blob_unserialize(dec_blob[:-padding_int[0]])
                     
-                    
-                elif command == "\x20" :
-                    log.info(clientid + "command: Lost password - email check")
-                elif command == "\x21" :
-                    log.info(clientid + "command: Lost password - product check")
+                    if unser_blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username_str]['\x04\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = unser_blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00'] = unser_blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username_str + ".py")) :
+                            with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username_str)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username_str)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username_str)
+                        self.socket.send("\x01")
                 else :
-                    # This is cheating. I've just cut'n'pasted the hex from the network_key. FIXME
-                    #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
-                    BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
-                    signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-                    self.socket.send(reply)
-
-                    reply = self.socket.recv_withlen()
-                
-                    RSAdata = reply[2:130]
-                    datalength = struct.unpack(">L", reply[130:134])[0]
-                    cryptedblob_signature = reply[134:136]
-                    cryptedblob_length = reply[136:140]
-                    cryptedblob_slack = reply[140:144]
-                    cryptedblob = reply[144:]
-                
-                    key = steam.get_aes_key(RSAdata, steam.network_key)
-                    log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                    log.warn(clientid + "Password change message could not be decrypted")
+                    self.socket.send("\x01")
+                    
+                reply = {}
+                reply2 = {}
+            elif command[0] == "\x20" : #Check email - password reset
+                log.info(clientid + "Password reset by email")
+                #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
                     plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
                     IV = cryptedblob[4:20]
                     ciphertext = cryptedblob[20:-20]
                     plaintext = steam.aes_decrypt(key, IV, ciphertext)
                     plaintext = plaintext[0:plaintext_length]
-                    #print steam.blob_unserialize(plaintext)
-                
-                    self.socket.send("\x00")
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    emailchk = blobdict['\x01\x00\x00\x00']
+                    email_str = emailchk.rstrip('\x00')
+                    email_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            email_addr = userblob['\x0b\x00\x00\x00']
+                            if email_addr.rstrip('\x00') == email_str :
+                                email_found = True
+                                break
+                    if email_found :
+                        self.socket.send("\x00")
+                    else :
+                        self.socket.send("\x01")
+            elif command[0] == "\x21" : #Check key - password reset
+                log.info(clientid + "Password reset by CD key")
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    #print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    #print(blobdict)
+                    keychk = blobdict['\x01\x00\x00\x00']
+                    key_str = keychk.rstrip('\x00')
+                    key_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            for sub in userblob["\x0f\x00\x00\x00"] :
+                                for prodcdkey in userblob["\x0f\x00\x00\x00"][sub]["\x01\x00\x00\x00"] :
+                                    if prodcdkey == "\x06" :
+                                        key = userblob["\x0f\x00\x00\x00"][sub]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][:-1]
+                                        if key == key_str :
+                                            key_found = True
+                                            break
+                    if key_found :
+                        self.socket.send("\x00")
+                    else :
+                        self.socket.send("\x01")
+            elif command[0] == "\x0b" : #Send CDR for v2 beta
+                if os.path.isfile("files/cache/secondblob.bin") :
+                    with open("files/cache/secondblob.bin", "rb") as f:
+                        blob = f.read()
+                elif os.path.isfile("files/2ndcdr.py") or os.path.isfile("files/secondblob.py"):
+                    if os.path.isfile("files/2ndcdr.orig") :
+                        #shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
+                        os.remove("files/2ndcdr.py")
+                        shutil.copy2("files/2ndcdr.orig","files/secondblob.py")
+                        os.remove("files/2ndcdr.orig")
+                    if os.path.isfile("files/2ndcdr.py"):
+                        shutil.copy2("files/2ndcdr.py","files/secondblob.py")
+                        os.remove("files/2ndcdr.py")
+                    with open("files/secondblob.py", "r") as g:
+                        file = g.read()
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            fileold = file
+                            file = file.replace(search, replace)
+                            if (search in fileold) and (replace in file) :
+                                print("Replaced " + info + " " + search + " with " + replace)
+                    #h = open("files/2ndcdr.py", "w")
+                    #h.write(file)
+                    #h.close()
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    #execfile("files/2ndcdr.py", execdict)
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                #if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 11"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 12"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    #cache_option = self.config["use_cached_blob"]
+                    #if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+                    
+                else :
+                    if os.path.isfile("files/secondblob.orig") :
+                        os.remove("files/secondblob.bin")
+                        shutil.copy2("files/secondblob.orig","files/secondblob.bin")
+                        os.remove("files/secondblob.orig")
+                    with open("files/secondblob.bin", "rb") as g:
+                        blob = g.read()
+                    
+                    if blob[0:2] == "\x01\x43":
+                        blob = zlib.decompress(blob[20:])
+                    blob2 = steam.blob_unserialize(blob)
+                    blob3 = steam.blob_dump(blob2)
+                    file = "blob = " + blob3
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        print "Fixing CDR 13"
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            file = file.replace(search, replace)
+                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                #if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 14"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 15"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    #h = open("files/secondblob.bin", "wb")
+                    #h.write(blob)
+                    #h.close()
+                    
+                    #g = open("files/secondblob.bin", "rb")
+                    #blob = g.read()
+                    #g.close()
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        #BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    #cache_option = self.config["use_cached_blob"]
+                    #if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+
+                checksum = SHA.new(blob).digest()
+
+                if checksum == command[1:] :
+                    log.info(clientid + "Client has matching checksum for secondblob")
+                    log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
+
+                    self.socket.send("\x00\x00\x00\x00")
+
+                else :
+                    log.info(clientid + "Client didn't match our checksum for secondblob")
+                    log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
+
+                    self.socket.send_withlen(blob, True) #false for not showing in log
             else :
-                log.warning(clientid + "Invalid command length: " + str(len(command)))
+                log.debug(clientid + "Unknown command: " + binascii.b2a_hex(command[0:1])) #23 ?
+                self.socket.send("\x01")
+                
+        elif command[1:5] == "\x00\x00\x00\x05" : #\x04 for 2007+ TEMP SOLUTION FOR DEFAULT SUBSCRIBE ISSUE - DELETE NOW!!!!!
+
+            log.debug(clientid + "Using 2007 auth protocol")
+            self.socket.send("\x00" + socket.inet_aton(self.address[0]))
+            log.debug((str(socket.inet_aton(self.address[0]))))
+            log.debug((str(socket.inet_ntoa(socket.inet_aton(self.address[0])))))
+
+            command = self.socket.recv_withlen()
+
+            if command[0] == "\x02" : #LOGIN
+            
+                usernamelen = struct.unpack(">H", command[1:3])[0]
+                log.debug(clientid + "Main login command: " + binascii.b2a_hex(command[0]))
+                userblob = {}
+
+                username = command[3:3 + usernamelen]
+                
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    # print(userblob)
+                    blocked = binascii.b2a_hex(userblob['\x0c\x00\x00\x00'])
+                    if blocked == "0001" :
+                        log.info(clientid + "Blocked user: " + username)
+                        self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                        command = self.socket.recv_withlen()
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        tgt_command = "\x04" #BLOCKED
+                        padding = "\x00" * 1222
+                        ticket_full = tgt_command + steamtime + padding
+                        self.socket.send(ticket_full)
+                    else :
+                        personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                        # print(personalsalt)
+                        self.socket.send(personalsalt) #NEW SALT PER USER
+                        command = self.socket.recv_withlen()
+                        key = userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #password hash generated by client on user creation, passwordCypherRijndaelKey/authenticationRijndaelKey in TINserver
+                        # print(binascii.b2a_hex(key))
+                        IV = command[0:16]
+                        # print(binascii.b2a_hex(IV))
+                        encrypted = command[20:36]
+                        # print(binascii.b2a_hex(encrypted))
+                        decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, IV, encrypted))
+                        log.debug(clientid + "Authentication package: " + decodedmessage)
+                
+                        if not decodedmessage.endswith("04040404") :
+                            wrongpass = "1"
+                            log.info(clientid + "Incorrect password entered for: " + username)
+                        else :
+                            wrongpass = "0"                
+                
+                        # create login ticket
+                        execdict = {}
+                        execdict_new = {}
+                        execdict_new2 = {}
+                        with open("files/users/" + username + ".py", 'r') as f:
+                            userblobstr = f.read()
+                            execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        secretkey = {'\x05\x00\x00\x00'}
+                        def without_keys(d, keys) :
+                            return {x: d[x] for x in d if x not in keys}
+                        execdict_new = without_keys(execdict, secretkey)
+                        secretkey2 = {'\x0f\x00\x00\x00'}
+                        def without_keys(d, keys) :
+                            return {x: d[x] for x in d if x not in keys}
+                        execdict_new2 = without_keys(execdict_new, secretkey2)
+                        # print(execdict)
+                        # print(execdict_new)
+                        blob = steam.blob_serialize(execdict)
+                        if globalvars.steamui_ver < 24:
+                            blob = steam.blob_serialize(execdict_new2)
+                        else:
+                            blob = steam.blob_serialize(execdict_new)
+                        # print(blob)
+                        bloblen = len(blob)
+                        log.debug("Blob length: " + str(bloblen))
+                        innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                        innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                        blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                        blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                        blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                        blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                        currtime = time.time()
+                        outerIV = binascii.a2b_hex("92183129534234231231312123123353")
+                        # steamid = binascii.a2b_hex("ffff" + "ffffffff" + "ffffffff")
+                        steamUniverse = struct.pack(">H", int(self.config["universe"]))
+                        steamid = steamUniverse + userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00']
+                        # servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
+                        # authport = struct.pack("<L", int(port))
+                        if self.config["public_ip"] != "0.0.0.0" :
+                            bin_ip = steam.encodeIP((self.config["public_ip"], self.config["validation_port"]))
+                        else :
+                            bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
+                        # bin_ip = steam.encodeIP(("172.21.0.20", "27039"))
+                        servers = bin_ip + bin_ip
+                        times = steam.unixtime_to_steamtime(currtime) + steam.unixtime_to_steamtime(currtime + (60*60*24*28))
+                        subheader = innerkey + steamid + servers + times
+                        subheader_encrypted = steam.aes_encrypt(key, outerIV, subheader)
+                        subhead_decr_len = "\x00\x36"
+                        subhead_encr_len = "\x00\x40"
+                        if globalvars.tgt_version == "1" : #nullData1
+                            subheader_encrypted = "\x00\x01" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted #TTicket_SubHeader (EncrData)
+                            log.debug(clientid + "TGT Version: 1") #v1/v2 Steam
+                        elif globalvars.tgt_version == "2" :
+                            subheader_encrypted = "\x00\x02" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted
+                            log.debug(clientid + "TGT Version: 2") #v3 Steam
+                        else :
+                            subheader_encrypted = "\x00\x02" + outerIV + subhead_decr_len + subhead_encr_len + subheader_encrypted
+                            log.debug(clientid + "TGT Version: 2") #Assume v3 Steam
+                        clientIP = socket.inet_aton(self.address[0])
+                        publicIP = clientIP[::-1]
+                        # subcommand3 = "\x00\x00\x00\x00"
+                        data1_len_str = "\x00\x80"
+                        # empty1 = ("\x00" * 0x80) #TTicketHeader unknown encrypted
+                        data1 = username + username + "\x00\x01" + publicIP + clientIP + servers + key + times
+                        data1_len_empty = int(0x80 * 2) - len(binascii.b2a_hex(data1))
+                        data1_full = data1 + ("\x00" * (data1_len_empty / 2))
+                        empty3 = ("\x00" * 0x80) #unknown encrypted - RSA sig?
+                        username_len = len(username)
+                        # username_len_packed = struct.pack(">H", 50 + username_len)
+                        accountId = userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00'][0:16] #SteamID
+                        data2 = struct.pack(">L", len(username))
+                        if globalvars.tgt_version == "1" :
+                            subcommand1 = "\x00\x01" #for TGT v1
+                            subcommand2 = "" #missing for TGT v1
+                            empty2_dec_len = "\x00\x42"
+                            empty2_enc_len = "\x00\x50"
+                            # empty2 = ("\x00" * 0x50) #160 chars long (80 int bytes) unknown encrypted
+                            data2_len_empty = int(0x50 * 2) - len(binascii.b2a_hex(data2))
+                            data2_full = data2 + ("\x00" * (data2_len_empty / 2))
+                        elif globalvars.tgt_version == "2" :
+                            subcommand1 = "\x00\x02" #for TGT v2
+                            subcommand2 = "\x00\x10" #steamID+clientIPaddress TGT v2 only
+                            subcommand2 = subcommand2 + accountId + clientIP
+                            empty2_dec_len = "\x00\x52"
+                            empty2_enc_len = "\x00\x60"
+                            # empty2 = ("\x00" * 0x60) #192 chars long (96 int bytes) unknown encrypted
+                            data2_len_empty = int(0x60 * 2) - len(binascii.b2a_hex(data2))
+                            data2_full = data2 + ("\x00" * (data2_len_empty / 2))
+                        else :
+                            subcommand1 = "\x00\x02" #assume TGT v2
+                            subcommand2 = "\x00\x10" #steamID+clientIPaddress TGT v2 only
+                            subcommand2 = subcommand2 + accountId + clientIP
+                            empty2_dec_len = "\x00\x52"
+                            empty2_enc_len = "\x00\x60"
+                            # empty2 = ("\x00" * 0x60) #192 chars long (96 int bytes) unknown encrypted
+                            data2_len_empty = int(0x60 * 2) - len(binascii.b2a_hex(data2))
+                            data2_full = data2 + ("\x00" * (data2_len_empty / 2))
+                        
+                        # empty2 = username + empty2_empty[(len(username)):]
+                        real_ticket = subcommand1 + data1_len_str + data1_full + IV + empty2_dec_len + empty2_enc_len + data2_full + subcommand2 + empty3
+                        real_ticket_len = struct.pack(">H", len(real_ticket)) #TicketLen
+                        # ticket = subheader_encrypted + unknown_part + blob_encrypted
+                        ticket = subheader_encrypted + real_ticket_len + real_ticket + blob_encrypted
+                        
+                        ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                        
+                        if globalvars.steamui_ver < 24:
+                            if wrongpass == "1" :
+                                tgt_command = "\x00" #Incorrect password
+                            else :
+                                tgt_command = "\x01" #Authenticated # AuthenticateAndRequestTGT command
+                        else:
+                            # tgt_command = "\x03" #Clock-skew too far out
+                            if wrongpass == "1" :
+                                tgt_command = "\x02" #Incorrect password
+                            else :
+                                tgt_command = "\x00" #Authenticated # AuthenticateAndRequestTGT command
+                        steamtime = steam.unixtime_to_steamtime(time.time())
+                        clock_skew_tolerance = "\x00\xd2\x49\x6b\x00\x00\x00\x00"
+                        authenticate = tgt_command + steamtime + clock_skew_tolerance
+                        writeAccountInformation = struct.pack(">L", len(ticket_signed)) + ticket_signed #FULL TICKET (steamticket.bin)
+                        self.socket.send(authenticate + writeAccountInformation)
+                        # print(bloblen)
+                    
+                else :
+                    log.info(clientid + "Unknown user: " + username)
+                    self.socket.send("\x00\x00\x00\x00\x00\x00\x00\x00")
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    tgt_command = "\x01" #UNKNOWN USER
+                    padding = "\x00" * 1222
+                    ticket_full = tgt_command + steamtime + padding
+                    self.socket.send(ticket_full)
+            elif command[0] == "\x10" : #Change password
+                # log.info(clientid + "Change password")
+                
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Password change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                # print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[10:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    # print(blob)
+                    # print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    # print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username)
+                        self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Password change failed for: " + username)
+                    self.socket.send("\x01")
+            elif command[0] == "\x11" : #Change question
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                
+                log.info(clientid + "Secret question change requested for: " + username)
+                
+                userblob = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                # print(personalsalt)
+                self.socket.send(personalsalt) #NEW SALT PER USER
+                blobtext = self.socket.recv_withlen()
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                IV = binascii.a2b_hex("12899c8312213a123321321321543344")
+                crypted_blob = blobtext[10:]
+                if repr(steam.verify_message(key, crypted_blob)) :
+                    plaintext = steam.aes_decrypt(key, IV, crypted_blob[4:-4])
+                    blob_len = int(binascii.b2a_hex(plaintext[18:19]), 16)
+                    blob_len = len(plaintext) - 16 - blob_len
+                    blob = steam.blob_unserialize(plaintext[16:-blob_len])
+                    # print(blob)
+                    # print(binascii.b2a_hex(blob["\x01\x00\x00\x00"]))
+                    # print(binascii.b2a_hex(userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00']))
+                    if blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username]['\x01\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username]['\x03\x00\x00\x00'] = blob["\x02\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x04\x00\x00\x00'] = blob["\x04\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username]['\x05\x00\x00\x00'] = blob["\x03\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username + ".py")) :
+                            with open("files/users/" + username + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Secret question changed for: " + username)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Secret question change failed for: " + username)
+                        self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Secret question change failed for: " + username)
+                    self.socket.send("\x01")
+            elif command[0] == "\x12" : #Change email
+                log.info(clientid + "Change email")
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                new_email_addr = blob[:-padding_int[0]]
+                new_email_addr = new_email_addr + "\x00"
+                
+                userblob = {}
+                execdict_new = {}
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                personalsalt = userblob['\x05\x00\x00\x00'][username]['\x02\x00\x00\x00']
+                new_email = {}
+                new_email = {"\x0b\x00\x00\x00": new_email_addr}
+                userblob.update(new_email)
+                with open("files/users/" + username + ".py", 'w') as g:
+                    g.write("user_registry = " + str(userblob))
+                secretkey = {'\x05\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                execdict_new = without_keys(userblob, secretkey)
+                # print(userblob)
+                # print(execdict_new)
+                blob = steam.blob_serialize(execdict_new)
+                # print(blob)
+                bloblen = len(blob)
+                log.debug("Blob length: " + str(bloblen))
+                innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                # innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                innerIV = userIV
+                blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+                ticket = ticket + blob_encrypted
+                ticket_signed = ticket + steam.sign_message(innerkey, ticket)
+                self.socket.send("\x00" + blob_encrypted + blob_signature)
+            elif command[0] == "\x05" : #Subscribe
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                ticket_len = int(ticket_len, 16) * 2
+                ticket = ticket_full[2:ticket_len + 2]
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                decodedmessage = binascii.a2b_hex(decodedmessage)
+                username_len_new = struct.unpack("<H", decodedmessage[0:2])
+                username_len_new = (2 + username_len_new[0]) * 2
+                header = username_len_new + 8
+                blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+                blob_len = (blob_len[0])
+                blob = (decodedmessage[header:header + blob_len])
+                padding_byte = blob[-1:]
+                padding_int = struct.unpack(">B", padding_byte)
+                blobnew = steam.blob_unserialize(decodedmessage[header:header + blob_len])
+                log.info(clientid + "Subscribe to package " + str(struct.unpack("<L", blobnew["\x01\x00\x00\x00"])[0]))
+                # ------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    execdict = {}
+                    execdict_new = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    steamtime = steam.unixtime_to_steamtime(time.time())
+                    new_sub = {blobnew["\x01\x00\x00\x00"]: {'\x01\x00\x00\x00': steamtime, '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x00\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}
+                    if "\x02\x00\x00\x00" in blobnew :
+                        new_buy = {blobnew["\x01\x00\x00\x00"]: blobnew["\x02\x00\x00\x00"]}
+                    else :
+                        log.debug(clientid + "Subscribing to default subscription")
+                        new_buy = {blobnew["\x01\x00\x00\x00"]: {}} #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                    receipt_dict = {}
+                    receipt_dict_01 = {}
+                    receipt_sub_dict = {}
+                    subid = new_buy.keys()[0]
+                    execdict["\x07\x00\x00\x00"].update(new_sub)
+                    # pprint.pprint(new_sub)
+                    # pprint.pprint(new_buy)
+                    # pprint.pprint(subid)
+                    if "\x02\x00\x00\x00" in blobnew :
+                        # if new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "WONCDKey\x00" or new_buy[subid]['\x02\x00\x00\x00']['\x01\x00\x00\x00'] == "ValveCDKey\x00" :
+                        if new_buy[subid]['\x01\x00\x00\x00'] == "\x02": #PREPURCHASED
+                            receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                            # receipt_sub_dict["\x02\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00" #should be 8 digit hash of key, FIX ME
+                            receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]['\x02\x00\x00\x00']['\x02\x00\x00\x00'] + "\x00" #saving key for now for verification
+                            receipt_dict_01["\x01\x00\x00\x00"] = "\x06"
+                            receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                            receipt_dict[subid] = receipt_dict_01
+                        elif new_buy[subid]['\x01\x00\x00\x00'] == "\x01": #PAYMENTCARD
+                            receipt_sub_dict["\x01\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x01\x00\x00\x00"]
+                            receipt_sub_dict["\x02\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][12:]
+                            receipt_sub_dict["\x03\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x03\x00\x00\x00"]
+                            receipt_sub_dict["\x07\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x07\x00\x00\x00"]
+                            receipt_sub_dict["\x08\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x08\x00\x00\x00"]
+                            receipt_sub_dict["\x09\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x09\x00\x00\x00"]
+                            receipt_sub_dict["\x0a\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0a\x00\x00\x00"]
+                            receipt_sub_dict["\x0b\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0b\x00\x00\x00"]
+                            receipt_sub_dict["\x0c\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x0c\x00\x00\x00"]
+                            receipt_sub_dict["\x0d\x00\x00\x00"] = str(random.randint(111111, 999999)) + "\x00"
+                            receipt_sub_dict["\x0e\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x14\x00\x00\x00"]
+                            receipt_sub_dict["\x0f\x00\x00\x00"] = new_buy[subid]["\x02\x00\x00\x00"]["\x15\x00\x00\x00"]
+                            receipt_sub_dict["\x10\x00\x00\x00"] = datetime.datetime.now().strftime("%d/%m/%Y") + "\x00"
+                            receipt_sub_dict["\x11\x00\x00\x00"] = datetime.datetime.now().strftime("%H:%M:%S") + "\x00"
+                            receipt_sub_dict["\x12\x00\x00\x00"] = str(random.randint(11111111, 99999999)) + "\x00"
+                            receipt_sub_dict["\x13\x00\x00\x00"] = "\x00\x00\x00\x00"
+                            receipt_dict_01["\x01\x00\x00\x00"] = "\x05"
+                            receipt_dict_01["\x02\x00\x00\x00"] = receipt_sub_dict
+                            receipt_dict[subid] = receipt_dict_01
+                    else :
+                        receipt_dict_01["\x01\x00\x00\x00"] = "\x07" #SUBSCRIBE TO DEFAULT SUBSCRIPTION 0
+                        receipt_dict_01["\x02\x00\x00\x00"] = {}
+                        receipt_dict[subid] = receipt_dict_01
+                    new_buy.clear()
+                    execdict["\x0f\x00\x00\x00"].update(receipt_dict)
+                    execdict_pprint = pprint.pformat(execdict)
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict_pprint))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    # print(execdict)
+                    # print(execdict_new)
+                    blob = steam.blob_serialize(execdict_new)
+                    # print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    self.socket.send("\x00" + blob_encrypted)
+            elif command[0] == "\x09" : #Ticket Login
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Ticket login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                # ------------------------------------------------------------------
+                if (os.path.isfile("files/users/" + username + ".py")) :
+                    # self.socket.send("\x00")
+                    # create login ticket
+                    execdict = {}
+                    execdict_new = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x00\x00":
+                                    execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x01"
+                                    execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+                    secretkey = {'\x05\x00\x00\x00'}
+                    def without_keys(d, keys) :
+                        return {x: d[x] for x in d if x not in keys}
+                    execdict_new = without_keys(execdict, secretkey)
+                    # print(execdict)
+                    # print(execdict_new)
+                    blob = steam.blob_serialize(execdict_new)
+                    # print(blob)
+                    bloblen = len(blob)
+                    log.debug("Blob length: " + str(bloblen))
+                    innerkey = binascii.a2b_hex("10231230211281239191238542314233") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344") #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+                    blob_encrypted = steam.aes_encrypt(innerkey, innerIV, blob)
+                    blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+                    blob_signature = steam.sign_message(innerkey, blob_encrypted)
+                    blob_encrypted_len = 10 + len(blob_encrypted) + 20
+                    blob_encrypted = struct.pack(">L", blob_encrypted_len) + "\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+                    self.socket.send("\x00" + blob_encrypted)
+                    
+                    execdict = {}
+                    with open("files/users/" + username + ".py", 'r') as f:
+                        userblobstr = f.read()
+                        execdict = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    for sub_dict in execdict:
+                        if sub_dict == "\x07\x00\x00\x00":
+                            for sub_sub_dict in execdict[sub_dict]:
+                                if execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] == "\x01\x00":
+                                    # execdict[sub_dict][sub_sub_dict]["\x03\x00\x00\x00"] = "\x01\x00"
+                                    execdict[sub_dict][sub_sub_dict]["\x05\x00\x00\x00"] = "\x00"
+                                    # execdict[sub_dict][sub_sub_dict]["\x06\x00\x00\x00"] = "\x00\x00"
+                    with open("files/users/" + username + ".py", 'w') as g:
+                        g.write("user_registry = " + str(execdict))
+            elif command[0] == "\x04" : #Logout
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "User " + username + " logged out")
+            elif command[0] == "\x0a" : #Request content ticket Steam v1
+                ticket_full = binascii.b2a_hex(command)
+                command = ticket_full[0:2]
+                ticket_len = ticket_full[2:6]
+                tgt_ver = ticket_full[6:10]
+                data1_len = ticket_full[10:14]
+                data1_len = int(data1_len, 16) * 2
+                userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+                username_len = ticket_full[314:318]
+                username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)])
+                log.info(clientid + "Content login for: " + username)
+                ticket_len = int(ticket_len, 16) * 2
+                postticketdata = ticket_full[2 + ticket_len + 4:]
+                key = binascii.a2b_hex("10231230211281239191238542314233")
+                iv = binascii.a2b_hex(postticketdata[0:32])
+                encdata_len = int(postticketdata[36:40], 16) * 2
+                encdata = postticketdata[40:40 + encdata_len]
+                decodedmessage = binascii.b2a_hex(steam.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+                # ------------------------------------------------------------------
+                
+                # Incompatible ContentTicket VersionNum
+                # u16SizeOfPlaintextClientReadableContentTicket
+                # Bad u16SizeOfAESEncryptedClientReadableContentTicket
+                
+                # u16SizeOfServerReadableContentTicket
+                
+                currtime = time.time()
+                
+                client_ticket = b"\x69" * 0x10 # key used for MAC signature
+                client_ticket += steam.unixtime_to_steamtime(currtime)            # TicketCreationTime
+                client_ticket += steam.unixtime_to_steamtime(currtime + 86400)    # TicketValidUntilTime
+                client_ticket += os.urandom(4) #struct.pack("<I", 1)
+                client_ticket += os.urandom(8) # struct.pack("<II", 1, 2)
+                client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
+                
+                server_ticket = b"\x55" * 0x80
+                
+                innerIV  = binascii.a2b_hex("12899c8312213a123321321321543344")
+
+                client_ticket_encrypted = steam.aes_encrypt(key, innerIV, client_ticket) #steam.encrypt_with_pad(client_ticket, key, innerIV)
+
+                ticket = b"\x00\x02" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted
+                # ticket = b"\x00\x01" + innerIV + struct.pack(">HH", len(client_ticket), len(client_ticket_encrypted)) + client_ticket_encrypted #FOR BETA 2003
+                ticket += struct.pack(">H", len(server_ticket)) + server_ticket
+                
+                # ticket_signed = ticket + hmac.digest(client_ticket[0:16], ticket, hashlib.sha1)
+                ticket_signed = ticket + hmac.new(client_ticket[0:16], ticket, hashlib.sha1).digest()
+                
+                self.socket.send(b"\x00\x01" + struct.pack(">I", len(ticket_signed)) + ticket_signed)
+            elif command[0] == "\x1d" or command[0] == "\x1e" : #Check username - new user
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                # print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                # print(plainblob)
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                # print(len(username_str))
+                log.info(clientid + "New user: check username exists: " + username_str)
+                if (os.path.isfile("files/users/" + username_str + ".py")) :
+                    log.warn(clientid + "New user: username already exists")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: username not found")
+                    self.socket.send("\x00")
+            elif command[0] == "\x22" : #Check email - new user
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                # print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                # print(plainblob)
+                email = plainblob['\x01\x00\x00\x00']
+                email_str = email.rstrip('\x00')
+                # print(len(username_str))
+                log.info(clientid + "New user: check email exists: " + email_str)
+                email_exists = False
+                for file in os.listdir("files/users/"):
+                    if file.endswith("py"):
+                        with open("files/users/" + file, 'r') as f:
+                            userblobstr = f.read()
+                            userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                        email_addr = userblob['\x0b\x00\x00\x00']
+                        if email_addr.rstrip('\x00') == email_str :
+                            email_exists = True
+                            break
+                if email_exists == True  :
+                    log.warn(clientid + "New user: email already in use")
+                    self.socket.send("\xff")#not working
+                else :
+                    log.info(clientid + "New user: email ok to use")
+                    self.socket.send("\x00")
+            elif command[0] == "\x01" : #New user
+                log.info(clientid + "New user: Create user")
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                # signature = steam.rsa_sign_message(steam.network_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:144+datalength-10] #modified for Steam '03 support
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                # print(plaintext)
+                plainblob = steam.blob_unserialize(plaintext)
+                # print(plainblob)
+                
+                username = plainblob['\x01\x00\x00\x00']
+                username_str = username.rstrip('\x00')
+                
+                # invalid6 = {'\x06\x00\x00\x00'}
+                # def without_keys(d, keys) :
+                   # return {x: d[x] for x in d if x not in keys}
+                
+                # plainblob_fixed = without_keys(plainblob, invalid6)
+                
+                # dict6 = {}
+                # dict6 = {'\x06\x00\x00\x00': {username_str: {'\x01\x00\x00\x00': '\x10\x20\x30\x40\x00\x00\x00\x00', '\x02\x00\x00\x00': '\x00\x01', '\x03\x00\x00\x00': {}}}}
+                
+                # plainblob_fixed.update(dict6)
+                
+                newsteamid = os.urandom(4) + "\x00\x00\x00\x00" #generate random steamId
+                plainblob['\x06\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = newsteamid
+                
+                invalid7 = {'\x07\x00\x00\x00'}
+                def without_keys(d, keys) :
+                    return {x: d[x] for x in d if x not in keys}
+                
+                plainblob_fixed = without_keys(plainblob, invalid7)
+                
+                dict7 = {}
+                dict7 = {'\x07\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\xe0\xe0\xe0\xe0\xe0\xe0\xe0\x00', '\x02\x00\x00\x00': '\x00\x00\x00\x00\x00\x00\x00\x00', '\x03\x00\x00\x00': '\x01\x00', '\x05\x00\x00\x00': '\x00', '\x06\x00\x00\x00': '\x1f\x00'}}}
+                
+                plainblob_fixed.update(dict7)
+                
+                dictf = {}
+                dictf = {'\x0f\x00\x00\x00': {'\x00\x00\x00\x00': {'\x01\x00\x00\x00': '\x07', '\x02\x00\x00\x00': {}}}}
+                
+                plainblob_fixed.update(dictf)
+                
+                plainblob_fixed = pprint.pformat(plainblob_fixed)
+                    
+                with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                    userblobfile.write("user_registry = ")
+                    userblobfile.write(str(plainblob_fixed))
+                
+                self.socket.send("\x00")
+            elif command[0] == "\x0e" : #Check username - password reset
+                log.info(clientid + "Password reset: check username exists")
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                IV = cryptedblob[4:20]
+                ciphertext = cryptedblob[20:-20]
+                plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                plaintext = plaintext[0:plaintext_length]
+                print(plaintext)
+                blobdict = steam.blob_unserialize(plaintext)
+                print(blobdict)
+                usernamechk = blobdict['\x01\x00\x00\x00']
+                username_str = usernamechk.rstrip('\x00')
+                if os.path.isfile("files/users/" + username_str + ".py") :
+                    self.socket.send("\x00")
+                else :
+                    self.socket.send("\x01")
+            elif command[0] == "\x0f" : #Reset password
+                log.info(clientid + "Password reset by client")
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    # print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    # print(blobdict)
+                    usernamechk = blobdict['\x01\x00\x00\x00']
+                    username_str = usernamechk.rstrip('\x00')
+                    with open("files/users/" + username_str + ".py", 'r') as userblobfile:
+                        userblobstr = userblobfile.read()
+                        userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                    # print(userblob)
+                    questionsalt = userblob['\x05\x00\x00\x00'][username_str]['\x05\x00\x00\x00']
+                    # print(questionsalt)
+                    self.socket.send(questionsalt) #USER'S QUESTION SALT
+                    reply2 = self.socket.recv_withlen()
+                
+                    header = reply2[0:2]
+                    enc_len = reply2[2:6]
+                    zeros = reply2[6:10]
+                    blob_len = reply2[10:14]
+                    innerIV = reply2[14:30]
+                    enc_blob = reply2[30:-20]
+                    sig = reply2[-20:]
+                    dec_blob = steam.aes_decrypt(key, innerIV, enc_blob)
+                    padding_byte = dec_blob[-1:]
+                    padding_int = struct.unpack(">B", padding_byte)
+                    unser_blob = steam.blob_unserialize(dec_blob[:-padding_int[0]])
+                    
+                    if unser_blob["\x01\x00\x00\x00"] == userblob['\x05\x00\x00\x00'][username_str]['\x04\x00\x00\x00'] :
+                        userblob['\x05\x00\x00\x00'][username_str]['\x01\x00\x00\x00'] = unser_blob["\x03\x00\x00\x00"]
+                        userblob['\x05\x00\x00\x00'][username_str]['\x02\x00\x00\x00'] = unser_blob["\x02\x00\x00\x00"]
+                        if (os.path.isfile("files/users/" + username_str + ".py")) :
+                            with open("files/users/" + username_str + ".py", 'w') as userblobfile :
+                                userblobfile.write("user_registry = ")
+                                userblobfile.write(str(userblob))                              
+                            log.info(clientid + "Password changed for: " + username_str)
+                            self.socket.send("\x00")
+                        else :
+                            log.warn(clientid + "SADB file error for: " + username_str)
+                            self.socket.send("\x01")
+                    else :
+                        log.warn(clientid + "Password change failed for: " + username_str)
+                        self.socket.send("\x01")
+                else :
+                    log.warn(clientid + "Password change message could not be decrypted")
+                    self.socket.send("\x01")
+                    
+                reply = {}
+                reply2 = {}
+            elif command[0] == "\x20" : #Check email - password reset
+                log.info(clientid + "Password reset by email")
+                # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    # print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    # print(blobdict)
+                    emailchk = blobdict['\x01\x00\x00\x00']
+                    email_str = emailchk.rstrip('\x00')
+                    email_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            email_addr = userblob['\x0b\x00\x00\x00']
+                            if email_addr.rstrip('\x00') == email_str :
+                                email_found = True
+                                break
+                    if email_found :
+                        self.socket.send("\x00")
+                    else :
+                        self.socket.send("\x01")
+            elif command[0] == "\x21" : #Check key - password reset
+                log.info(clientid + "Password reset by CD key")
+                BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                signature = steam.rsa_sign_message_1024(steam.main_key_sign, BERstring)
+                reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+                self.socket.send(reply)
+                reply = self.socket.recv_withlen()
+            
+                RSAdata = reply[2:130]
+                datalength = struct.unpack(">L", reply[130:134])[0]
+                cryptedblob_signature = reply[134:136]
+                cryptedblob_length = reply[136:140]
+                cryptedblob_slack = reply[140:144]
+                cryptedblob = reply[144:]
+            
+                key = steam.get_aes_key(RSAdata, steam.network_key)
+                log.debug("Message verification:" + repr(steam.verify_message(key, cryptedblob)))
+                if repr(steam.verify_message(key, cryptedblob)) :
+                    plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
+                    IV = cryptedblob[4:20]
+                    ciphertext = cryptedblob[20:-20]
+                    plaintext = steam.aes_decrypt(key, IV, ciphertext)
+                    plaintext = plaintext[0:plaintext_length]
+                    # print(plaintext)
+                    blobdict = steam.blob_unserialize(plaintext)
+                    # print(blobdict)
+                    keychk = blobdict['\x01\x00\x00\x00']
+                    key_str = keychk.rstrip('\x00')
+                    key_found = False
+                    for file in os.listdir("files/users/"):
+                        if file.endswith("py"):
+                            with open("files/users/" + file, 'r') as f:
+                                userblobstr = f.read()
+                                userblob = ast.literal_eval(userblobstr[16:len(userblobstr)])
+                            for sub in userblob["\x0f\x00\x00\x00"] :
+                                for prodcdkey in userblob["\x0f\x00\x00\x00"][sub]["\x01\x00\x00\x00"] :
+                                    if prodcdkey == "\x06" :
+                                        key = userblob["\x0f\x00\x00\x00"][sub]["\x02\x00\x00\x00"]["\x02\x00\x00\x00"][:-1]
+                                        if key == key_str :
+                                            key_found = True
+                                            break
+                    if key_found :
+                        self.socket.send("\x00")
+                    else :
+                        self.socket.send("\x01")
+            elif command[0] == "\x0b" : #Send CDR for v2 beta
+                if os.path.isfile("files/cache/secondblob.bin") :
+                    with open("files/cache/secondblob.bin", "rb") as f:
+                        blob = f.read()
+                elif os.path.isfile("files/2ndcdr.py") or os.path.isfile("files/secondblob.py"):
+                    if os.path.isfile("files/2ndcdr.orig") :
+                        # shutil.copy2("files/2ndcdr.py","files/2ndcdr.orig")
+                        os.remove("files/2ndcdr.py")
+                        shutil.copy2("files/2ndcdr.orig","files/secondblob.py")
+                        os.remove("files/2ndcdr.orig")
+                    if os.path.isfile("files/2ndcdr.py"):
+                        shutil.copy2("files/2ndcdr.py","files/secondblob.py")
+                        os.remove("files/2ndcdr.py")
+                    with open("files/secondblob.py", "r") as g:
+                        file = g.read()
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            fileold = file
+                            file = file.replace(search, replace)
+                            if (search in fileold) and (replace in file) :
+                                print("Replaced " + info + " " + search + " with " + replace)
+                    # h = open("files/2ndcdr.py", "w")
+                    # h.write(file)
+                    # h.close()
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    # execfile("files/2ndcdr.py", execdict)
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                # if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 16"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 17"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    # cache_option = self.config["use_cached_blob"]
+                    # if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+                    
+                else :
+                    if os.path.isfile("files/secondblob.orig") :
+                        os.remove("files/secondblob.bin")
+                        shutil.copy2("files/secondblob.orig","files/secondblob.bin")
+                        os.remove("files/secondblob.orig")
+                    with open("files/secondblob.bin", "rb") as g:
+                        blob = g.read()
+                    
+                    if blob[0:2] == "\x01\x43":
+                        blob = zlib.decompress(blob[20:])
+                    blob2 = steam.blob_unserialize(blob)
+                    blob3 = steam.blob_dump(blob2)
+                    file = "blob = " + blob3
+                    
+                    for (search, replace, info) in globalvars.replacestringsCDR :
+                        print "Fixing CDR 18"
+                        fulllength = len(search)
+                        newlength = len(replace)
+                        missinglength = fulllength - newlength
+                        if missinglength < 0 :
+                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                        else :
+                            file = file.replace(search, replace)
+                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                    execdict = {}
+                    execdict_temp_01 = {}
+                    execdict_temp_02 = {}
+                    exec(file, execdict)
+                    
+                    for file in os.walk("files/custom"):
+                        for pyblobfile in file[2]:
+                            if (pyblobfile.endswith(".py") or pyblobfile.endswith(".bin")) and not pyblobfile == "2ndcdr.py" and not pyblobfile == "1stcdr.py" and not pyblobfile.startswith("firstblob") and not pyblobfile.startswith("secondblob"):
+                                # if os.path.isfile("files/extrablob.py") :
+                                log.info(clientid + "Found extra blob: " + pyblobfile)
+                                execdict_update = {}
+                                
+                                if pyblobfile.endswith(".bin"):
+                                    f = open("files/custom/" + pyblobfile, "rb")
+                                    blob = f.read()
+                                    f.close()
+                                    
+                                    if blob[0:2] == "\x01\x43":
+                                        blob = zlib.decompress(blob[20:])
+                                    blob2 = steam.blob_unserialize(blob)
+                                    blob3 = steam.blob_dump(blob2)
+                                    execdict_update = "blob = " + blob3
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 19"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            execdict_update = execdict_update.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                    
+                                elif pyblobfile.endswith(".py"):
+                                    with open("files/custom/" + pyblobfile, 'r') as m :
+                                        userblobstr_upd = m.read()
+                    
+                                    for (search, replace, info) in globalvars.replacestringsCDR :
+                                        print "Fixing CDR 20"
+                                        fulllength = len(search)
+                                        newlength = len(replace)
+                                        missinglength = fulllength - newlength
+                                        if missinglength < 0 :
+                                            print "WARNING: Replacement text " + replace + " is too long! Not replaced!"
+                                        else :
+                                            userblobstr_upd = userblobstr_upd.replace(search, replace)
+                                            print("Replaced " + info + " " + search + " with " + replace)
+                                        
+                                    execdict_update = ast.literal_eval(userblobstr_upd[7:len(userblobstr_upd)])
+                                    
+                                for k in execdict_update :
+                                    for j in execdict["blob"] :
+                                        if j == k :
+                                            execdict["blob"][j].update(execdict_update[k])
+                                        else :
+                                            if k == "\x01\x00\x00\x00" :
+                                                execdict_temp_01.update(execdict_update[k])
+                                            elif k == "\x02\x00\x00\x00" :
+                                                execdict_temp_02.update(execdict_update[k])
+
+                                for k,v in execdict_temp_01.items() :
+                                    execdict["blob"].pop(k,v)
+
+                                for k,v in execdict_temp_02.items() :
+                                    execdict["blob"].pop(k,v)
+                            
+                    blob = steam.blob_serialize(execdict["blob"])
+                    
+                    # h = open("files/secondblob.bin", "wb")
+                    # h.write(blob)
+                    # h.close()
+                    
+                    # g = open("files/secondblob.bin", "rb")
+                    # blob = g.read()
+                    # g.close()
+                    
+                    if blob[0:2] == "\x01\x43" :
+                        blob = zlib.decompress(blob[20:])
+                        
+                    start_search = 0
+                    while True :
+                        found = blob.find("\x30\x81\x9d\x30\x0d\x06\x09\x2a", start_search)
+                        if found < 0 :
+                            break
+                    
+                        # TINserver's Net Key
+                        # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("9525173d72e87cbbcbdc86146587aebaa883ad448a6f814dd259bff97507c5e000cdc41eed27d81f476d56bd6b83a4dc186fa18002ab29717aba2441ef483af3970345618d4060392f63ae15d6838b2931c7951fc7e1a48d261301a88b0260336b8b54ab28554fb91b699cc1299ffe414bc9c1e86240aa9e16cae18b950f900f") + "\x02\x01\x11"
+
+                        
+                        # BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex("bf973e24beb372c12bea4494450afaee290987fedae8580057e4f15b93b46185b8daf2d952e24d6f9a23805819578693a846e0b8fcc43c23e1f2bf49e843aff4b8e9af6c5e2e7b9df44e29e3c1c93f166e25e42b8f9109be8ad03438845a3c1925504ecc090aabd49a0fc6783746ff4e9e090aa96f1c8009baf9162b66716059") + "\x02\x01\x11"
+                        BERstring = binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100") + binascii.a2b_hex(self.config["net_key_n"][2:]) + "\x02\x01\x11"
+                        foundstring = blob[found:found + 160]
+                        blob = blob.replace(foundstring, BERstring)
+                        start_search = found + 160
+
+                    compressed_blob = zlib.compress(blob, 9)
+                    blob = "\x01\x43" + struct.pack("<QQH", len(compressed_blob) + 20, len(blob), 9) + compressed_blob
+                    
+                    # cache_option = self.config["use_cached_blob"]
+                    # if cache_option == "true" :
+                    f = open("files/cache/secondblob.bin", "wb")
+                    f.write(blob)
+                    f.close()
+
+                checksum = SHA.new(blob).digest()
+
+                if checksum == command[1:] :
+                    log.info(clientid + "Client has matching checksum for secondblob")
+                    log.debug(clientid + "We validate it: " + binascii.b2a_hex(command))
+
+                    self.socket.send("\x00\x00\x00\x00")
+
+                else :
+                    log.info(clientid + "Client didn't match our checksum for secondblob")
+                    log.debug(clientid + "Sending new blob: " + binascii.b2a_hex(command))
+
+                    self.socket.send_withlen(blob, True) #false for not showing in log
+            else :
+                log.debug(clientid + "Unknown command: " + binascii.b2a_hex(command[0:1])) #23 ?
+                self.socket.send("\x01")
 
         else :
             data = self.socket.recv(65535)

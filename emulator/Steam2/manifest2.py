@@ -76,6 +76,6 @@ class Manifest2 :
             if os.path.isfile(config["v3manifestdir2"] + str(appId) + "_" + str(appVersion) + ".manifest") :
                 return os.path.join(config["v3manifestdir2"],("%i_%i.manifest" % (appId, appVersion)))
             else :
-                log.error("Manifest not found for %s %s " % (appId, appVersion))
+                logging.error("Manifest not found for %s %s " % (appId, appVersion))
         else :
-            log.error("Manifest not found for %s %s " % (appId, appVersion))
+            logging.error("Manifest not found for %s %s " % (appId, appVersion))

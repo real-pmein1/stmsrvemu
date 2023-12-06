@@ -1,7 +1,9 @@
 import sys
-import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, types
+import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, types, ast, filecmp, requests, subprocess, ipcalc
 
 import struct #for int to byte conversion
+from collections import Counter
+from tqdm import tqdm
 
 import steam
 import dirs
@@ -24,64 +26,311 @@ from steamemu.friends import friends
 from steamemu.vttserver import vttserver
 from steamemu.twosevenzeroonefour import twosevenzeroonefour
 from steamemu.validationserver import validationserver
+from steamemu.clientupdateserver import clientupdateserver
+from steamweb.steamweb import steamweb
+from steamweb.steamweb import check_child_pid
 
 #from steamemu.udpserver import udpserver
 
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-print("Steam 2004-2011 Server Emulator v0.72")
-print("=====================================")
-print
+local_ver = "0.73"
+emu_ver = "0"
+update_exception1 = ""
+update_exception2 = ""
+clear_config = False
+
+mod_date_emu = os.path.getmtime("emulator.exe")
+try:
+    mod_date_cach = os.path.getmtime("files/cache/emulator.ini.cache")
+except:
+    mod_date_cach = 0
+
+clearConsole = lambda: os.system('cls' if os.name in ('nt', 'dos') else 'clear')
+clearConsole()
+
+if (mod_date_cach < mod_date_emu) and clear_config == True:
+    #print("Config change detected, flushing cache...")
+    try:
+        shutil.rmtree("files/cache")
+    except:
+        pass
+    #os.mkdir("files/cache")
+    #shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+    #print
 
 config = read_config()
 
-print("**************************")
+dirs.create_dirs()
+
+print
+print("Steam 2003-2011 Server Emulator v" + local_ver)
+print(("=" * 33) + ("=" * len(local_ver)))
+print
+print(" -== Steam 20th Anniversary Edition 2003-2023 ==-")
+print
+
+if not config["emu_auto_update"] == "no":
+    if sys.argv[0].endswith("emulator.exe"):
+        try:
+            if os.path.isfile("emulatorTmp.exe"):
+                os.remove("emulatorTmp.exe")
+            if os.path.isfile("emulatorNew.exe"):
+                os.remove("emulatorNew.exe")
+            # if clear_config == True :
+                # print("Config change detected, flushing cache...")
+                # shutil.rmtree("files/cache")
+                # os.mkdir("files/cache")
+                # shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+                # print
+            if config["uat"] == "1":
+                #url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/version"
+                url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/version"
+            else:
+                url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/version"
+            resp = requests.get(url)
+            online_ver = resp.text
+
+            for file in os.listdir("."):
+                if file.endswith(".mst") or file.endswith(".out"):
+                    emu_ver = file[7:-4]
+                elif file.endswith(".pkg") or file.endswith(".srv"):
+                    os.remove(file)
+                    
+            f = open("server_0.mst", "w")
+            f.close()
+
+            if not online_ver == emu_ver or not os.path.isfile("server_" + online_ver + ".mst"):
+                shutil.copy("emulator.exe", "emulatorTmp.exe")
+                print("Update found " + emu_ver + " -> " + online_ver + ", downloading...")
+                if config["uat"] == "1":
+                    #url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/server_" + online_ver + ".pkg"
+                    url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/server_" + online_ver + ".pkg"
+                else:
+                    url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/server_" + online_ver + ".pkg"
+                # Streaming, so we can iterate over the response.
+                response = requests.get(url, stream=True)
+                total_size_in_bytes= int(response.headers.get('content-length', 0))
+                block_size = 1024 #1 Kilobyte
+                progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True, ncols=80)
+                with open('server_' + online_ver + '.pkg', 'wb') as file:
+                    for data in response.iter_content(block_size):
+                        progress_bar.update(len(data))
+                        file.write(data)
+                progress_bar.close()
+                if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
+                    print("ERROR, something went wrong")
+
+                steam.package_unpack2('server_' + online_ver + '.pkg', ".", online_ver)
+
+                for file in os.listdir("."):
+                    if file.endswith(".mst") and file != "server_" + online_ver + ".mst" :
+                        os.remove(file)
+                    elif file.endswith(".out"):
+                        os.remove(file)
+                    elif file.endswith(".pkg"):
+                        os.remove(file)
+                subprocess.Popen("emulatorTmp.exe")
+                sys.exit(0)
+
+        except Exception as e:
+            update_exception1 = e
+            
+        finally:
+            if os.path.isfile("server_0.mst"): os.remove("server_0.mst")
+    elif sys.argv[0].endswith("emulatorTmp.exe") and not os.path.isfile("emulatorNew.exe"):
+        print("WAITING...")
+        try:
+            os.remove("emulator.exe")
+            shutil.copy("emulatorTmp.exe", "emulator.exe")
+            subprocess.Popen("emulator.exe")
+            sys.exit(0)
+
+        except Exception as e:
+            update_exception2 = e
+    else:
+        print("WAITING...")
+        try:
+            os.remove("emulator.exe")
+            shutil.copy("emulatorNew.exe", "emulator.exe")
+            subprocess.Popen("emulator.exe")
+            sys.exit(0)
+
+        except Exception as e:
+            update_exception2 = e
+else:
+    print("Skipping checking for updates (ini override)")
+
+if config["http_port"].startswith(":"):
+    print(config["http_port"])
+    linenum = 0
+    with open("emulator.ini", "r") as f:
+        data = f.readlines()
+    for line in data:
+        if line.startswith("http_port"):
+            break
+        linenum += 1
+    data[linenum] = "http_port=" + config["http_port"][1:] + "\n"
+    with open("emulator.ini", "w") as g:
+        g.writelines(data)
+    if os.path.isfile("files/cache/emulator.ini.cache") :
+        os.remove("files/cache/emulator.ini.cache")
+    shutil.copy("emulator.exe", "emulatorTmp.exe")
+    subprocess.Popen("emulatorTmp.exe")
+    sys.exit(0)
+    
+if not os.path.isfile("files/cache/emulator.ini.cache") :
+    print("Config change detected, flushing cache...")
+    shutil.rmtree("files/cache")
+    os.mkdir("files/cache")
+    shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+    print
+else :
+    try:
+        if filecmp.cmp("emulator.ini", "files/cache/emulator.ini.cache"): #false = different, true = same
+            a=0
+        else:
+            print("Config change detected, flushing cache...")
+            shutil.rmtree("files/cache")
+            os.mkdir("files/cache")
+            shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+            print
+    except:
+        print("Config change detected, flushing cache...")
+        shutil.rmtree("files/cache")
+        os.mkdir("files/cache")
+        shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+        print
+
+if len(config["public_ip"]) > len(config["server_ip"]):
+    iplen = len(config["public_ip"])
+else:
+    iplen = len(config["server_ip"])
+
+print(("*" * 11) + ("*" * iplen))
 print("Server IP: " + config["server_ip"])
 if config["public_ip"] != "0.0.0.0" :
     print("Public IP: " + config["public_ip"])
-print("**************************")
+print(("*" * 11) + ("*" * iplen))
 print
 log = logging.getLogger('emulator')
 
-log.info("...Starting Steam Server...\n")
+if not update_exception1 == "":
+    log.debug("Update1 error: " + str(update_exception1))
+if not update_exception2 == "":
+    log.debug("Update2 error: " + str(update_exception2))
 
-if config["server_ip"].startswith("10.") :
-    globalvars.servernet = "('10."
-elif config["server_ip"].startswith("172.16.") :
-    globalvars.servernet = "('172.16."
-elif config["server_ip"].startswith("172.17.") :
-    globalvars.servernet = "('172.17."
-elif config["server_ip"].startswith("172.18.") :
-    globalvars.servernet = "('172.18."
-elif config["server_ip"].startswith("172.19.") :
-    globalvars.servernet = "('172.19."
-elif config["server_ip"].startswith("172.20.") :
-    globalvars.servernet = "('172.20."
-elif config["server_ip"].startswith("172.21.") :
-    globalvars.servernet = "('172.21."
-elif config["server_ip"].startswith("172.22.") :
-    globalvars.servernet = "('172.22."
-elif config["server_ip"].startswith("172.23.") :
-    globalvars.servernet = "('172.23."
-elif config["server_ip"].startswith("172.24.") :
-    globalvars.servernet = "('172.24."
-elif config["server_ip"].startswith("172.25.") :
-    globalvars.servernet = "('172.25."
-elif config["server_ip"].startswith("172.26.") :
-    globalvars.servernet = "('172.26."
-elif config["server_ip"].startswith("172.27.") :
-    globalvars.servernet = "('172.27."
-elif config["server_ip"].startswith("172.28.") :
-    globalvars.servernet = "('172.28."
-elif config["server_ip"].startswith("172.29.") :
-    globalvars.servernet = "('172.29."
-elif config["server_ip"].startswith("172.30.") :
-    globalvars.servernet = "('172.30."
-elif config["server_ip"].startswith("172.31.") :
-    globalvars.servernet = "('172.31."
-elif config["server_ip"].startswith("192.168.") :
-    globalvars.servernet = "('192.168."
+try:
+    socket.inet_aton(config["server_ip"])
+except:
+    log.debug("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
+    print("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
+    raw_input("Press Enter to exit...")
+    quit()
+try:
+    socket.inet_aton(config["public_ip"])
+except:
+    log.debug("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
+    print("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
+    raw_input("Press Enter to exit...")
+    quit()
+try:
+    socket.inet_aton(config["community_ip"])
+except:
+    log.debug("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
+    print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
+    raw_input("Press Enter to exit...")
+    quit()
+    
+server_ip_fail = False
+counts=Counter(config["server_ip"])
+if not counts['.'] == 3:
+    log.debug("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
+    print("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
+    raw_input("Press Enter to exit...")
+    quit()
+for char in config["server_ip"]:
+    if not (char >= '0' and char <= '9' or char == '.'):
+        server_ip_fail = True
+if server_ip_fail == True:
+    log.debug("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
+    print("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
+    raw_input("Press Enter to exit...")
+    quit()
+
+if config["public_ip"] != "0.0.0.0" :
+    public_ip_fail = False
+    counts=Counter(config["public_ip"])
+    if not counts['.'] == 3:
+        log.debug("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
+        print("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
+        raw_input("Press Enter to exit...")
+        quit()
+    for char in config["public_ip"]:
+        if not (char >= '0' and char <= '9' or char == '.'):
+            public_ip_fail = True
+    if public_ip_fail == True:
+        log.debug("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
+        print("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
+        raw_input("Press Enter to exit...")
+        quit()
+
+if config["community_ip"] != "0.0.0.0" :
+    public_ip_fail = False
+    counts=Counter(config["community_ip"])
+    if not counts['.'] == 3:
+        log.debug("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
+        print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
+        raw_input("Press Enter to exit...")
+        quit()
+    for char in config["community_ip"]:
+        if not (char >= '0' and char <= '9' or char == '.'):
+            public_ip_fail = True
+    if public_ip_fail == True:
+        log.debug("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
+        print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
+        raw_input("Press Enter to exit...")
+        quit()
+
+log.info("...Starting Steam Server...")
+
+# if config["server_ip"].startswith("10.") :
+    # globalvars.servernet = "('10."
+# elif config["server_ip"].startswith("172.16.") :
+    # globalvars.servernet = "('172.16."
+# elif config["server_ip"].startswith("172.17.") :
+    # globalvars.servernet = "('172.17."
+# elif config["server_ip"].startswith("172.18.") :
+    # globalvars.servernet = "('172.18."
+# elif config["server_ip"].startswith("172.19.") :
+    # globalvars.servernet = "('172.19."
+# elif config["server_ip"].startswith("172.20.") :
+    # globalvars.servernet = "('172.20."
+# elif config["server_ip"].startswith("172.21.") :
+    # globalvars.servernet = "('172.21."
+# elif config["server_ip"].startswith("172.22.") :
+    # globalvars.servernet = "('172.22."
+# elif config["server_ip"].startswith("172.23.") :
+    # globalvars.servernet = "('172.23."
+# elif config["server_ip"].startswith("172.24.") :
+    # globalvars.servernet = "('172.24."
+# elif config["server_ip"].startswith("172.25.") :
+    # globalvars.servernet = "('172.25."
+# elif config["server_ip"].startswith("172.26.") :
+    # globalvars.servernet = "('172.26."
+# elif config["server_ip"].startswith("172.27.") :
+    # globalvars.servernet = "('172.27."
+# elif config["server_ip"].startswith("172.28.") :
+    # globalvars.servernet = "('172.28."
+# elif config["server_ip"].startswith("172.29.") :
+    # globalvars.servernet = "('172.29."
+# elif config["server_ip"].startswith("172.30.") :
+    # globalvars.servernet = "('172.30."
+# elif config["server_ip"].startswith("172.31.") :
+    # globalvars.servernet = "('172.31."
+# elif config["server_ip"].startswith("192.168.") :
+    # globalvars.servernet = "('192.168."
     
 #print(globalvars.servernet)
 
@@ -126,358 +375,9 @@ class udplistener(threading.Thread):
             globalvars.data, globalvars.addr = serversocket.recvfrom(1280)
             #print("Received message: %s on port %s" % (globalvars.data, self.port))
             #self.serverobject(serversocket, self.config).start();
-            if self.port == 27010 :
-                log = logging.getLogger("hl1mstr")
-                clientid = str(globalvars.addr) + ": "
-                log.info(clientid + "Connected to HL Master Server")
-                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-                if globalvars.data.startswith("1") :
-                    i = 0
-                    header = bytearray()
-                    header += b'\xFF\xFF\xFF\xFF\x66\x0A'
-                    #header = b'\xFF\xFF\xFF\xFF\x66\x0A'
-                    while i < 1000 : #also change in command "b" and in globalvars
-                        if not isinstance(globalvars.hl1serverlist[i], int) :
-                            #print(globalvars.hl1serverlist[i][0])
-                            print(globalvars.hl1serverlist[i])
-                            trueip = globalvars.hl1serverlist[i][0].split('.')
-                            trueip_int = map(int, trueip)
-                            header += struct.pack('>BBBB', trueip_int[0], trueip_int[1], trueip_int[2], trueip_int[3])
-                            #print(globalvars.hl1serverlist[i][24])
-                            trueport_int_temp = int(globalvars.hl1serverlist[i][24])
-                            if not len(str(trueport_int_temp)) == 5 :
-                                trueport_int = 27015
-                            else :
-                                trueport_int = trueport_int_temp
-                            print(str(trueport_int))
-                            header += struct.pack('>H', trueport_int)
-                        i += 1
-                    #trueip = struct.pack('>BBBB', 172, 20, 0, 23)
-                    #trueport = struct.pack('>H', 27015)
-                    nullip = struct.pack('>BBBB', 0, 0, 0, 0)
-                    nullport = struct.pack('>H', 0)
-                    #serversocket.sendto(nullip.encode(), globalvars.addr)
-                    #serversocket.sendto(header + trueip + trueport + nullip + nullport, globalvars.addr)
-                    serversocket.sendto(header + nullip + nullport, globalvars.addr)
-                    #serversocket.close()
-                elif globalvars.data.startswith("q") :
-                    header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    registered = 0
-                    for server in globalvars.hl1serverlist :
-                        if len(str(server)) > 5 :
-                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
-                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
-                                challenge = struct.pack("I", int(server[4]))
-                                registered = 1
-                                break
-                    if registered == 0 :
-                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl1challengenum + 1))
-                        challenge = struct.pack("I", globalvars.hl1challengenum + 1)
-                        globalvars.hl1challengenum += 1
-                    serversocket.sendto(header + challenge, globalvars.addr)
-                elif globalvars.data.startswith("M") :
-                    header = b'\xFF\xFF\xFF\xFF\x4E\x0A'
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    registered = 0
-                    for server in globalvars.hl1serverlist :
-                        if len(str(server)) > 5 :
-                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
-                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
-                                challenge = struct.pack("I", int(server[4]))
-                                registered = 1
-                                break
-                    if registered == 0 :
-                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl1challengenum + 1))
-                        challenge = struct.pack("I", globalvars.hl1challengenum + 1)
-                        globalvars.hl1challengenum += 1
-                    serversocket.sendto(header + challenge, globalvars.addr)
-                elif globalvars.data.startswith("0") :
-                    serverdata1 = globalvars.data.split('\n')
-                    serverdata2 = serverdata1[1]
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    serverdata3 = ipstr1[1] + serverdata2
-                    tempserverlist = serverdata3.split('\\')
-                    globalvars.hl1serverlist[int(tempserverlist[4])] = tempserverlist
-                    log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
-                    log.debug(clientid + "Current Challenge: %s" % (globalvars.hl1challengenum))
-                    #globalvars.hl1servernum += 1
-                elif globalvars.data.startswith("b") :
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    i = 0
-                    running = 0
-                    while i < 1000 :
-                        if not isinstance(globalvars.hl1serverlist[i], int) :
-                            running += 1
-                            #print(ipactual + ":" + portactual)
-                            #print(type(ipactual))
-                            #print(type(portactual))
-                            #print(type(globalvars.hl1serverlist[i][0]))
-                            #print(type(globalvars.hl1serverlist[i][24]))
-                            if globalvars.hl1serverlist[i][0] == ipactual and (str(globalvars.hl1serverlist[i][24]) == portactual or "27015" == portactual) :
-                                globalvars.hl1serverlist.pop(i)
-                                print("Removed game server: %s:%s" % (ipactual, portactual))
-                                running -= 1
-                        i += 1
-                    print("Running servers: %s" % str(running))
-                else :
-                    print("UNKNOWN MASTER SERVER COMMAND")
-            elif self.port == 27011 :
-                log = logging.getLogger("hl2mstr")
-                clientid = str(globalvars.addr) + ": "
-                log.info(clientid + "Connected to HL2 Master Server")
-                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-                if globalvars.data.startswith("1") :
-                    i = 0
-                    header = bytearray()
-                    header += b'\xFF\xFF\xFF\xFF\x66\x0A'
-                    while i < 1000 : #also change in command "b" and in globalvars
-                        if not isinstance(globalvars.hl2serverlist[i], int) :
-                            print(globalvars.hl2serverlist[i])
-                            trueip = globalvars.hl2serverlist[i][0].split('.')
-                            trueip_int = map(int, trueip)
-                            header += struct.pack('>BBBB', trueip_int[0], trueip_int[1], trueip_int[2], trueip_int[3])
-                            try :
-                                trueport_int_temp = int(globalvars.hl2serverlist[i][24])
-                            except :
-                                trueport_int_temp = 1
-                            if not len(str(trueport_int_temp)) == 5 :
-                                trueport_int = 27015
-                            else :
-                                trueport_int = trueport_int_temp
-                            print(str(trueport_int))
-                            header += struct.pack('>H', trueport_int)
-                        i += 1
-                    nullip = struct.pack('>BBBB', 0, 0, 0, 0)
-                    nullport = struct.pack('>H', 0)
-                    serversocket.sendto(header + nullip + nullport, globalvars.addr)
-                elif globalvars.data.startswith("q") :
-                    header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    registered = 0
-                    for server in globalvars.hl2serverlist :
-                        if len(str(server)) > 5 :
-                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
-                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
-                                challenge = struct.pack("I", int(server[4]))
-                                registered = 1
-                                break
-                    if registered == 0 :
-                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.hl2challengenum + 1))
-                        challenge = struct.pack("I", globalvars.hl2challengenum + 1)
-                        globalvars.hl2challengenum += 1
-                    serversocket.sendto(header + challenge, globalvars.addr)
-                elif globalvars.data.startswith("0") :
-                    serverdata1 = globalvars.data.split('\n')
-                    #print(serverdata1)
-                    serverdata2 = serverdata1[1]
-                    #print(serverdata2)
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    serverdata3 = ipstr1[1] + serverdata2
-                    #print(serverdata3)
-                    tempserverlist = serverdata3.split('\\')
-                    #print(tempserverlist)
-                    globalvars.hl2serverlist[int(tempserverlist[4])] = tempserverlist
-                    #print(tempserverlist[0])
-                    #print(tempserverlist[1])
-                    #print(tempserverlist[2])
-                    #print(tempserverlist[3])
-                    #print(tempserverlist[4])
-                    #print(tempserverlist[5])
-                    log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
-                    log.debug(clientid + "Current Challenge: %s" % (globalvars.hl2challengenum))
-                elif globalvars.data.startswith("b") :
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    i = 0
-                    running = 0
-                    while i < 1000 :
-                        if not isinstance(globalvars.hl2serverlist[i], int) :
-                            running += 1
-                            #print(ipactual + ":" + portactual)
-                            #print(type(ipactual))
-                            #print(type(portactual))
-                            #print(type(globalvars.hl2serverlist[i][0]))
-                            #print(type(globalvars.hl2serverlist[i][24]))
-                            #for server in globalvars.hl2serverlist :
-                                #print(server)
-                            if globalvars.hl2serverlist[i][0] == ipactual and (str(globalvars.hl2serverlist[i][24]) == portactual or "27015" == portactual) :
-                                #print(type(globalvars.hl2serverlist[i]))
-                                #print(type(i))
-                                #print(type(globalvars.hl2serverlist))
-                                #print(globalvars.hl2serverlist[i][0])
-                                #print(str(globalvars.hl2serverlist[i][24]))
-                                globalvars.hl2serverlist.pop(i)
-                                log.info(clientid + "Unregistered server: %s:%s" % (ipactual, portactual))
-                                running -= 1
-                        i += 1
-                    print("Running servers: %s" % str(running))
-                else :
-                    print("UNKNOWN MASTER SERVER COMMAND")
-            elif self.port == 27012 :
-                log = logging.getLogger("rdkfmstr")
-                clientid = str(globalvars.addr) + ": "
-                log.info(clientid + "Connected to RDKF Master Server")
-                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-                if globalvars.data.startswith("1") :
-                    i = 0
-                    header = bytearray()
-                    header += b'\xFF\xFF\xFF\xFF\x66\x0A'
-                    while i < 1000 : #also change in command "b" and in globalvars
-                        if not isinstance(globalvars.rdkfserverlist[i], int) :
-                            print(globalvars.rdkfserverlist[i])
-                            trueip = globalvars.rdkfserverlist[i][0].split('.')
-                            trueip_int = map(int, trueip)
-                            header += struct.pack('>BBBB', trueip_int[0], trueip_int[1], trueip_int[2], trueip_int[3])
-                            try :
-                                trueport_int_temp = int(globalvars.rdkfserverlist[i][24])
-                            except :
-                                trueport_int_temp = 1
-                            if not len(str(trueport_int_temp)) == 5 :
-                                trueport_int = 27015
-                            else :
-                                trueport_int = trueport_int_temp
-                            print(str(trueport_int))
-                            header += struct.pack('>H', trueport_int)
-                        i += 1
-                    nullip = struct.pack('>BBBB', 0, 0, 0, 0)
-                    nullport = struct.pack('>H', 0)
-                    serversocket.sendto(header + nullip + nullport, globalvars.addr)
-                elif globalvars.data.startswith("q") :
-                    header = b'\xFF\xFF\xFF\xFF\x73\x0A'
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    registered = 0
-                    for server in globalvars.rdkfserverlist :
-                        if len(str(server)) > 5 :
-                            if server[0] == ipactual and (str(server[24]) == portactual or "27015" == portactual) :
-                                log.info(clientid + "Already registered, sending challenge number %s" % str(server[4]))
-                                challenge = struct.pack("I", int(server[4]))
-                                registered = 1
-                                break
-                    if registered == 0 :
-                        log.info(clientid + "Registering server, sending challenge number %s" % str(globalvars.rdkfchallengenum + 1))
-                        challenge = struct.pack("I", globalvars.rdkfchallengenum + 1)
-                        globalvars.rdkfchallengenum += 1
-                    serversocket.sendto(header + challenge, globalvars.addr)
-                elif globalvars.data.startswith("0") :
-                    serverdata1 = globalvars.data.split('\n')
-                    #print(serverdata1)
-                    serverdata2 = serverdata1[1]
-                    #print(serverdata2)
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    serverdata3 = ipstr1[1] + serverdata2
-                    #print(serverdata3)
-                    tempserverlist = serverdata3.split('\\')
-                    #print(tempserverlist)
-                    globalvars.rdkfserverlist[int(tempserverlist[4])] = tempserverlist
-                    #print(tempserverlist[0])
-                    #print(tempserverlist[1])
-                    #print(tempserverlist[2])
-                    #print(tempserverlist[3])
-                    #print(tempserverlist[4])
-                    #print(tempserverlist[5])
-                    log.debug(clientid + "This Challenge: %s" % tempserverlist[4])
-                    log.debug(clientid + "Current Challenge: %s" % (globalvars.rdkfchallengenum))
-                elif globalvars.data.startswith("b") :
-                    ipstr = str(globalvars.addr)
-                    ipstr1 = ipstr.split('\'')
-                    ipactual = ipstr1[1]
-                    portstr = ipstr1[2]
-                    portstr1 = portstr.split(' ')
-                    portstr2 = portstr1[1].split(')')
-                    portactual_temp = portstr2[0]
-                    if not str(len(portactual_temp)) == 5 :
-                        portactual = "27015"
-                    else :
-                        portactual = str(portactual_temp)
-                    i = 0
-                    running = 0
-                    while i < 1000 :
-                        if not isinstance(globalvars.rdkfserverlist[i], int) :
-                            running += 1
-                            #print(ipactual + ":" + portactual)
-                            #print(type(ipactual))
-                            #print(type(portactual))
-                            #print(type(globalvars.rdkfserverlist[i][0]))
-                            #print(type(globalvars.rdkfserverlist[i][24]))
-                            #for server in globalvars.rdkfserverlist :
-                                #print(server)
-                            if globalvars.rdkfserverlist[i][0] == ipactual and (str(globalvars.rdkfserverlist[i][24]) == portactual or "27015" == portactual) :
-                                #print(type(globalvars.rdkfserverlist[i]))
-                                #print(type(i))
-                                #print(type(globalvars.rdkfserverlist))
-                                #print(globalvars.rdkfserverlist[i][0])
-                                #print(str(globalvars.rdkfserverlist[i][24]))
-                                globalvars.rdkfserverlist.pop(i)
-                                log.info(clientid + "Unregistered server: %s:%s" % (ipactual, portactual))
-                                running -= 1
-                        i += 1
-                    print("Running servers: %s" % str(running))
-                else :
-                    print("UNKNOWN MASTER SERVER COMMAND")
-            elif self.port == 27013 :
+            dedsrv_port = globalvars.addr[1]
+            #print(dedsrv_port)
+            if self.port == 27013 :
                 log = logging.getLogger("csersrv")
                 clientid = str(globalvars.addr) + ": "
                 log.info(clientid + "Connected to CSER Server")
@@ -573,12 +473,12 @@ class udplistener(threading.Thread):
                     print("Received app usage stats - INOP")
                 else :
                     print("Unknown CSER command: %s" % globalvars.data)
-            elif self.port == 27014 :
-                log = logging.getLogger("27014")
-                clientid = str(globalvars.addr) + ": "
-                log.info(clientid + "Connected to 27014")
-                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-            elif self.port == 27017 :
+            #elif self.port == 27014 :
+            #    log = logging.getLogger("27014")
+            #    clientid = str(globalvars.addr) + ": "
+            #    log.info(clientid + "Connected to 27014")
+            #    log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
+            elif self.port == 27014 : #was 27017
                 log = logging.getLogger("friends")
                 clientid = str(globalvars.addr) + ": "
                 log.info(clientid + "Connected to Chat Server")
@@ -649,131 +549,251 @@ class udplistener(threading.Thread):
                             friendsreqdata = friendsrecdata[16:]
                             friendsreqheader = friendsrecheader
             else :
-                print("Who knows!")
+                log.debug(clientid + "Unconfigured UDP port requested: " + str(self.port))
 
 config = read_config()
 
+firstblob_eval = steam.load_ccdb()
+
+#if firstblob_eval == "":
+#    if os.path.isfile("files/1stcdr.py") :
+#        with open("files/1stcdr.py", "r") as f:
+#            firstblob = f.read()
+#    elif os.path.isfile("files/firstblob.py") :
+#        with open("files/firstblob.py", "r") as f:
+#            firstblob = f.read()
+#    else :
+#        with open("files/firstblob.bin", "rb") as f:
+#            firstblob_bin = f.read()
+#        if firstblob_bin[0:2] == "\x01\x43":
+#            firstblob_bin = zlib.decompress(firstblob_bin[20:])
+#        firstblob_unser = steam.blob_unserialize(firstblob_bin)
+#        firstblob = "blob = " + steam.blob_dump(firstblob_unser)
+
+#    firstblob_eval = ast.literal_eval(firstblob[7:len(firstblob)])
+globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
+globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
+globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
+
+#globalvars.steam_ver = 2
+#globalvars.steamui_ver = 2
+
 # create the Steam.exe file
-f = open(config["packagedir"] + config["steampkg"], "rb")
+if globalvars.record_ver == 1 :
+    #f = open(config["packagedir"] + "betav2/" + config["steampkg"], "rb")
+    f = open(config["packagedir"] + "betav2/Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
+else :
+    #f = open(config["packagedir"] + config["steampkg"], "rb")
+    f = open(config["packagedir"] + "Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
 pkg = Package(f.read())
 f.close()
+shutil.rmtree("client")
+#os.mkdir("client")
+dirs.create_dirs()
 file = pkg.get_file("SteamNew.exe")
+file2 = pkg.get_file("SteamNew.exe")
 if config["public_ip"] != "0.0.0.0" :
-    file = neuter_file(file, config["public_ip"], config["dir_server_port"])
+    os.mkdir("client/lan")
+    os.mkdir("client/wan")
+    file = neuter_file(file, config["public_ip"], config["dir_server_port"], "SteamNew.exe", "wan")
+    file2 = neuter_file(file2, config["server_ip"], config["dir_server_port"], "SteamNew.exe", "lan")
+    f = open("client/wan/Steam.exe", "wb")
+    f.write(file)
+    f.close()
+    g = open("client/lan/Steam.exe", "wb")
+    g.write(file2)
+    g.close()
 else :
-    file = neuter_file(file, config["server_ip"], config["dir_server_port"])
-f = open("client/Steam.exe", "wb")
-f.write(file)
-f.close()
+    file = neuter_file(file, config["server_ip"], config["dir_server_port"], "SteamNew.exe", "lan")
+    f = open("client/Steam.exe", "wb")
+    f.write(file)
+    f.close()
 
 if config["hldsupkg"] != "" :
-    g = open(config["packagedir"] + config["hldsupkg"], "rb")
+    if globalvars.record_ver == 1 :
+        g = open(config["packagedir"] + "betav2/" + config["hldsupkg"], "rb")
+    else :
+        g = open(config["packagedir"] + config["hldsupkg"], "rb")
     pkg = Package(g.read())
     g.close()
     file = pkg.get_file("HldsUpdateToolNew.exe")
     if config["public_ip"] != "0.0.0.0" :
-        file = neuter_file(file, config["public_ip"], config["dir_server_port"])
+        file = neuter_file(file, config["public_ip"], config["dir_server_port"], "HldsUpdateToolNew.exe", "wan")
     else :
-        file = neuter_file(file, config["server_ip"], config["dir_server_port"])
+        file = neuter_file(file, config["server_ip"], config["dir_server_port"], "HldsUpdateToolNew.exe", "lan")
     g = open("client/HldsUpdateTool.exe", "wb")
     g.write(file)
     g.close()
-        
-if os.path.isfile("files/1stcdr.py") :
-    f = open("files/1stcdr.py", "r")
-    firstblob = f.read()
-    f.close()
-else :
-    f = open("files/firstblob.bin", "rb")
-    firstblob_bin = f.read()
-    f.close()
-    if firstblob_bin[0:2] == "\x01\x43":
-        firstblob_bin = zlib.decompress(firstblob_bin[20:])
-    firstblob_unser = steam.blob_unserialize(firstblob_bin)
-    firstblob = steam.blob_dump(firstblob_unser)
 
-firstblob_list = firstblob.split("\n")
-steam_hex = firstblob_list[2][25:41]
-steam_ver = str(int(steam_hex[14:16] + steam_hex[10:12] + steam_hex[6:8] + steam_hex[2:4], 16))
-steamui_hex = firstblob_list[3][25:41]
-steamui_ver = int(steamui_hex[14:16] + steamui_hex[10:12] + steamui_hex[6:8] + steamui_hex[2:4], 16)
-
-if steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
+#NEED TO DEPRECATE THIS IN FAVOR OF PROTOCOL VERSIONING
+if globalvars.steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
     globalvars.tgt_version = "1"
 else :
     globalvars.tgt_version = "2" #config file states 2 as default
 
-if steamui_ver < 122 :
+if globalvars.steamui_ver < 122 : #guessing when CASPackage changed to cas_x.pkg
     if os.path.isfile("files/cafe/Steam.dll") :
         log.info("Cafe files found")
         g = open("files/cafe/Steam.dll", "rb")
         file = g.read()
         g.close()
         if config["public_ip"] != "0.0.0.0" :
-            file = neuter_file(file, config["public_ip"], config["dir_server_port"])
+            file_wan = neuter_file(file, config["public_ip"], config["dir_server_port"], "steam.dll", "wan")
+            file_lan = neuter_file(file, config["server_ip"], config["dir_server_port"], "steam.dll", "lan")
+            if os.path.isfile("files/cafe/CASpackage.zip") :
+                shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackageWAN.zip")
+                shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackageLAN.zip")
+                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Steam.dll", file_wan)
+                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Steam.dll", file_lan)
+                    
+                lsclient_line1 = "CAServerIP = " + config["public_ip"]
+                lsclient_line2 = "ExitSteamAfterGame = true"
+                lsclient_line3 = "AllowUserLogin = false"
+                lsclient_line4 = "AllowCafeLogin = true"
+                lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
+                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
+                tempdir = tempfile.mkdtemp()
+                try:
+                    tempname = os.path.join(tempdir, 'new.zip')
+                    with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'r') as zipread:
+                        with zipfile.ZipFile(tempname, 'w') as zipwrite:
+                            for item in zipread.infolist():
+                                if item.filename not in 'CAServer.cfg':
+                                    data = zipread.read(item.filename)
+                                    zipwrite.writestr(item, data)
+                    shutil.move(tempname, 'client/cafe_server/CASpackageWAN.zip')
+                finally:
+                    shutil.rmtree(tempdir)
+                    
+                lsclient_line1 = "CAServerIP = " + config["server_ip"]
+                lsclient_line2 = "ExitSteamAfterGame = true"
+                lsclient_line3 = "AllowUserLogin = false"
+                lsclient_line4 = "AllowCafeLogin = true"
+                lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
+                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
+                tempdir = tempfile.mkdtemp()
+                try:
+                    tempname = os.path.join(tempdir, 'new.zip')
+                    with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'r') as zipread:
+                        with zipfile.ZipFile(tempname, 'w') as zipwrite:
+                            for item in zipread.infolist():
+                                if item.filename not in 'CAServer.cfg':
+                                    data = zipread.read(item.filename)
+                                    zipwrite.writestr(item, data)
+                    shutil.move(tempname, 'client/cafe_server/CASpackageLAN.zip')
+                finally:
+                    shutil.rmtree(tempdir)
+                    
+                caserver_line1 = "MasterServerIP = " + config["public_ip"]
+                caserver_line2 = "MasterLogin = " + config["cafeuser"]
+                caserver_line3 = "MasterPass = " + config["cafepass"]
+                caserver_line4 = "IPRange1 = 192.168.0.1"
+                caserver_line5 = "EnableTimedUpdates = disable"
+                caserver_line6 = "UpdateStart = 2200"
+                caserver_line7 = "UpdateEnd = 0200"
+                caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
+                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("CAServer.cfg", caserver_lines)
+                    
+                caserver_line1 = "MasterServerIP = " + config["server_ip"]
+                caserver_line2 = "MasterLogin = " + config["cafeuser"]
+                caserver_line3 = "MasterPass = " + config["cafepass"]
+                caserver_line4 = "IPRange1 = 192.168.0.1"
+                caserver_line5 = "EnableTimedUpdates = disable"
+                caserver_line6 = "UpdateStart = 2200"
+                caserver_line7 = "UpdateEnd = 0200"
+                caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
+                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("CAServer.cfg", caserver_lines)
+                    
+                passwords_line = bytes(config["cafeuser"] + "%" + config["cafepass"])
+                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("passwords.txt", passwords_line)
+                    
+                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("passwords.txt", passwords_line)
+                    
+                if os.path.isfile("files/cafe/README.txt") :
+                    g = open("files/cafe/README.txt", "rb")
+                    file = g.read()
+                    g.close()
+                    with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
+                        zipped_f.writestr("README.txt", file)
+                    with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
+                        zipped_f.writestr("README.txt", file)
+                        
+                with open("client/wan/Steam.exe", "rb") as g:
+                    file_wan = g.read()
+                with open("client/lan/Steam.exe", "rb") as h:
+                    file_lan = h.read()
+                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Client/wan/Steam.exe", file_wan)
+                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Client/wan/Steam.exe", file_lan)
         else :
-            file = neuter_file(file, config["server_ip"], config["dir_server_port"])
-        if os.path.isfile("files/cafe/CASpackage.zip") :
-            shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackage.zip")
-            with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                zipped_f.writestr("Steam.dll", file)
-            lsclient_line1 = "CAServerIP = " + config["server_ip"]
-            lsclient_line2 = "ExitSteamAfterGame = true"
-            lsclient_line3 = "AllowUserLogin = false"
-            lsclient_line4 = "AllowCafeLogin = true"
-            lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
-            with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
-            tempdir = tempfile.mkdtemp()
-            try:
-                tempname = os.path.join(tempdir, 'new.zip')
-                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'r') as zipread:
-                    with zipfile.ZipFile(tempname, 'w') as zipwrite:
-                        for item in zipread.infolist():
-                            if item.filename not in 'CAServer.cfg':
-                                data = zipread.read(item.filename)
-                                zipwrite.writestr(item, data)
-                shutil.move(tempname, 'client/cafe_server/CASpackage.zip')
-            finally:
-                shutil.rmtree(tempdir)
-            caserver_line1 = "MasterServerIP = " + config["server_ip"]
-            caserver_line2 = "MasterLogin = " + config["cafeuser"]
-            caserver_line3 = "MasterPass = " + config["cafepass"]
-            caserver_line4 = "IPRange1 = 192.168.0.1"
-            caserver_line5 = "EnableTimedUpdates = disable"
-            caserver_line6 = "UpdateStart = 2200"
-            caserver_line7 = "UpdateEnd = 0200"
-            caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
-            with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                zipped_f.writestr("CAServer.cfg", caserver_lines)
-            passwords_line = bytes(config["cafeuser"] + "%" + config["cafepass"])
-            with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                zipped_f.writestr("passwords.txt", passwords_line)
-            if os.path.isfile("files/cafe/README.txt") :
-                g = open("files/cafe/README.txt", "rb")
-                file = g.read()
-                g.close()
+            file = neuter_file(file, config["server_ip"], config["dir_server_port"], "steam.dll", "lan")
+            if os.path.isfile("files/cafe/CASpackage.zip") :
+                shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackage.zip")
                 with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                    zipped_f.writestr("README.txt", file)
-            g = open("client/Steam.exe", "rb")
-            file = g.read()
-            g.close()
-            with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                zipped_f.writestr("Client/Steam.exe", file)
+                    zipped_f.writestr("Steam.dll", file)
+                lsclient_line1 = "CAServerIP = " + config["server_ip"]
+                lsclient_line2 = "ExitSteamAfterGame = true"
+                lsclient_line3 = "AllowUserLogin = false"
+                lsclient_line4 = "AllowCafeLogin = true"
+                lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
+                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
+                    zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
+                tempdir = tempfile.mkdtemp()
+                try:
+                    tempname = os.path.join(tempdir, 'new.zip')
+                    with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'r') as zipread:
+                        with zipfile.ZipFile(tempname, 'w') as zipwrite:
+                            for item in zipread.infolist():
+                                if item.filename not in 'CAServer.cfg':
+                                    data = zipread.read(item.filename)
+                                    zipwrite.writestr(item, data)
+                    shutil.move(tempname, 'client/cafe_server/CASpackage.zip')
+                finally:
+                    shutil.rmtree(tempdir)
+                caserver_line1 = "MasterServerIP = " + config["server_ip"]
+                caserver_line2 = "MasterLogin = " + config["cafeuser"]
+                caserver_line3 = "MasterPass = " + config["cafepass"]
+                caserver_line4 = "IPRange1 = 192.168.0.1"
+                caserver_line5 = "EnableTimedUpdates = disable"
+                caserver_line6 = "UpdateStart = 2200"
+                caserver_line7 = "UpdateEnd = 0200"
+                caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
+                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
+                    zipped_f.writestr("CAServer.cfg", caserver_lines)
+                passwords_line = bytes(config["cafeuser"] + "%" + config["cafepass"])
+                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
+                    zipped_f.writestr("passwords.txt", passwords_line)
+                if os.path.isfile("files/cafe/README.txt") :
+                    g = open("files/cafe/README.txt", "rb")
+                    file = g.read()
+                    g.close()
+                    with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
+                        zipped_f.writestr("README.txt", file)
+                if os.path.isfile("client/Steam.exe"):
+                    g = open("client/Steam.exe", "rb")
+                    file = g.read()
+                    g.close()
+                    with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
+                        zipped_f.writestr("Client/Steam.exe", file)
                 
-        else :
-            g = open("client/cafe_server/Steam.dll", "wb")
-            g.write(file)
-            g.close()
         
 if config["use_sdk"] == "1" :
     with open("files/pkg_add/steam/Steam.cfg", "w") as h :
         h.write('SdkContentServerAdrs = "' + config["sdk_ip"] + ':' + config["sdk_port"] + '"\n')
-    if os.path.isfile("files/cache/Steam_" + steam_ver + ".pkg") :
-        os.remove("files/cache/Steam_" + steam_ver + ".pkg")
+    if os.path.isfile("files/cache/Steam_" + str(globalvars.steam_ver) + ".pkg") :
+        os.remove("files/cache/Steam_" + str(globalvars.steam_ver) + ".pkg")
 else :
     if os.path.isfile("files/pkg_add/steam/Steam.cfg") :
-        os.remove("files/cache/Steam_" + steam_ver + ".pkg")
+        os.remove("files/cache/Steam_" + str(globalvars.steam_ver) + ".pkg")
         os.remove("files/pkg_add/steam/Steam.cfg")
 
 if os.path.isfile("Steam.exe") :
@@ -818,53 +838,80 @@ convertgcf()
 time.sleep(0.2)
 cserlistener = udplistener(27013, udpserver, config)
 cserlistener.start()
-log.info("CSER Server listening on port 27013")
-time.sleep(0.2)
-hlmasterlistener = udplistener(27010, masterhl, config)
-hlmasterlistener.start()
-log.info("Master HL1 Server listening on port 27010")
-time.sleep(0.2)
-hl2masterlistener = udplistener(27011, masterhl2, config)
-hl2masterlistener.start()
-log.info("Master HL2 Server listening on port 27011")
-time.sleep(0.2)
-rdkfmasterlistener = udplistener(27012, masterrdkf, config)
-rdkfmasterlistener.start()
-log.info("Master RDKF Server listening on port 27012")
-time.sleep(0.2)
-#twosevenzeroonefourlistener = udplistener(27014, twosevenzeroonefour, config)
-#twosevenzeroonefourlistener.start()
-#log.info("Server listening on port 27014") #ANOTHER CHAT SERVER
-#time.sleep(0.2)
-if config["tracker_ip"] == "0.0.0.0" :
-    #chatlistener = udplistener(27017, friends, config)
-    #chatlistener.start()
-    globalvars.tracker = 0
-    #log.info("Chat Server listening on port 27017")
-else :
-    globalvars.tracker = 1
-    log.info("Connected to TRACKER")
+log.info("Steam2 CSER Server listening on port 27013")
 time.sleep(0.2)
 dirlistener = listener(config["dir_server_port"], directoryserver, config)
 dirlistener.start()
-log.info("Steam General Directory Server listening on port " + str(config["dir_server_port"]))
+log.info("Steam2 General Directory Server listening on port " + str(config["dir_server_port"]))
 time.sleep(0.2)
 configlistener = listener(config["conf_server_port"], configserver, config)
 configlistener.start()
-log.info("Steam Config Server listening on port " + str(config["conf_server_port"]))
-time.sleep(0.2)
-contentlistener = listener(config["contlist_server_port"], contentlistserver, config)
-contentlistener.start()
-log.info("Steam Content List Server listening on port " + str(config["contlist_server_port"]))
-time.sleep(0.2)
-filelistener = listener(config["file_server_port"], fileserver, config)
-filelistener.start()
-log.info("Steam File Server listening on port " + str(config["file_server_port"]))
+log.info("Steam2 Config Server listening on port " + str(config["conf_server_port"]))
 time.sleep(0.2)
 authlistener = listener(config["auth_server_port"], authserver, config)
 authlistener.start()
-log.info("Steam Master Authentication Server listening on port " + str(config["auth_server_port"]))
+log.info("Steam2 Master Authentication Server listening on port " + str(config["auth_server_port"]))
 time.sleep(0.2)
+contentlistener = listener(config["contlist_server_port"], contentlistserver, config)
+contentlistener.start()
+log.info("Steam2 Content List Server listening on port " + str(config["contlist_server_port"]))
+time.sleep(0.2)
+filelistener = listener(config["file_server_port"], fileserver, config)
+filelistener.start()
+log.info("Steam2 Content Server listening on port " + str(config["file_server_port"]))
+time.sleep(0.2)
+clupdlistener = listener(config["clupd_server_port"], clientupdateserver, config)
+clupdlistener.start()
+log.info("Steam2 Client Update Server listening on port " + str(config["clupd_server_port"]))
+time.sleep(0.2)
+vallistener = listener(config["validation_port"], validationserver, config)
+vallistener.start()
+log.info("Steam2 User Validation Server listening on port " + str(config["validation_port"]))
+time.sleep(0.2)
+#hlmasterlistener = udplistener(27010, masterhl, config)
+hlmasterlistener = masterhl(27010, masterhl, config)
+hlmasterlistener.start()
+log.info("Steam2 Master HL1 Server listening on port 27010")
+time.sleep(0.2)
+#hl2masterlistener = udplistener(27011, masterhl2, config)
+hl2masterlistener = masterhl2(27011, masterhl2, config)
+hl2masterlistener.start()
+log.info("Steam2 Master HL2 Server listening on port 27011")
+time.sleep(0.2)
+#rdkfmasterlistener = udplistener(27012, masterrdkf, config)
+rdkfmasterlistener = masterrdkf(27012, masterrdkf, config)
+rdkfmasterlistener.start()
+log.info("Steam2 Master RDKF Server listening on port 27012")
+time.sleep(0.2)
+if config["enable_steam3_servers"] == "1":
+    twosevenzeroonefourlistener = udplistener(27014, twosevenzeroonefour, config)
+    twosevenzeroonefourlistener.start()
+    log.info("Steam3 CM Server 1 listening on port 27014")
+    time.sleep(0.2)
+if config["enable_steam3_servers"] == "1":
+    chatlistener = udplistener(27017, friends, config)
+    chatlistener.start()
+    globalvars.tracker = 0
+    log.info("Steam3 Chat Server listening on port 27017")
+else:
+    if globalvars.record_ver == 1 :
+        globalvars.tracker = 1
+        subprocess.Popen("trackerserver.exe")
+        log.info("Started TRACKER server on port 1200")
+    else :
+        log.info("TRACKER unsupported on release client, not started")
+time.sleep(0.2)
+if config["use_webserver"] == "true" :
+    if globalvars.steamui_ver < 87 or config["http_port"] == "steam" or config["http_port"] == "0" :
+        steamweb("80", config["http_ip"], config["apache_root"], config["web_root"])
+        http_port = "80"
+    else:
+        steamweb(config["http_port"], config["http_ip"], config["apache_root"], config["web_root"])
+        http_port = str(config["http_port"])#[1:]
+    log.info("Steam Web Server listening on port " + http_port)
+    find_child_pid_timer = threading.Timer(10.0, check_child_pid())  
+    find_child_pid_timer.start() 
+    time.sleep(0.2)
 vttlistener = listener("27046", vttserver, config)
 vttlistener.start()
 log.info("Valve Time Tracking Server listening on port 27046")
@@ -873,13 +920,13 @@ vttlistener2 = listener("27047", vttserver, config)
 vttlistener2.start()
 log.info("Valve CyberCafe Server listening on port 27047")
 time.sleep(0.2)
-vallistener = listener("27034", validationserver, config)
-vallistener.start()
-log.info("Steam User Validation Server listening on port 27034")
-time.sleep(0.2)
 if config["sdk_ip"] != "0.0.0.0" :
     log.info("Steamworks SDK Content Server configured on port " + str(config["sdk_port"]))
     time.sleep(0.2)
 log.debug("TGT set to version " + globalvars.tgt_version)
-log.info("Steam Server ready.")
+
+if config["http_port"] == "steam" :
+    log.info("...Steam Server ready using Steam DNS...")
+else :
+    log.info("...Steam Server ready...")
 authlistener.join()

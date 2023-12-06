@@ -1,4 +1,4 @@
-import binascii, socket, struct, zlib, os, sys, logging, time
+import binascii, socket, struct, zlib, os, sys, logging, time, pickle, sqlite3, hashlib, ast
 from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA
 from Crypto.Cipher import AES
@@ -239,6 +239,69 @@ def package_unpack(infilename, outpath) :
 
         #print filename, "written"
 
+def package_unpack2(infilename, outpath, version) :
+
+    if not os.path.exists(outpath) :
+        os.makedirs(outpath)
+
+    infile = open(infilename, "rb")
+    package = infile.read()
+    infile.close()
+
+    header = package[-9:]
+
+    (pkg_ver, compress_level, numfiles) = struct.unpack("<BLL", package[-9:])
+
+    index = len(package) - (9 + 16)
+    
+    filenames = []
+
+    for i in range(numfiles) :
+
+        (unpacked_size, packed_size, file_start, filename_len) = struct.unpack("<LLLL", package[index:index + 16])
+
+        filename = package[index - filename_len:index - 1]
+
+        (filepath, basename) = os.path.split(filename)
+
+        index = index - (filename_len + 16)
+
+        file = ""
+
+        while packed_size > 0 :
+
+            compressed_len = struct.unpack("<L", package[file_start:file_start + 4])[0]
+
+            compressed_start = file_start + 4
+            compressed_end   = compressed_start + compressed_len
+
+            compressed_data = package[compressed_start:compressed_end]
+
+            file = file + zlib.decompress(compressed_data)
+
+            file_start = compressed_end
+            packed_size = packed_size - compressed_len
+
+        outsubpath = os.path.join(outpath, filepath)
+
+        if not os.path.exists(outsubpath) :
+            os.makedirs(outsubpath)
+
+        outfullfilename = os.path.join(outpath, filename)
+
+        outfile = open(outfullfilename, "wb")
+        outfile.write(file)
+        outfile.close()
+        
+        filenames.append(outfullfilename)
+
+        #print filename, "written"
+        print("")
+    if infilename.endswith(".pkg") :
+        with open("server_" + version + ".mst", "w") as f :
+            for filename in filenames:
+                f.writelines(filename + "\n")
+
 def package_pack(directory, outfilename) :
 
     filenames = []
@@ -344,6 +407,77 @@ def readindexes_old(filename) :
             indexptr = indexptr + 12 + indexlen
 
     return indexes, filemodes
+        
+def readfile_beta(fileid, offset, length, index_data, dat_file_handle, net_type):
+    # Load the index
+    #with open(index_file, 'rb') as f:
+    #    index_data = pickle.load(f)
+
+    # Get file information from the index
+    if fileid not in index_data:
+        print("Error: File number not found in index.")
+        return None
+
+    file_info = index_data[fileid]
+    #print(file_info)
+    dat_offset, dat_size = file_info['offset'], file_info['length']
+    
+    oldstringlist1 = ('"hlmaster.valvesoftware.com:27010"', '"half-life.east.won.net:27010"', '"gridmaster.valvesoftware.com:27012"', '"half-life.west.won.net:27010"', '"207.173.177.10:27010"')
+    oldstringlist2 = ('"tracker.valvesoftware.com:1200"', '"tracker.valvesoftware.com:1200"')
+    oldstringlist3 = ('207.173.177.10:7002', 'half-life.speakeasy-nyc.hlauth.net:27012', 'half-life.speakeasy-sea.hlauth.net:27012', 'half-life.speakeasy-chi.hlauth.net:27012')
+    oldstringlist4 = ('207.173.177.10:27010', '207.173.177.10:27010')
+    
+    if net_type == "external":
+        newstring1 = '"' + config["public_ip"] + ':27010"'
+    else:
+        newstring1 = '"' + config["server_ip"] + ':27010"'
+    if net_type == "external":
+        newstring2 = '"' + config["public_ip"] + ':1200"'
+    else:
+        newstring2 = '"' + config["tracker_ip"] + ':1200"'
+    if net_type == "external":
+        newstring3 = config["public_ip"] + ':' + config["validation_port"]
+    else:
+        newstring3 = config["server_ip"] + ':' + config["validation_port"]
+    if net_type == "external":
+        newstring4 = config["public_ip"] + ':27010'
+    else:
+        newstring4 = config["server_ip"] + ':27010'
+    
+    # Extract and decompress the file from the .dat file
+    #with open(dat_file, 'rb') as f:
+        #f.seek(dat_offset + offset)
+    dat_file_handle.seek(dat_offset + offset)
+    decompressed_data = dat_file_handle.read(length)
+    for oldstring1 in oldstringlist1:
+        if oldstring1 in decompressed_data:
+            stringlen_diff1 = len(oldstring1) - len(newstring1)
+            replacestring1 = newstring1 + ("\x00" * stringlen_diff1)
+            decompressed_data = decompressed_data.replace(oldstring1, replacestring1)
+    for oldstring2 in oldstringlist2:
+        if oldstring2 in decompressed_data:
+            stringlen_diff2 = len(oldstring2) - len(newstring2)
+            replacestring2 = newstring2 + ("\x00" * stringlen_diff2)
+            decompressed_data = decompressed_data.replace(oldstring2, replacestring2)
+    for oldstring3 in oldstringlist3:
+        if oldstring3 in decompressed_data:
+            stringlen_diff3 = len(oldstring3) - len(newstring3)
+            replacestring3 = newstring3 + (" " * stringlen_diff3)
+            decompressed_data = decompressed_data.replace(oldstring3, replacestring3)
+    for oldstring4 in oldstringlist4:
+        if oldstring4 in decompressed_data:
+            stringlen_diff4 = len(oldstring4) - len(newstring4)
+            replacestring4 = newstring4 + (" " * stringlen_diff4)
+            decompressed_data = decompressed_data.replace(oldstring4, replacestring4)
+        #decompressed_data = zlib.decompress(compressed_data)
+        
+    #print(len(decompressed_data[offset:offset + length]))
+    #print(len(compressed_data[offset:offset + length]))
+
+    #with open(str(FILE_COUNT) + ".file", "wb") as f:
+    #    f.write(decompressed_data)
+
+    return decompressed_data#[offset:offset + length]
 
 class Storage :
     def __init__(self, storagename, path, version) :
@@ -659,6 +793,20 @@ class ImpSocket :
             length = struct.unpack(">L", lengthstr)[0]
 
             data = self.recv_all(length, False)
+            if not data[0] == "\x07":
+                logging.debug(str(self.address) + ": Received data with length  - " + binascii.b2a_hex(lengthstr) + " " + binascii.b2a_hex(data))
+            return data
+
+    def recv_withlen_short(self, log = True) :
+        lengthstr = self.recv(2, False)
+        if len(lengthstr) != 2 :
+            logging.debug("Command header not long enough, should be 2, is " + str(len(lengthstr)))
+            #return "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" #DUMMY RETURN FOR FILESERVER
+        else :
+            length = struct.unpack(">H", lengthstr)[0]
+
+            data = self.recv_all(length, False)
+            #if not data[0] == "\x07":
             logging.debug(str(self.address) + ": Received data with length  - " + binascii.b2a_hex(lengthstr) + " " + binascii.b2a_hex(data))
             return data
 
@@ -1178,6 +1326,15 @@ def get_nanoseconds_since_time0():
     nano = 1000000
     now *= nano
     return now
+    
+def encrypt_with_pad(ptext, key, IV):
+    padsize = 16 - len(ptext) % 16
+    ptext += bytes([padsize] * padsize)
+    
+    aes = AES.new(key, AES.MODE_CBC, IV)
+    ctext = aes.encrypt(ptext)
+        
+    return ctext
 
 def sortfunc(x, y) :
 
@@ -1230,3 +1387,110 @@ def blob_dump(blob, spacer = "") :
     text = text + "\n" + spacer + "}"
 
     return text
+    
+def load_ccdb() :
+    if os.path.isfile(config["ccdb_path"]) and str(config["steam_date"]) != "" and str(config["steam_time"]) != "":
+        logging.debug("Reading CCDB")
+        if ":" in str(config["steam_date"]): client_date = config["steam_date"].replace(":", "")
+        elif "/" in str(config["steam_date"]): client_date = config["steam_date"].replace("/", "")
+        elif "\\" in str(config["steam_date"]): client_date = config["steam_date"].replace("\\", "")
+        elif "-" in str(config["steam_date"]): client_date = config["steam_date"].replace("-", "")
+        elif "_" in str(config["steam_date"]): client_date = config["steam_date"].replace("_", "")
+
+        if ":" in str(config["steam_time"]): client_time = config["steam_time"].replace(":", "")
+
+        status = "none"
+        steam_crc = "0"
+        steamui_crc = "0"
+        
+        conn = sqlite3.connect(config["ccdb_path"])
+        cursor = conn.cursor()
+        while status != "ok":
+            cursor.execute("SELECT * FROM firstblob where ccr_blobdate <= '" + client_date + "' ORDER BY filename DESC")
+            rows = cursor.fetchall()
+            row_num = 0
+            if len(rows) > 0:
+                if rows[row_num][20] > client_time and rows[row_num][19] > client_date:
+                    row_num = 1
+            if len(rows) == 0:
+                cursor.execute("SELECT * FROM firstblob where ccr_blobdate >= '" + client_date + "'")
+                rows = cursor.fetchall()
+            firstblob = {}
+            if rows[0][1] != "": firstblob["\x00\x00\x00\x00"] = struct.pack("<L", int(rows[0][1])) #version
+            if rows[0][2] != "": firstblob["\x01\x00\x00\x00"] = struct.pack("<L", int(rows[0][2])) #bootstrapper
+            if rows[0][3] != "": firstblob["\x02\x00\x00\x00"] = struct.pack("<L", int(rows[0][3])) #client
+            if rows[0][4] != "": firstblob["\x03\x00\x00\x00"] = struct.pack("<L", int(rows[0][4])) #linux_client
+            if rows[0][5] != "": firstblob["\x04\x00\x00\x00"] = struct.pack("<L", int(rows[0][5])) #hlds
+            if rows[0][6] != "": firstblob["\x05\x00\x00\x00"] = struct.pack("<L", int(rows[0][6])) #linux_hlds
+            if rows[0][7] != "": firstblob["\x06\x00\x00\x00"] = struct.pack("<L", int(rows[0][7])) #beta_bootstrapper
+            if rows[0][7] != "": firstblob["\x07\x00\x00\x00"] = str(rows[0][8]) + "\x00" #beta_bootstrapper_pwd
+            if rows[0][9] != "": firstblob["\x08\x00\x00\x00"] = struct.pack("<L", int(rows[0][9])) #beta_client
+            if rows[0][9] != "": firstblob["\x09\x00\x00\x00"] = str(rows[0][10]) + "\x00" #beta_client_pwd
+            if rows[0][11] != "": firstblob["\x0a\x00\x00\x00"] = struct.pack("<L", int(rows[0][11])) #beta_hlds
+            if rows[0][11] != "": firstblob["\x0b\x00\x00\x00"] = str(rows[0][12]) + "\x00" #beta_hlds_pwd
+            if rows[0][13] != "": firstblob["\x0c\x00\x00\x00"] = struct.pack("<L", int(rows[0][13])) #beta_linux_hlds
+            if rows[0][13] != "": firstblob["\x0d\x00\x00\x00"] = str(rows[0][14]) + "\x00" #beta_hlds_pwd
+            if rows[0][15] != "" or rows[0][16] != "" or rows[0][17] != "":
+                firstblob["\x0e\x00\x00\x00"] = {}
+                if rows[0][17] != "": firstblob["\x0e\x00\x00\x00"]["SteamGameUpdater"] = struct.pack("<L", int(rows[0][17])) #SteamGameUpdater (CSO)
+                if rows[0][15] != "": firstblob["\x0e\x00\x00\x00"]["cac"] = struct.pack("<L", int(rows[0][15])) #Cafe Admin Client
+                if rows[0][16] != "": firstblob["\x0e\x00\x00\x00"]["cas"] = struct.pack("<L", int(rows[0][16])) #Cafe Admin Server
+            if rows[0][18] != "": firstblob["\x0f\x00\x00\x00"] = struct.pack("<L", int(rows[0][18])) #custom_pkg
+            
+            pkg_check_result = check_pkgs(rows[0])
+            client_date = str(int(rows[0][19]) - 1)
+            client_time = str(int(rows[0][20]) - 1)
+            
+            logging.debug("Package set " + str(rows[0][2]) + "/" + str(rows[0][3]) + " check result: " + str(pkg_check_result))
+            if pkg_check_result == "missing":
+                logging.warn("Requested package set " + str(rows[0][2]) + "/" + str(rows[0][3]) + " is missing, trying earlier set...")
+            elif pkg_check_result == "failed":
+                logging.warn("Requested package set " + str(rows[0][2]) + "/" + str(rows[0][3]) + " CRC failed, trying earlier set...")
+            
+            if client_date == "20030119": #First blob reached, crash out to avoid db select error
+                logging.error("No more packages available, exiting.")
+                sys.exit()
+            status = pkg_check_result
+        logging.info("Requested package set " + str(rows[0][2]) + "/" + str(rows[0][3]) + " validated successfully")
+        return firstblob
+    else:
+        logging.debug("CCDB not found, trying blob files")
+        if os.path.isfile("files/1stcdr.py") :
+            with open("files/1stcdr.py", "r") as f:
+                firstblob = f.read()
+        elif os.path.isfile("files/firstblob.py") :
+            with open("files/firstblob.py", "r") as f:
+                firstblob = f.read()
+        else :
+            with open("files/firstblob.bin", "rb") as f:
+                firstblob_bin = f.read()
+            if firstblob_bin[0:2] == "\x01\x43":
+                firstblob_bin = zlib.decompress(firstblob_bin[20:])
+            firstblob_unser = blob_unserialize(firstblob_bin)
+            firstblob = "blob = " + blob_dump(firstblob_unser)
+
+        firstblob_eval = ast.literal_eval(firstblob[7:len(firstblob)])
+        return firstblob_eval
+        
+def check_pkgs(db_row) :
+    if db_row[21] == "MISSING" or db_row[22] == "MISSING":
+        return "missing"
+    
+    if db_row[1] == 1:
+        steam_crc = hashlib.md5(open(config["packagedir"] + 'betav2/Steam_' + str(db_row[2]) + '.pkg', 'rb').read()).hexdigest()
+    elif os.path.isfile(config["packagedir"] + 'Steam_' + str(db_row[2]) + '.pkg'):
+        steam_crc = hashlib.md5(open(config["packagedir"] + 'Steam_' + str(db_row[2]) + '.pkg', 'rb').read()).hexdigest()
+    else:
+        return "missing"
+
+    if db_row[1] == 1:
+        steamui_crc = hashlib.md5(open(config["packagedir"] + 'betav2/PLATFORM_' + str(db_row[3]) + '.pkg', 'rb').read()).hexdigest()
+    elif os.path.isfile(config["packagedir"] + 'SteamUI_' + str(db_row[3]) + '.pkg'):
+        steamui_crc = hashlib.md5(open(config["packagedir"] + 'SteamUI_' + str(db_row[3]) + '.pkg', 'rb').read()).hexdigest()
+    else:
+        return "missing"
+        
+    if steam_crc != str(db_row[21]) or steamui_crc != str(db_row[22]):
+        return "failed"
+    
+    return "ok"
