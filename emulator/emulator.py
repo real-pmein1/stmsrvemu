@@ -41,7 +41,10 @@ update_exception1 = ""
 update_exception2 = ""
 clear_config = False
 
-mod_date_emu = os.path.getmtime("emulator.exe")
+try:
+    mod_date_emu = os.path.getmtime("emulator.exe")
+except:
+    mod_date_emu = 0
 try:
     mod_date_cach = os.path.getmtime("files/cache/emulator.ini.cache")
 except:
