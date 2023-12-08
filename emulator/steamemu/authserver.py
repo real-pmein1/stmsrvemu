@@ -113,13 +113,6 @@ class authserver(threading.Thread):
                         #steamid = binascii.a2b_hex("ffff" + "ffffffff" + "ffffffff")
                         steamUniverse = struct.pack(">H", int(self.config["universe"]))
                         steamid = steamUniverse + userblob['\x06\x00\x00\x00'][username]['\x01\x00\x00\x00']
-                        #servers = binascii.a2b_hex("451ca0939a69451ca0949a69")
-                        #authport = struct.pack("<L", int(port))
-                        #if self.config["public_ip"] != "0.0.0.0" :
-                        #    if clientid.startswith(globalvars.servernet) :
-                        #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
-                        #    else :
-                        #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["validation_port"]))
                         if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                             bin_ip = steam.encodeIP((self.config["server_ip"], self.config["validation_port"]))
                         else :
@@ -632,11 +625,6 @@ class authserver(threading.Thread):
                 client_ticket += steam.unixtime_to_steamtime(currtime + 86400)    # TicketValidUntilTime
                 client_ticket += os.urandom(4) #struct.pack("<I", 1)
                 client_ticket += os.urandom(8) # struct.pack("<II", 1, 2)
-                #if self.config["public_ip"] != "0.0.0.0" :
-                #    if clientid.startswith(globalvars.servernet) :
-                #        client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
-                #    else :
-                #        client_ticket += steam.encodeIP((self.config["public_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
                 if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                     client_ticket += steam.encodeIP((self.config["server_ip"], self.config["file_server_port"])) + b"\x00\x00" # why are there extra bytes? maybe padding to 4 byte boundary
                 else :

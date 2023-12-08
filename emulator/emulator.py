@@ -7,6 +7,9 @@ from tqdm import tqdm
 
 import steam
 import dirs
+
+dirs.create_dirs()
+
 import steamemu.logger
 import globalvars
 
@@ -35,13 +38,16 @@ from steamweb.steamweb import check_child_pid
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-local_ver = "0.73"
+local_ver = "0.73.1"
 emu_ver = "0"
 update_exception1 = ""
 update_exception2 = ""
 clear_config = False
 
-mod_date_emu = os.path.getmtime("emulator.exe")
+try:
+    mod_date_emu = os.path.getmtime("emulator.exe")
+except:
+    mod_date_emu = 0
 try:
     mod_date_cach = os.path.getmtime("files/cache/emulator.ini.cache")
 except:
@@ -61,8 +67,6 @@ if (mod_date_cach < mod_date_emu) and clear_config == True:
     #print
 
 config = read_config()
-
-dirs.create_dirs()
 
 print
 print("Steam 2003-2011 Server Emulator v" + local_ver)
@@ -294,45 +298,6 @@ if config["community_ip"] != "0.0.0.0" :
         quit()
 
 log.info("...Starting Steam Server...")
-
-# if config["server_ip"].startswith("10.") :
-    # globalvars.servernet = "('10."
-# elif config["server_ip"].startswith("172.16.") :
-    # globalvars.servernet = "('172.16."
-# elif config["server_ip"].startswith("172.17.") :
-    # globalvars.servernet = "('172.17."
-# elif config["server_ip"].startswith("172.18.") :
-    # globalvars.servernet = "('172.18."
-# elif config["server_ip"].startswith("172.19.") :
-    # globalvars.servernet = "('172.19."
-# elif config["server_ip"].startswith("172.20.") :
-    # globalvars.servernet = "('172.20."
-# elif config["server_ip"].startswith("172.21.") :
-    # globalvars.servernet = "('172.21."
-# elif config["server_ip"].startswith("172.22.") :
-    # globalvars.servernet = "('172.22."
-# elif config["server_ip"].startswith("172.23.") :
-    # globalvars.servernet = "('172.23."
-# elif config["server_ip"].startswith("172.24.") :
-    # globalvars.servernet = "('172.24."
-# elif config["server_ip"].startswith("172.25.") :
-    # globalvars.servernet = "('172.25."
-# elif config["server_ip"].startswith("172.26.") :
-    # globalvars.servernet = "('172.26."
-# elif config["server_ip"].startswith("172.27.") :
-    # globalvars.servernet = "('172.27."
-# elif config["server_ip"].startswith("172.28.") :
-    # globalvars.servernet = "('172.28."
-# elif config["server_ip"].startswith("172.29.") :
-    # globalvars.servernet = "('172.29."
-# elif config["server_ip"].startswith("172.30.") :
-    # globalvars.servernet = "('172.30."
-# elif config["server_ip"].startswith("172.31.") :
-    # globalvars.servernet = "('172.31."
-# elif config["server_ip"].startswith("192.168.") :
-    # globalvars.servernet = "('192.168."
-    
-#print(globalvars.servernet)
 
 class listener(threading.Thread):
     def __init__(self, port, serverobject, config):
@@ -587,14 +552,16 @@ else :
     f = open(config["packagedir"] + "Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
 pkg = Package(f.read())
 f.close()
-shutil.rmtree("client")
-#os.mkdir("client")
+if config["public_ip"] != "0.0.0.0" and not os.path.isdir("client/wan"):
+    shutil.rmtree("client")
+elif config["public_ip"] == "0.0.0.0" and os.path.isdir("client/wan"):
+    shutil.rmtree("client")
 dirs.create_dirs()
 file = pkg.get_file("SteamNew.exe")
 file2 = pkg.get_file("SteamNew.exe")
 if config["public_ip"] != "0.0.0.0" :
-    os.mkdir("client/lan")
-    os.mkdir("client/wan")
+    if not os.path.isdir("client/lan"): os.mkdir("client/lan")
+    if not os.path.isdir("client/wan"): os.mkdir("client/wan")
     file = neuter_file(file, config["public_ip"], config["dir_server_port"], "SteamNew.exe", "wan")
     file2 = neuter_file(file2, config["server_ip"], config["dir_server_port"], "SteamNew.exe", "lan")
     f = open("client/wan/Steam.exe", "wb")
@@ -901,7 +868,7 @@ else:
     else :
         log.info("TRACKER unsupported on release client, not started")
 time.sleep(0.2)
-if config["use_webserver"] == "true" :
+if config["use_webserver"] == "true" and os.path.isdir(config["apache_root"]):
     if globalvars.steamui_ver < 87 or config["http_port"] == "steam" or config["http_port"] == "0" :
         steamweb("80", config["http_ip"], config["apache_root"], config["web_root"])
         http_port = "80"
@@ -912,6 +879,8 @@ if config["use_webserver"] == "true" :
     find_child_pid_timer = threading.Timer(10.0, check_child_pid())  
     find_child_pid_timer.start() 
     time.sleep(0.2)
+elif config["use_webserver"] == "true" and not os.path.isdir(config["apache_root"]):
+    log.error("Cannot start Steam Web Server: apache folder is missing")
 vttlistener = listener("27046", vttserver, config)
 vttlistener.start()
 log.info("Valve Time Tracking Server listening on port 27046")

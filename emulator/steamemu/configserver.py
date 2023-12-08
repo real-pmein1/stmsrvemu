@@ -109,7 +109,6 @@ class configserver(threading.Thread):
                     #self.socket.send(binascii.a2b_hex("0001312d000000012c"))
         
                     if self.config["public_ip"] != "0.0.0.0" :
-                        #if clientid.startswith(globalvars.servernet) :
                         if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                             bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
                         else :

@@ -5,7 +5,6 @@ config = read_config()
 
 converting = "0"
 checksum_temp_file = 0
-#servernet = "0."
 udpdata = ""
 udpaddr = ""
 hl1serverlist = list(xrange(10000))

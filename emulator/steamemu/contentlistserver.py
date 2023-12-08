@@ -16,13 +16,6 @@ class contentlistserver(threading.Thread):
         clientid = str(self.address) + ": "
         log.info(clientid + "Connected to Content List Server ")
         
-        #if self.config["public_ip"] != "0.0.0.0" :
-        #    if clientid.startswith(globalvars.servernet) :
-        #        bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
-        #        pkg_ip = steam.encodeIP((self.config["server_ip"], self.config["clupd_server_port"]))
-        #    else :
-        #        bin_ip = steam.encodeIP((self.config["public_ip"], self.config["file_server_port"]))
-        #        pkg_ip = steam.encodeIP((self.config["public_ip"], self.config["clupd_server_port"]))
         if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
             bin_ip = steam.encodeIP((self.config["server_ip"], self.config["file_server_port"]))
             pkg_ip = steam.encodeIP((self.config["server_ip"], self.config["clupd_server_port"]))

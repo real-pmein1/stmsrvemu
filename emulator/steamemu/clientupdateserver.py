@@ -82,7 +82,6 @@ class clientupdateserver(threading.Thread):
                             except OSError as error :
                                 log.debug(clientid + "Internal pkg dir already exists")
                             
-                            #if clientid.startswith(globalvars.servernet) :
                             if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                                 if not os.path.isfile("files/cache/internal/" + newfilename) :
                                     neuter(self.config["packagedir"] + "betav2/" + newfilename, "files/cache/internal/" + newfilename, self.config["server_ip"], self.config["dir_server_port"], "lan")
@@ -117,7 +116,6 @@ class clientupdateserver(threading.Thread):
                             except OSError as error :
                                 log.debug(clientid + "Internal pkg dir already exists")
                             
-                            #if clientid.startswith(globalvars.servernet) :
                             if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                                 if not os.path.isfile("files/cache/internal/" + filename) :
                                     neuter(self.config["packagedir"] + "betav2/" + filename, "files/cache/internal/" + filename, self.config["server_ip"], self.config["dir_server_port"], "lan")
@@ -197,7 +195,6 @@ class clientupdateserver(threading.Thread):
                             except OSError as error :
                                 log.debug(clientid + "Internal pkg dir already exists")
                             
-                            #if clientid.startswith(globalvars.servernet) :
                             if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                                 if not os.path.isfile("files/cache/internal/" + newfilename) :
                                     neuter(self.config["packagedir"] + newfilename, "files/cache/internal/" + newfilename, self.config["server_ip"], self.config["dir_server_port"], "lan")
@@ -232,7 +229,6 @@ class clientupdateserver(threading.Thread):
                             except OSError as error :
                                 log.debug(clientid + "Internal pkg dir already exists")
                             
-                            #if clientid.startswith(globalvars.servernet) :
                             if str(self.address[0]) in ipcalc.Network(str(globalvars.server_net)):
                                 if not os.path.isfile("files/cache/internal/" + filename) :
                                     neuter(self.config["packagedir"] + filename, "files/cache/internal/" + filename, self.config["server_ip"], self.config["dir_server_port"], "lan")
