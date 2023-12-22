@@ -4,7 +4,7 @@ from package import Package
 from steamemu.config import read_config
 import globalvars
 
-if globalvars.steamui_ver < 252: #last 2006 for now
+if globalvars.steamui_ver < 1004: #2009 was #252: #last 2006 for now
     filenames = ("SteamNew.exe", "Steam.dll", "SteamUI.dll", "platform.dll", "steam\SteamUI.dll", "friends\servers.vdf", "servers\MasterServers.vdf", "servers\ServerBrowser.dll", "Public\Account.html", "caserver.exe", "cacdll.dll", "CASClient.exe", "unicows.dll", "GameUI.dll", "steamclient.dll", "steam\SteamUIConfig.vdf")
 else:
     filenames = ("SteamNew.exe", "Steam.dll", "SteamUI.dll", "platform.dll", "steam\SteamUI.dll", "friends\servers.vdf", "servers\MasterServers.vdf", "servers\ServerBrowser.dll", "Public\Account.html", "caserver.exe", "cacdll.dll", "CASClient.exe", "unicows.dll", "GameUI.dll")#, "steamclient.dll", "GameOverlayUI.exe", "serverbrowser.dll", "gamoverlayui.dll", "steamclient64.dll", "AppOverlay.dll", "AppOverlay64.dll", "SteamService.exe", "friendsUI.dll", "SteamService.dll")
@@ -38,7 +38,7 @@ def neuter_file(file, server_ip, server_port, filename, network) :
                     newlength = len(replace)
                     missinglength = fulllength - newlength
                     if missinglength < 0 :
-                        log.warn("WARNING: Replacement text " + replace + " is too long! Not replaced!")
+                        log.warn("Replacement text " + replace + " is too long! Not replaced!")
                     elif missinglength == 0 :
                         file = file.replace(search, replace)
                         log.debug(filename + ": Replaced " + info)
@@ -252,7 +252,7 @@ def neuter_file(file, server_ip, server_port, filename, network) :
                         newlength = len(replace)
                         missinglength = fulllength - newlength
                         if missinglength < 0 :
-                            log.warn("WARNING: Replacement text " + replace + " is too long! Not replaced!")
+                            log.warn("Replacement text " + replace + " is too long! Not replaced!")
                         elif missinglength == 0 :
                             file = file.replace(search, replace)
                             log.debug(filename + ": Replaced " + info)
@@ -286,7 +286,7 @@ def neuter_file(file, server_ip, server_port, filename, network) :
                         newlength = len(replace)
                         missinglength = fulllength - newlength
                         if missinglength < 0 :
-                            log.warn("WARNING: Replacement text " + replace + " is too long! Not replaced!")
+                            log.warn("Replacement text " + replace + " is too long! Not replaced!")
                         elif missinglength == 0 :
                             file = file.replace(search, replace)
                             log.debug(filename + ": Replaced " + info)

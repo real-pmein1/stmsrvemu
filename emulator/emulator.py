@@ -25,9 +25,9 @@ from steamemu.udpserver import udpserver
 from steamemu.masterhl import masterhl
 from steamemu.masterhl2 import masterhl2
 from steamemu.masterrdkf import masterrdkf
-from steamemu.friends import friends
+from steam3emu.cmenc import cmenc
 from steamemu.vttserver import vttserver
-from steamemu.twosevenzeroonefour import twosevenzeroonefour
+from steam3emu.cmunenc import cmunenc
 from steamemu.validationserver import validationserver
 from steamemu.clientupdateserver import clientupdateserver
 from steamweb.steamweb import steamweb
@@ -38,7 +38,7 @@ from steamweb.steamweb import check_child_pid
 from Steam2.package import Package
 from Steam2.neuter import neuter_file
 
-local_ver = "0.73.1"
+local_ver = "0.73.2"
 emu_ver = "0"
 update_exception1 = ""
 update_exception2 = ""
@@ -220,6 +220,15 @@ print(("*" * 11) + ("*" * iplen))
 print
 log = logging.getLogger('emulator')
 
+log.info("...Starting Steam Server...")
+
+firstblob_eval = steam.load_ccdb()
+#steam.load_ccdb()
+
+globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
+globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
+globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
+
 if not update_exception1 == "":
     log.debug("Update1 error: " + str(update_exception1))
 if not update_exception2 == "":
@@ -296,8 +305,6 @@ if config["community_ip"] != "0.0.0.0" :
         print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
         raw_input("Press Enter to exit...")
         quit()
-
-log.info("...Starting Steam Server...")
 
 class listener(threading.Thread):
     def __init__(self, port, serverobject, config):
@@ -443,82 +450,13 @@ class udplistener(threading.Thread):
             #    clientid = str(globalvars.addr) + ": "
             #    log.info(clientid + "Connected to 27014")
             #    log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-            elif self.port == 27014 : #was 27017
-                log = logging.getLogger("friends")
-                clientid = str(globalvars.addr) + ": "
-                log.info(clientid + "Connected to Chat Server")
-                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-                message = binascii.b2a_hex(globalvars.data)
-                if message.startswith("56533031") : # VS01
-                    friendsrecheader = message[0:8]
-                    friendsrecsize = message[8:12]
-                    friendsrecfamily = message[12:14]
-                    friendsrecversion = message[14:16]
-                    friendsrecto = message[16:24]
-                    friendsrecfrom = message[24:32]                    
-                    friendsrecsent = message[32:40]
-                    friendsrecreceived = message[40:48]
-                    friendsrecflag = message[48:56]
-                    friendsrecsent2 = message[56:64]
-                    friendsrecsize2 = message[64:72]
-                    friendsrecdata = message[72:]
-                    
-                    if friendsrecfamily == "01": #SendMask
-                        friendsrepheader = friendsrecheader
-                        friendsrepsize = 4
-                        friendsrepfamily = 2
-                        friendsrepversion = friendsrecversion
-                        friendsrepto = friendsrecfrom
-                        friendsrepfrom = friendsrecto
-                        friendsrepsent = 1
-                        friendsrepreceived = friendsrecsent
-                        friendsrepflag = 0
-                        friendsrepsent2 = 0
-                        friendsrepsize2 = 0
-                        friendsrepdata = 0 # data empty on this packet, size is from friendsrepsize (0004)
-                        friendsmaskreply1 = friendsrepheader + format(friendsrepsize, '04x') + format(friendsrepfamily, '02x') + friendsrepversion + friendsrepto + friendsrepfrom + format(friendsrepsent, '08x') + friendsrepreceived + format(friendsrepflag, '08x') + format(friendsrepsent2, '08x') + format(friendsrepsize2, '08x') + format(friendsrepdata, '08x')
-                        #print(friendsmaskreply1)
-                        friendsmaskreply2 = binascii.a2b_hex(friendsmaskreply1)
-                        #print(friendsmaskreply2)
-                        serversocket.sendto(friendsmaskreply2, globalvars.addr)
-                    elif friendsrecfamily == "03": #SendID
-                        friendsrepheader = friendsrecheader
-                        friendsrepsize = 0
-                        friendsrepfamily = 4
-                        friendsrepversion = friendsrecversion
-                        
-                        friendsrepid1 = int(round(time.time()))
-                        friendsrepid2 = struct.pack('>I', friendsrepid1)
-                        friendsrepto = binascii.b2a_hex(friendsrepid2)
-                        #friendsrepto = friendsrecfrom
-                        
-                        friendsrepfrom = friendsrecto
-                        friendsrepsent = 2
-                        friendsrepreceived = friendsrecsent
-                        friendsrepflag = 1
-                        friendsrepsent2 = 2
-                        friendsrepsize2 = 0
-                        friendsrepdata = 0
-                        
-                        friendsidreply1 = friendsrepheader + format(friendsrepsize, '04x') + format(friendsrepfamily, '02x') + friendsrepversion + friendsrepto + friendsrepfrom + format(friendsrepsent, '08x') + friendsrepreceived + format(friendsrepflag, '08x') + format(friendsrepsent2, '08x') + format(friendsrepsize2, '08x') + format(friendsrepdata, '08x')
-                        print(friendsidreply1)
-                        friendsidreply2 = binascii.a2b_hex(friendsidreply1)
-                        print(friendsidreply2)
-                        serversocket.sendto(friendsidreply2, globalvars.addr)
-                    elif friendsrecfamily == "07": #ProcessHeartbeat
-                        if not friendsrecsize == "0000":
-                            friendsreqreq = friendsrecdata[0:4]
-                            friendsreqid = friendsrecdata[4:8]
-                            friendsreqid2 = friendsrecdata[8:12]
-                            friendsrequnknown = friendsrecdata[12:16]
-                            friendsreqdata = friendsrecdata[16:]
-                            friendsreqheader = friendsrecheader
+            #elif self.port == 27014 : #was 27017
             else :
                 log.debug(clientid + "Unconfigured UDP port requested: " + str(self.port))
 
-config = read_config()
+#config = read_config()
 
-firstblob_eval = steam.load_ccdb()
+#firstblob_eval = steam.load_ccdb()
 
 #if firstblob_eval == "":
 #    if os.path.isfile("files/1stcdr.py") :
@@ -536,9 +474,9 @@ firstblob_eval = steam.load_ccdb()
 #        firstblob = "blob = " + steam.blob_dump(firstblob_unser)
 
 #    firstblob_eval = ast.literal_eval(firstblob[7:len(firstblob)])
-globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
-globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
-globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
+#globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
+#globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
+#globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
 
 #globalvars.steam_ver = 2
 #globalvars.steamui_ver = 2
@@ -552,10 +490,10 @@ else :
     f = open(config["packagedir"] + "Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
 pkg = Package(f.read())
 f.close()
-if config["public_ip"] != "0.0.0.0" and not os.path.isdir("client/wan"):
-    shutil.rmtree("client")
-elif config["public_ip"] == "0.0.0.0" and os.path.isdir("client/wan"):
-    shutil.rmtree("client")
+# if config["public_ip"] != "0.0.0.0" and not os.path.isdir("client/wan"):
+    # shutil.rmtree("client")
+# elif config["public_ip"] == "0.0.0.0" and os.path.isdir("client/wan"):
+    # shutil.rmtree("client")
 dirs.create_dirs()
 file = pkg.get_file("SteamNew.exe")
 file2 = pkg.get_file("SteamNew.exe")
@@ -851,15 +789,15 @@ rdkfmasterlistener.start()
 log.info("Steam2 Master RDKF Server listening on port 27012")
 time.sleep(0.2)
 if config["enable_steam3_servers"] == "1":
-    twosevenzeroonefourlistener = udplistener(27014, twosevenzeroonefour, config)
-    twosevenzeroonefourlistener.start()
-    log.info("Steam3 CM Server 1 listening on port 27014")
+    cmunenclistener = cmunenc(27014, cmunenc, config)
+    cmunenclistener.start()
+    log.info("Steam3 CM Unencrypted Server listening on port 27014")
     time.sleep(0.2)
 if config["enable_steam3_servers"] == "1":
-    chatlistener = udplistener(27017, friends, config)
-    chatlistener.start()
+    cmenclistener = cmenc(27017, cmenc, config)
+    cmenclistener.start()
     globalvars.tracker = 0
-    log.info("Steam3 Chat Server listening on port 27017")
+    log.info("Steam3 CM Encrypted Server listening on port 27017")
 else:
     if globalvars.record_ver == 1 :
         globalvars.tracker = 1

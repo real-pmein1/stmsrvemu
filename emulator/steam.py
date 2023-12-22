@@ -4,6 +4,7 @@ from Crypto.Hash import SHA
 from Crypto.Cipher import AES
 
 from steamemu.config import read_config
+#import globalvars
 config = read_config()
 
 main_key_sign = RSA.construct((
@@ -1452,7 +1453,7 @@ def load_ccdb() :
                 sys.exit()
             status = pkg_check_result
         logging.info("Requested package set " + str(rows[0][2]) + "/" + str(rows[0][3]) + " validated successfully")
-        return firstblob
+        firstblob_eval = firstblob
     else:
         logging.debug("CCDB not found, trying blob files")
         if os.path.isfile("files/1stcdr.py") :
@@ -1470,7 +1471,46 @@ def load_ccdb() :
             firstblob = "blob = " + blob_dump(firstblob_unser)
 
         firstblob_eval = ast.literal_eval(firstblob[7:len(firstblob)])
-        return firstblob_eval
+
+    # for filename in os.listdir("files/cache/") :
+        # if globalvars.record_ver == 1 and "SteamUI_" in filename :
+            # os.remove("files/cache/" + filename)
+            # for filename2 in os.listdir("files/cache/") :
+                # if "Steam_" in filename2 : os.remove("files/cache/" + filename2)
+            # break
+        # elif globalvars.record_ver != 1 and "PLATFORM_" in filename :
+            # os.remove("files/cache/" + filename)
+            # for filename2 in os.listdir("files/cache/") :
+                # if "Steam_" in filename2 : os.remove("files/cache/" + filename2)
+            # break
+            
+    # if os.path.isdir("files/cache/internal") :
+        # for filename in os.listdir("files/cache/internal/") :
+            # if globalvars.record_ver == 1 and "SteamUI_" in filename :
+                # os.remove("files/cache/internal/" + filename)
+                # for filename2 in os.listdir("files/cache/internal/") :
+                    # if "Steam_" in filename2 : os.remove("files/cache/internal/" + filename2)
+                # break
+            # elif globalvars.record_ver != 1 and "PLATFORM_" in filename :
+                # os.remove("files/cache/internal/" + filename)
+                # for filename2 in os.listdir("files/cache/internal/") :
+                    # if "Steam_" in filename2 : os.remove("files/cache/internal/" + filename2)
+                # break
+            
+    # if os.path.isdir("files/cache/external") :
+        # for filename in os.listdir("files/cache/external/") :
+            # if globalvars.record_ver == 1 and "SteamUI_" in filename :
+                # os.remove("files/cache/external/" + filename)
+                # for filename2 in os.listdir("files/cache/external/") :
+                    # if "Steam_" in filename2 : os.remove("files/cache/external/" + filename2)
+                # break
+            # elif globalvars.record_ver != 1 and "PLATFORM_" in filename :
+                # os.remove("files/cache/external/" + filename)
+                # for filename2 in os.listdir("files/cache/external/") :
+                    # if "Steam_" in filename2 : os.remove("files/cache/external/" + filename2)
+                # break
+                
+    return firstblob_eval
         
 def check_pkgs(db_row) :
     if db_row[21] == "MISSING" or db_row[22] == "MISSING":

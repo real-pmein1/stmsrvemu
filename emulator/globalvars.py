@@ -40,8 +40,10 @@ firstblob_eval = steam.load_ccdb()
 #        firstblob = "blob = " + steam.blob_dump(firstblob_unser)
 
 #    firstblob_eval = ast.literal_eval(firstblob[7:len(firstblob)])
+
 steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
 steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
+record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
 
 if steamui_ver < 87:
     http_port_neuter = ""
@@ -940,7 +942,7 @@ def replace_string_name(network):
          "http://" + config["community_ip"] + "/community/public/",
          "Community local URL"),
         ("http://media.steampowered.com/steamcommunity/public/",
-         "http://" + config["community_ip"] + "/steamcommunity/public/",
+         "http://" + octal_ip + http_port_neuter + "/steamcommunity/public/",
          "Community media URL"),
         ("http://steamcommunity.com/",
          "http://" + config["community_ip"] + "/",

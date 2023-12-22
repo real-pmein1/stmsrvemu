@@ -67,6 +67,7 @@ class configserver(threading.Thread):
                     blob = steam.blob_serialize(firstblob_eval)
                     globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
                     globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
+                    globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
                     #globalvars.steam_ver = 2
                     #globalvars.steamui_ver = 2
                     if globalvars.steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
