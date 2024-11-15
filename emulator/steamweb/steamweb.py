@@ -1,15 +1,9 @@
-import logging
-import os
-import subprocess
-
-import psutil
+import httpd, os, subprocess, psutil, logging
 
 import globalvars
-from . import httpd
-
 
 class steamweb():
-    def __init__(self, http_port, http_ip, apache_root, web_root):
+    def __init__(self, http_port, http_ip, apache_root, web_root) :
         log = logging.getLogger("websrv")
         serverid = ""
         log.debug(serverid + "Starting Apache2 web server")
@@ -20,7 +14,7 @@ class steamweb():
                         old_proc = pidfile[:-4]
                         log.debug(serverid + "Apache2 process ID found: " + old_proc)
                         process = psutil.Process(int(old_proc))
-                        for proc in process.children(recursive = True):
+                        for proc in process.children(recursive=True):
                             proc.kill()
                         process.kill()
                         log.debug(serverid + "Apache2 process  " + old_proc + " killed")
@@ -29,19 +23,17 @@ class steamweb():
                     with open("logs/apache_startup.log", "w") as logfile:
                         logfile.write(str(e))
                 finally:
-                    if pidfile.endswith(".pid"):
-                        os.remove("logs/" + pidfile)
+                    if pidfile.endswith(".pid"): os.remove("logs/" + pidfile)
 
-        # if globalvars.steamui_ver < 36 :
+        #if globalvars.steamui_ver < 36 :
         #    http_port = "80"
-        # elif len(http_port) > 0: 
+        #elif len(http_port) > 0: 
         #    http_port = http_port[1:]
-        # else:
+        #else:
         #    http_port = "80"
-        log.debug(serverid + "Apache2 root: " + apache_root)
         log.debug(serverid + "Apache2 binary: " + apache_root + "/bin/httpd.exe")
         apache_bin = apache_root + "/bin/httpd.exe"
-        apache_bin_dir = apache_bin[:apache_bin.rindex("/") + 1]
+        apache_bin_dir = apache_bin[:apache_bin.rindex("/")]
         log.debug(serverid + "Apache2 binary folder: " + apache_bin_dir)
         apache_conf_dir = apache_root + "/conf/"
         log.debug(serverid + "Apache2 config folder: " + apache_conf_dir)
@@ -51,30 +43,24 @@ class steamweb():
         default_conf_file = apache_conf_dir + "httpd.conf"
         log.debug(serverid + "Apache2 default config file: " + default_conf_file)
         log.debug(serverid + "Apache2 web root folder: " + web_root)
-        community_conf_file = apache_conf_dir + http_port + "_community.conf"
-        log.debug(serverid + "Apache2 community config file: " + community_conf_file)
-        community_conf_vh = apache_conf_dir[len(apache_root) + 1:] + http_port + "_community.conf"
-        log.debug(serverid + "Apache2 community virtual path: " + community_conf_vh)
 
-        httpd.check_config(conf_file, http_port, web_root, default_conf_file, apache_conf_dir, apache_root, community_conf_file, community_conf_vh)
+        httpd.check_config(conf_file, http_ip, http_port, web_root, default_conf_file)
         log.debug(serverid + "Apache2 config file created")
 
-        proc = subprocess.Popen(apache_bin + " -f " + conf_file_short, cwd = apache_bin_dir)
+        proc = subprocess.Popen(apache_bin + " -f " + conf_file_short, cwd=apache_bin_dir)
         log.debug(serverid + "Apache2 started with process ID " + str(proc.pid))
-
-        globalvars.httpd_process = proc
 
         with open("logs/" + str(proc.pid) + ".pid", "w") as pid_file:
             pid_file.write(str(proc.pid))
-
-
+            
+            
 class check_child_pid():
     def __init__(self):
         self.check_pid()
 
     def __call__(self):
         self.check_pid()
-
+        
     def check_pid(self):
         log = logging.getLogger("websrv")
         serverid = ""
@@ -86,10 +72,9 @@ class check_child_pid():
                         log.debug(serverid + "Apache2 process ID found: " + old_proc)
                         break
             current_process = psutil.Process(int(old_proc))
-            children = current_process.children(recursive = True)
+            children = current_process.children(recursive=True)
             for child in children:
                 log.debug(serverid + "Apache2 child process ID found: " + str(child.pid))
-                globalvars.httpd_child_pid_list.append(child)
                 with open("logs/" + str(child.pid) + ".pid", "w") as child_pid_file:
                     child_pid_file.write(str(child.pid))
         except Exception as e:
