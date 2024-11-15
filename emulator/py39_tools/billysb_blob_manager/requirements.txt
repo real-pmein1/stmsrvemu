@@ -1,0 +1,2 @@
+pyperclip
+PySimpleGUI==4.70.1
