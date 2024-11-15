@@ -1,0 +1,136 @@
+pmein1:
+- modified and expanded tane + dormine emulator
+- enhanced neutering
+- steam 2003-2010 steam2 compatibility
+- package file integrater (pkg_add)
+- custom blob implementation/integration (custom folder)
+- appdownloader/neuter program for faster neutering
+- enhanced logger readability by formatting output
+- enhanced gcf to storage converter
+- created initial HL/HL2/RDFK masterservers
+- created VTT/Cafe auth server
+- created validation server
+- integrated ymgve's beta 2 server code into emulator
+- created CDDB/CCDB database code and structure
+- enhanced ben's beta storage creator
+- implemented and rewrote beta storage reading code
+- added ability to change blob and neuter the new blob while running
+- enhanced filesystem watcher to more accuratly watch specific files
+- created beta 1 storages
+
+ben:
+- Created CM server Emulator
+    - used valvepython's message library as a reference for packet parsing code
+- rewrote and refactored pmeins emulator to be more modular and easier to maintain
+- upgraded code to python 3.9
+- Enhanced logger readability using colored text
+- added name suggestion code
+- moved the server from filebased to mysql based
+- implemented database code and structure
+- completed missing CSER packets
+- implemented Harvest Server
+- Implemented VAC 1 server
+- Integrated pmein1/dormine's trackerserver code into emulator
+- added ability to host multiple content servers for a single network
+- implemented ticket parsing code for each type of server
+- added SMTP support to authserver and CM
+- implemented black/white listing
+- added packet filtering and rate limiting with auto ip banning
+- rewrote the HL/HL2/RDFK Masterservers
+- integrated beta 1 server into emulator
+- created initial Manual
+- created original user management tool
+- wrote steamui.dll / binary patching code with wildcard bytes
+- created network managing class as a backbone for each server
+- implemented thread manager
+- implemented escape watcher for shutting down gracefully
+- enhanced pkg_add by adding support for specific pkg versions
+- created storage checksum checker to ensure storages are original and not corrupted
+- created initial user py to database converter
+- implemented config writer to save new config values or rename old config key names to emulator.ini
+- implemented auto local and server IP address, so figuring out IP for config is no longer nessesary
+- implemented RSA key generation code
+- implemented linux functionality
+- created beta storage creator and reader with help from YMGVE
+- converted Da_FileServer's appinfo tool to python
+    - added v1 individual appinfo format parsing and saving
+- implemented geoIP database for region specific CM features
+- implemented ymgve's Steamworks SDK Depot storage features as a storage class in the server
+- implemented retail 2004 tracker code
+- implemented beta 1 tracker code
+- implemented database support into blob manager
+- implemented settings configurator into blob manager
+- added steamworks contenttool neutering
+- extended FTP to use accounts for the Steamworks Content tool uploading functionality
+- implemented the original filesystem directory watcher for on-the-go gcf neutering
+- implemented XML custom blob support
+
+billy:
+- blobulator code / json custom blob code
+- created 2005 storefront website
+- created community website
+- created the wonderful blob manager for selecting the correctly matching blobs
+- testing the server in a linux enviroment
+- fixed linux functionality
+
+XJR9000:
+- ideas
+    - WAN and LAN storage neutering
+    - pre-neutering storages based on blob information (remove manual convert)
+    - relative file paths in ini
+    - automatic community global.php configuration
+    - selective cache clearing based on only specific options in ini
+    - watchdog on custom folder to auto neuter blobs with new custom games
+    - blob manager - mark blobs in red that are missing packages
+    - toggles in ini or customization of features that change the accuracy or functionality of Steam
+- testing
+- contributed code and fixes to the emualtor
+- created Steam installer remakes
+- supplied most of the original files
+- fixed 2005 storefront and screenshots
+- remade missing 2004 storefront screenshots and pages
+- created 99 custom pre-2006 secondblobs
+- helped develop the user tool
+- helped develop the blob manager tool
+- created Neuter Appinfo.exe
+- created Update 2005 Storefront CDR.exe
+- put together the preconfigured emulator package
+
+dormine:
+- original steam server emulator code
+
+ymgve:
+- original beta 1 steam server code
+- original beta 2 steam server code
+- original beta 2 tracker server code
+- original gcf to storage converter
+- created original SDK storage to STMServer storage converter script
+
+valvepython github guy:
+- clientmsg parsing code
+- wrote protobuf related code
+- wrote cm related encryption code
+
+Da_FileServer:
+- wrote original C# AppDataCacheToXML converter
+
+unknown:
+- wrote original java based vac v1 server
+
+tomi:
+- rewrote original java valve anti-cheat v1 server
+
+UAVXP:
+- created the standalone beta tracker client exe
+
+steamCooker:
+- Created Virtual Steam Server
+- Created TinServer
+- Giving the team a LOT of helpful code and guidance
+
+tane:
+- modified dormine emulator
+- implemented new storage type
+
+GenoKirby
+- Provided assistance with the subscriber database

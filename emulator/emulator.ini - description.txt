@@ -1,0 +1,189 @@
+[config]
+; current as of 10/31/2024 - ben
+
+;	   General
+;=======================
+auto_public_ip=true							; True/False Enable Automatic External IP (public_ip) Detection
+auto_server_ip=true							; True/False Enable Automatic Internal IP (server_ip) Detection
+use_random_keys=true							; Generates secure random RSA keys when set to true, otherwise uses the insecure public RSA keys that someone can hack (default: false)
+emu_auto_update=true							; True/False Enables Server Software AutoUpdate
+enable_steam3_servers=true						; True/False Enables Steam3 Servers (not functional)
+storage_check=false							; True/False Used to check Official storages for corruption or changes
+force_email_verification=false						; True/False Forces users to verify email account before changing/retreiving passwords
+ticket_expiration_time_length=0d0h45m0s					; authentication ticket expiration time limit, format #d#h#m#s days, hours. minutes, seconds (minimum is 31 min)
+disable_steam3_purchasing=true						; Neuters the CDR's Steam3 purchasing until steam3 purchasing is completed in CM Server
+alter_preload_unlocks=true            					; Neuters the Preload Unlock Timer start date to the current date
+admin_inactive_timout=600						; Determines how long an client needs to be inactive to force them to log out of the admin server
+
+;   Experimental
+;=======================
+from_source=false							; allows the app downloader/neuter app to be run from source on windows if true
+run_all_servers=true							; starts all servers, even servers that arent supported by your current steam client version (warning: opens all stmserver ports!)
+
+
+;   	Auto Blob
+;=======================
+auto_blobs=false							; True/False Selects/Sets blobs based on day/year automatically
+subtract_time=0								; time in months days years for starting blob with auto_blobs enabled
+
+;   SteamID Universe
+;=======================
+universe=1								; 1 = Public (emulator supported universe), 0 = Local, 2 = Beta, 3 = Internal, 4 = Dev, 5 = RC
+
+;  	Steam Version
+;=======================
+;steam_date=2004/10/01							; Date of requested database blob (YYYY/mm/dd) (YYYY-mm-dd) (YYYY_mm_dd)
+;steam_time=00:14:03							; Time of requested database blob (24hr clock HH:MM:SS) (24hr clock HH-MM-SS) (24hr clock HH_MM_SS)
+
+;	    IPs
+;=======================
+server_ip=								; IP Address For Server to Bind/Listen On
+
+;    External IPs							; Please Note For IP's Below:
+;=======================						; If Server is intended for users over the internet, these should be external IP Addresses
+public_ip=								; External IP for allowing users to connect over the internet
+
+; The following are not required unless the specific server is not hosted on the same machine as STMServer
+;http_ip=			 					; Domain/IP For Replacing Steampowered.com in steam and games (Note: leave blank for lan/wan neutering)
+;community_ip=								; IP Address for Community links (Note: leave blank for lan/wan neutering)
+;tracker_ip=				 				; 2004-2007 Friends Chat Server IP
+;harvest_server_ip=							; Used for CrashDumps and other Misc file uploads from steam
+
+;  Server Peering IPs
+;=======================
+;masterdir_ipport=127.0.0.1:27038 					; Point to Master Directory Server, if Directoryserver is a slave (Format: IP:PORT)
+;csds_ipport=127.0.0.1:27037	 					; Master Content Server List Server, Required for external CS Servers (Format: IP:PORT)
+
+;   White/Black Lists
+;=======================
+enable_whitelist=false							; True/False Enable White List, Only Allows IP Addresses in whitelist.txt
+enable_blacklist=true							; True/False Enable Black List, Blocks IP Addresses in blacklist.txt
+
+;        Ports
+;=======================
+dir_server_port=27038							; Directory Server Port (TCP) (Default: 27038)
+auth_server_port=27039							; Authentication Server Port (TCP) (Default: 27039)
+config_server_port=27035						; Configuration Server Port (TCP) (Default: 27035)
+contentdir_server_port=27037						; Content Server Directory Server Port (TCP) (Default: 27037)
+content_server_port=27030						; Content Server Port (TCP) (Default: 27030)
+clupd_server_port=27031							; Client Update / Package Content Server Port (TCP) (Default: 27031)
+validation_port=27040							; UserID Ticket Validation Server Port(TCP) (Default: 27040)
+
+;     Game List Ports
+;=======================
+masterhl1_server_port=27010						; Half-life 1/GoldSRC Master Server Port (UDP) (Default: 27010)
+masterhl2_server_port=27010						; Half-life 2/SRC/RDKF Master Server Port (UDP) (Default: 27011)
+masterrdkf_server_port=27010						; Ragdoll Kung Fu Master Server Port (UDP) (Default: 27012)
+
+;      Misc Ports
+;=======================
+tracker_server_port=1200						; 2003 Tracker Chat Server Port (TCP/UDP) (Default: 1200)
+cm_unencrypted_server_port=27014					; 2004 - 2007 CM Unencrypted Server Port (TCP/UDP) (Default: 27014)
+cm_encrypted_server_port=27017						; 2007+ CM Encrypted Server Port (TCP/UDP) (Default: 27017)
+cser_server_port=27013							; Client Stats & Error Reporting Server Port (UDP)(Default: 27013)
+harvest_server_port=27056						; Crash Dump / File Upload Harvest Server Port (UDP)(Default: 27018)
+vtt_server_port=27046							; Valve Time Tracking Server 1 (Default: 27046)
+cafe_server_port=27047							; Valve Time Tracking Server 2 (Default: 27047)
+admin_server_port=32666							; Admin Server Port (UDP)(Default: 32666)
+
+;	   Database
+;=======================						; NOTE: Database Settings will be filled in during first run
+use_builtin_mysql=true							; Enable/Disable Built-in MysqlDB 
+database=stmserver
+database_host=
+database_port=3306
+database_username=stmserver
+database_password=
+
+;     STMP (Email)
+;======================
+smtp_enabled=False							; Enable/Disable SMTP Email's For Lost/Forgot Passwords
+smtp_security=ssl							; SMTP Security type (tls or ssl) Default: tls
+stmp_serverip=None							; SMTP Hostname or IP
+stmp_serverport=443							; SMTP Server Port
+stmp_username=None							; SMTP Authentication Username
+stmp_password=None							; SMTP Authentication Password
+support_email=admin@stmserver.com					; Support Email used as From Address in the email templates for lost password, new user welcome, etc...
+email_location_support=false						; Enables Location information in password reset and new user emails for users to verify they are the ones that requested it
+network_name=STMServer							; Used with the email system for setting the template's network name variable
+network_logo=http://google.com/logo.jpg					; Logo URL for top of all Email's
+
+;      WebServer
+;======================
+use_webserver=True							; Enable/Disable built-in Apache Webserver
+;http_domainname=							; Replaces Steampowered.com with this domain name (overrides IP for WAN)
+;community_domainname=							; Replaces Steamcommunity.com with this domain name (overrides IP for WAN)
+http_webmaster_email=test@steampowered.com				; Email Address given during webpage errors
+;community_port=443							; Port used for secure http (https) binding for community
+http_maxconnections=20							; Maximum Simultaneus connections
+http_signature=Steam Emulation Network					; Signature sent in http header to client
+apache_root=files/webserver/Apache24/					; Relative Path to Apache's http root folder
+web_root=files/webserver/webroot/					; Relative Path to Apache's web root (directory which holds website)
+community_root=files/webserver/community/				; Relative Path to Apache's community root (directory which holds community website)
+
+;     Peer Password
+;=======================
+peer_password=								; Password from the master dir server for servers that want to add themselves to the directoy server list
+
+;    Directory Server
+;=======================
+dir_ismaster=true  							; Determines if Directory Server should be a Master or a Peer
+
+;    Content Server
+;=======================
+override_ip_country_region=US				 		; STMNetwork Server Region (NOTE: MAX 2 CHARACTERS!)(used with CM and CS server)(used to determine app restrictions)
+; ^^^^!!! This config can also be set to false for the CM to determine a clients region based on their IP address !!!
+cellid=1								; Determins specific content server cellID
+enable_custom_banner=false						; enables the content server to send a custom URL for the banner that the client see's
+custom_banner_url=http://someurl.ext/platform/banner/random.php		; Custom banner URL when enable_custom_banner is true
+use_sdk_as_cs=false				 			; CellID Used for Server Identification + location (steam 06+)
+use_sdk=false					 			; Use Steamworks SDK Content Server (0 = No, 1 = Yes)
+sdk_ip=172.0.0.1			 				; IP Address to SDK CS
+sdk_port=27030				 				; Port to SDK CS
+
+;	CM Server
+;=======================
+overwrite_machineids=true						; Overwrite machineID's that are stored in database or block unknown pc's that login to an account that has a machineid set
+
+;	    MISC
+;======================
+allow_harvest_upload=true						; Determines if the client can send the harvest server memory dumps and bug reports
+use_builtin_suggested_name_modifiers=true				; Enable/Disable Built-in Username Prepend/append modifiers 
+amount_of_suggested_names=10						; The amount of suggested alternative usernames to send if username is taken (default: 10)
+disable_storage_neutering=false						; Disabled GCF/NCF Neutering/conversion (for dev use only!)
+
+;      FILE PATHS
+;=======================
+blobdir=files/blobs/							; Holds all Blob files
+configsdir=files/configs/						; contains important configurations
+vacmoduledir=files/vacmodules/						; contains vac security modules
+betamanifestdir=files/betamanifests/					; Beta Manifest Directory Location (Default: files/betamanifests/)
+betastoragedir=files/betastorages/					; Beta Storage Directory Location (Default: files/betastorages/)
+storagedir=files/storages/						; Regular Storage Directory Location (Default: files/storages/)
+manifestdir=files/manifests/						; Regular Manifest Directory Location (Default: files/manifests/)
+v2manifestdir=files/v2manifests/					; V2 Manifest Directory Location (Default: files/v2manifests/)
+v2storagedir=files/v2storages/						; V2 Storage Directory Location (Default: files/v2storages/)
+v3manifestdir2=files/v3manifests2/					; V3 Manifests Directory Location (Default: files/v3manifests2/)
+v3storagedir2=files/v3storages2/					; V3 Storages Directory Location (Default: files/v3storages2/)
+v4storagedir=files/v4storages/						; V4 Storages Directory Location (Default: files/v4storages/)
+v4manifestdir=files/v4manifests/					; V4 Manifests Directory Location (Default: files/v4manifests/)
+packagedir=files/packages/                   				; Package Directory Location (Default: files/packages/)
+steam2sdkdir=files/steam2_sdk_depots/					; Steam2 SDK depot file location (dat/blob files)
+
+;    VALVE CYBERCAFE
+;=======================
+cafeuser=cafe								; Username For Cafe Server login
+cafepass=cafepassword							; Password For Cafe Server Login
+cafemacs=12-34-56-78-90-ab						; Mac Address Used to Login To Admin Account
+cafe_use_mac_auth=true							; Enable Mac Authentication
+cafetime=60								; Login Timeout (time it will stay logged in)
+
+;       PACKAGES
+;=======================
+;hldsupkg=HldsUpdateTool_35.pkg						; HLDS Update Tool to neuter (Format: <Filename>.pkg)
+
+;	   LOGGING
+;=======================
+enable_logging=true							; Enables or disabled logging (for both file and console logging)
+log_to_file=true							; Enables or disabled file logs
+log_level=logging.DEBUG							; Options: logging.<option>: DEBUG, WARNING, ERROR, INFO

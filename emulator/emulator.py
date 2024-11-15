@@ -1,839 +1,324 @@
+import logging
+import os
+import threading
+import time
 import sys
-import binascii, ConfigParser, threading, logging, socket, time, os, shutil, zipfile, tempfile, types, ast, filecmp, requests, subprocess, ipcalc
-
-import struct #for int to byte conversion
-from collections import Counter
-from tqdm import tqdm
-
-import steam
-import dirs
-
-dirs.create_dirs()
-
-import steamemu.logger
+import subprocess
+import platform
+import shutil
 import globalvars
-
-from steamemu.converter import convertgcf
-from steamemu.config import read_config
-from steamemu.directoryserver import directoryserver
-from steamemu.configserver import configserver
-from steamemu.contentlistserver import contentlistserver
-from steamemu.fileserver import fileserver
-from steamemu.authserver import authserver
-#from steamemu.authserverv3 import authserverv3
-from steamemu.udpserver import udpserver
-from steamemu.masterhl import masterhl
-from steamemu.masterhl2 import masterhl2
-from steamemu.masterrdkf import masterrdkf
-from steam3emu.cmenc import cmenc
-from steamemu.vttserver import vttserver
-from steam3emu.cmunenc import cmunenc
-from steamemu.validationserver import validationserver
-from steamemu.clientupdateserver import clientupdateserver
-from steamweb.steamweb import steamweb
-from steamweb.steamweb import check_child_pid
-
-#from steamemu.udpserver import udpserver
-
-from Steam2.package import Package
-from Steam2.neuter import neuter_file
-
-local_ver = "0.73.2"
-emu_ver = "0"
-update_exception1 = ""
-update_exception2 = ""
-clear_config = False
+from utilities.thread_handler import start_server_thread, start_watchdog
+import utilities.encryption as encryption
 
 try:
-    mod_date_emu = os.path.getmtime("emulator.exe")
+    # Delete the mariadb log at launch, this allows people to grab the log if it errors after shutting down, but also
+    # keeps the hard-drive free of gb sized logs
+    shutil.rmtree("logs/mariadb_general.log", ignore_errors = True)
 except:
-    mod_date_emu = 0
-try:
-    mod_date_cach = os.path.getmtime("files/cache/emulator.ini.cache")
-except:
-    mod_date_cach = 0
+    pass
 
-clearConsole = lambda: os.system('cls' if os.name in ('nt', 'dos') else 'clear')
-clearConsole()
+# Define the global thread exception handler
+def global_thread_exception_handler(args):
+    logging.getLogger('threadhndl').error(
+        f"Exception in thread '{args.thread.name}': {args.exc_type.__name__}: {args.exc_value}",
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
+    )
 
-if (mod_date_cach < mod_date_emu) and clear_config == True:
-    #print("Config change detected, flushing cache...")
-    try:
-        shutil.rmtree("files/cache")
-    except:
-        pass
-    #os.mkdir("files/cache")
-    #shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
-    #print
+# Set the threading.excepthook to the handler function
+threading.excepthook = global_thread_exception_handler
+
+# Create the dirs earlier for upgrading safety
+import dirs
+from config import get_config as read_config
 
 config = read_config()
-
-print
-print("Steam 2003-2011 Server Emulator v" + local_ver)
-print(("=" * 33) + ("=" * len(local_ver)))
-print
-print(" -== Steam 20th Anniversary Edition 2003-2023 ==-")
-print
-
-if not config["emu_auto_update"] == "no":
-    if sys.argv[0].endswith("emulator.exe"):
-        try:
-            if os.path.isfile("emulatorTmp.exe"):
-                os.remove("emulatorTmp.exe")
-            if os.path.isfile("emulatorNew.exe"):
-                os.remove("emulatorNew.exe")
-            # if clear_config == True :
-                # print("Config change detected, flushing cache...")
-                # shutil.rmtree("files/cache")
-                # os.mkdir("files/cache")
-                # shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
-                # print
-            if config["uat"] == "1":
-                #url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/version"
-                url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/version"
-            else:
-                url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/version"
-            resp = requests.get(url)
-            online_ver = resp.text
-
-            for file in os.listdir("."):
-                if file.endswith(".mst") or file.endswith(".out"):
-                    emu_ver = file[7:-4]
-                elif file.endswith(".pkg") or file.endswith(".srv"):
-                    os.remove(file)
-                    
-            f = open("server_0.mst", "w")
-            f.close()
-
-            if not online_ver == emu_ver or not os.path.isfile("server_" + online_ver + ".mst"):
-                shutil.copy("emulator.exe", "emulatorTmp.exe")
-                print("Update found " + emu_ver + " -> " + online_ver + ", downloading...")
-                if config["uat"] == "1":
-                    #url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/server_" + online_ver + ".pkg"
-                    url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/server_" + online_ver + ".pkg"
-                else:
-                    url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/server_" + online_ver + ".pkg"
-                # Streaming, so we can iterate over the response.
-                response = requests.get(url, stream=True)
-                total_size_in_bytes= int(response.headers.get('content-length', 0))
-                block_size = 1024 #1 Kilobyte
-                progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True, ncols=80)
-                with open('server_' + online_ver + '.pkg', 'wb') as file:
-                    for data in response.iter_content(block_size):
-                        progress_bar.update(len(data))
-                        file.write(data)
-                progress_bar.close()
-                if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
-                    print("ERROR, something went wrong")
-
-                steam.package_unpack2('server_' + online_ver + '.pkg', ".", online_ver)
-
-                for file in os.listdir("."):
-                    if file.endswith(".mst") and file != "server_" + online_ver + ".mst" :
-                        os.remove(file)
-                    elif file.endswith(".out"):
-                        os.remove(file)
-                    elif file.endswith(".pkg"):
-                        os.remove(file)
-                subprocess.Popen("emulatorTmp.exe")
-                sys.exit(0)
-
-        except Exception as e:
-            update_exception1 = e
-            
-        finally:
-            if os.path.isfile("server_0.mst"): os.remove("server_0.mst")
-    elif sys.argv[0].endswith("emulatorTmp.exe") and not os.path.isfile("emulatorNew.exe"):
-        print("WAITING...")
-        try:
-            os.remove("emulator.exe")
-            shutil.copy("emulatorTmp.exe", "emulator.exe")
-            subprocess.Popen("emulator.exe")
-            sys.exit(0)
-
-        except Exception as e:
-            update_exception2 = e
-    else:
-        print("WAITING...")
-        try:
-            os.remove("emulator.exe")
-            shutil.copy("emulatorNew.exe", "emulator.exe")
-            subprocess.Popen("emulator.exe")
-            sys.exit(0)
-
-        except Exception as e:
-            update_exception2 = e
-else:
-    print("Skipping checking for updates (ini override)")
-
-if config["http_port"].startswith(":"):
-    print(config["http_port"])
-    linenum = 0
-    with open("emulator.ini", "r") as f:
-        data = f.readlines()
-    for line in data:
-        if line.startswith("http_port"):
-            break
-        linenum += 1
-    data[linenum] = "http_port=" + config["http_port"][1:] + "\n"
-    with open("emulator.ini", "w") as g:
-        g.writelines(data)
-    if os.path.isfile("files/cache/emulator.ini.cache") :
-        os.remove("files/cache/emulator.ini.cache")
-    shutil.copy("emulator.exe", "emulatorTmp.exe")
-    subprocess.Popen("emulatorTmp.exe")
-    sys.exit(0)
-    
-if not os.path.isfile("files/cache/emulator.ini.cache") :
-    print("Config change detected, flushing cache...")
-    shutil.rmtree("files/cache")
-    os.mkdir("files/cache")
-    shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
-    print
-else :
-    try:
-        if filecmp.cmp("emulator.ini", "files/cache/emulator.ini.cache"): #false = different, true = same
-            a=0
-        else:
-            print("Config change detected, flushing cache...")
-            shutil.rmtree("files/cache")
-            os.mkdir("files/cache")
-            shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
-            print
-    except:
-        print("Config change detected, flushing cache...")
-        shutil.rmtree("files/cache")
-        os.mkdir("files/cache")
-        shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
-        print
-
-if len(config["public_ip"]) > len(config["server_ip"]):
-    iplen = len(config["public_ip"])
-else:
-    iplen = len(config["server_ip"])
-
-print(("*" * 11) + ("*" * iplen))
-print("Server IP: " + config["server_ip"])
-if config["public_ip"] != "0.0.0.0" :
-    print("Public IP: " + config["public_ip"])
-print(("*" * 11) + ("*" * iplen))
-print
-log = logging.getLogger('emulator')
-
-log.info("...Starting Steam Server...")
-
-firstblob_eval = steam.load_ccdb()
-#steam.load_ccdb()
-
-globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
-globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
-globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
-
-if not update_exception1 == "":
-    log.debug("Update1 error: " + str(update_exception1))
-if not update_exception2 == "":
-    log.debug("Update2 error: " + str(update_exception2))
-
-try:
-    socket.inet_aton(config["server_ip"])
-except:
-    log.debug("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
-    print("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
-    raw_input("Press Enter to exit...")
-    quit()
-try:
-    socket.inet_aton(config["public_ip"])
-except:
-    log.debug("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
-    print("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
-    raw_input("Press Enter to exit...")
-    quit()
-try:
-    socket.inet_aton(config["community_ip"])
-except:
-    log.debug("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
-    print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
-    raw_input("Press Enter to exit...")
-    quit()
-    
-server_ip_fail = False
-counts=Counter(config["server_ip"])
-if not counts['.'] == 3:
-    log.debug("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
-    print("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
-    raw_input("Press Enter to exit...")
-    quit()
-for char in config["server_ip"]:
-    if not (char >= '0' and char <= '9' or char == '.'):
-        server_ip_fail = True
-if server_ip_fail == True:
-    log.debug("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
-    print("ERROR! The server ip is malformed, currently %s" % (config["server_ip"]))
-    raw_input("Press Enter to exit...")
-    quit()
-
-if config["public_ip"] != "0.0.0.0" :
-    public_ip_fail = False
-    counts=Counter(config["public_ip"])
-    if not counts['.'] == 3:
-        log.debug("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
-        print("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
-        raw_input("Press Enter to exit...")
-        quit()
-    for char in config["public_ip"]:
-        if not (char >= '0' and char <= '9' or char == '.'):
-            public_ip_fail = True
-    if public_ip_fail == True:
-        log.debug("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
-        print("ERROR! The public ip is malformed, currently %s" % (config["public_ip"]))
-        raw_input("Press Enter to exit...")
-        quit()
-
-if config["community_ip"] != "0.0.0.0" :
-    public_ip_fail = False
-    counts=Counter(config["community_ip"])
-    if not counts['.'] == 3:
-        log.debug("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
-        print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
-        raw_input("Press Enter to exit...")
-        quit()
-    for char in config["community_ip"]:
-        if not (char >= '0' and char <= '9' or char == '.'):
-            public_ip_fail = True
-    if public_ip_fail == True:
-        log.debug("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
-        print("ERROR! The community ip is malformed, currently %s" % (config["community_ip"]))
-        raw_input("Press Enter to exit...")
-        quit()
-
-class listener(threading.Thread):
-    def __init__(self, port, serverobject, config):
-        self.port = int(port)
-        self.serverobject = serverobject  
-        self.config = config.copy()
-        self.config["port"] = port
-        threading.Thread.__init__(self)
-
-    def run(self):
-        serversocket = steam.ImpSocket()
-        serversocket.bind((config["server_ip"], self.port))
-        serversocket.listen(5)
-
-        #print "TCP Server Listening on port " + str(self.port)
-
-        while True :
-            (clientsocket, address) = serversocket.accept()
-            self.serverobject((clientsocket, address), self.config).start();
-
-class udplistener(threading.Thread):
-    def __init__(self, port, serverobject, config):
-        self.port = int(port)
-        self.serverobject = serverobject         
-        self.config = config.copy()
-        self.config["port"] = port
-        threading.Thread.__init__(self)
-
-    def run(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        serversocket = steam.ImpSocket(sock)
-        serversocket.bind((config["server_ip"], self.port))
-        #serversocket.listen(5)
-
-        #log.info("UDP Server Listening on port " + str(self.port))
-
-        while True :
-            #(clientsocket, address) = serversocket.accept()
-            #self.serverobject((clientsocket, address), self.config).start();
-            globalvars.data, globalvars.addr = serversocket.recvfrom(1280)
-            #print("Received message: %s on port %s" % (globalvars.data, self.port))
-            #self.serverobject(serversocket, self.config).start();
-            dedsrv_port = globalvars.addr[1]
-            #print(dedsrv_port)
-            if self.port == 27013 :
-                log = logging.getLogger("csersrv")
-                clientid = str(globalvars.addr) + ": "
-                log.info(clientid + "Connected to CSER Server")
-                log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-                ipstr = str(globalvars.addr)
-                ipstr1 = ipstr.split('\'')
-                ipactual = ipstr1[1]
-                if globalvars.data.startswith("e") : #65
-                    message = binascii.b2a_hex(globalvars.data)
-                    keylist = list(xrange(7))
-                    vallist = list(xrange(7))
-                    keylist[0] = "SuccessCount"
-                    keylist[1] = "UnknownFailureCount"
-                    keylist[2] = "ShutdownFailureCount"
-                    keylist[3] = "UptimeCleanCounter"
-                    keylist[4] = "UptimeCleanTotal"
-                    keylist[5] = "UptimeFailureCounter"
-                    keylist[6] = "UptimeFailureTotal"
-                    try :
-                        os.mkdir("clientstats")
-                    except OSError as error :
-                        log.debug("Client stats dir already exists")
-                    if message.startswith("650a01537465616d2e657865") : #Steam.exe
-                        vallist[0] = str(int(message[24:26], base=16))
-                        vallist[1] = str(int(message[26:28], base=16))
-                        vallist[2] = str(int(message[28:30], base=16))
-                        vallist[3] = str(int(message[30:32], base=16))
-                        vallist[4] = str(int(message[32:34], base=16))
-                        vallist[5] = str(int(message[34:36], base=16))
-                        vallist[6] = str(int(message[36:38], base=16))
-                        f = open("clientstats\\" + str(ipactual) + ".steamexe.csv", "w")
-                        f.write(str(binascii.a2b_hex(message[6:24])))
-                        f.write("\n")
-                        f.write(keylist[0] + "," + keylist[1] + "," + keylist[2] + "," + keylist[3] + "," + keylist[4] + "," + keylist[5] + "," + keylist[6])
-                        f.write("\n")
-                        f.write(vallist[0] + "," + vallist[1] + "," + vallist[2] + "," + vallist[3] + "," + vallist[4] + "," + vallist[5] + "," + vallist[6])
-                        f.close()
-                        log.info(clientid + "Received client stats")
-                elif globalvars.data.startswith("c") : #63
-                    message = binascii.b2a_hex(globalvars.data)
-                    keylist = list(xrange(13))
-                    vallist = list(xrange(13))
-                    keylist[0] = "Unknown1"
-                    keylist[1] = "Unknown2"
-                    keylist[2] = "ModuleName"
-                    keylist[3] = "FileName"
-                    keylist[4] = "CodeFile"
-                    keylist[5] = "ThrownAt"
-                    keylist[6] = "Unknown3"
-                    keylist[7] = "Unknown4"
-                    keylist[8] = "AssertPreCondition"
-                    keylist[9] = "Unknown5"
-                    keylist[10] = "OsCode"
-                    keylist[11] = "Unknown6"
-                    keylist[12] = "Message"
-                    try :
-                        os.mkdir("crashlogs")
-                    except OSError as error :
-                        log.debug("Client crash reports dir already exists")
-                    templist = binascii.a2b_hex(message)
-                    templist2 = templist.split(b'\x00')
-                    try :
-                        vallist[0] = str(int(binascii.b2a_hex(templist2[0][2:4]), base=16))
-                        vallist[1] = str(int(binascii.b2a_hex(templist2[1]), base=16))
-                        vallist[2] = str(templist2[2])
-                        vallist[3] = str(templist2[3])
-                        vallist[4] = str(templist2[4])
-                        vallist[5] = str(int(binascii.b2a_hex(templist2[5]), base=16))
-                        vallist[6] = str(int(binascii.b2a_hex(templist2[7]), base=16))
-                        vallist[7] = str(int(binascii.b2a_hex(templist2[10]), base=16))
-                        vallist[8] = str(templist2[13])
-                        vallist[9] = str(int(binascii.b2a_hex(templist2[14]), base=16))
-                        vallist[10] = str(int(binascii.b2a_hex(templist2[15]), base=16))
-                        vallist[11] = str(int(binascii.b2a_hex(templist2[18]), base=16))
-                        vallist[12] = str(templist2[23])
-                        f = open("crashlogs\\" + str(ipactual) + ".csv", "w")
-                        f.write("SteamExceptionsData")
-                        f.write("\n")
-                        f.write(keylist[0] + "," + keylist[1] + "," + keylist[2] + "," + keylist[3] + "," + keylist[4] + "," + keylist[5] + "," + keylist[6] + "," + keylist[7] + "," + keylist[8] + "," + keylist[9] + "," + keylist[10] + "," + keylist[11] + "," + keylist[12])
-                        f.write("\n")
-                        f.write(vallist[0] + "," + vallist[1] + "," + vallist[2] + "," + vallist[3] + "," + vallist[4] + "," + vallist[5] + "," + vallist[6] + "," + vallist[7] + "," + vallist[8] + "," + vallist[9] + "," + vallist[10] + "," + vallist[11] + "," + vallist[12])
-                        f.close()
-                        log.info(clientid + "Received client crash report")
-                    except :
-                        log.debug(clientid + "Failed to receive client crash report")
-                elif globalvars.data.startswith("q") : #71
-                    print("Received encrypted ICE client stats - INOP")
-                elif globalvars.data.startswith("a") : #61
-                    print("Received app download stats - INOP")
-                elif globalvars.data.startswith("i") : #69
-                    print("Received unknown stats - INOP")
-                elif globalvars.data.startswith("k") : #6b
-                    print("Received app usage stats - INOP")
-                else :
-                    print("Unknown CSER command: %s" % globalvars.data)
-            #elif self.port == 27014 :
-            #    log = logging.getLogger("27014")
-            #    clientid = str(globalvars.addr) + ": "
-            #    log.info(clientid + "Connected to 27014")
-            #    log.debug(clientid + ("Received message: %s, from %s" % (globalvars.data, globalvars.addr)))
-            #elif self.port == 27014 : #was 27017
-            else :
-                log.debug(clientid + "Unconfigured UDP port requested: " + str(self.port))
-
-#config = read_config()
-
-#firstblob_eval = steam.load_ccdb()
-
-#if firstblob_eval == "":
-#    if os.path.isfile("files/1stcdr.py") :
-#        with open("files/1stcdr.py", "r") as f:
-#            firstblob = f.read()
-#    elif os.path.isfile("files/firstblob.py") :
-#        with open("files/firstblob.py", "r") as f:
-#            firstblob = f.read()
-#    else :
-#        with open("files/firstblob.bin", "rb") as f:
-#            firstblob_bin = f.read()
-#        if firstblob_bin[0:2] == "\x01\x43":
-#            firstblob_bin = zlib.decompress(firstblob_bin[20:])
-#        firstblob_unser = steam.blob_unserialize(firstblob_bin)
-#        firstblob = "blob = " + steam.blob_dump(firstblob_unser)
-
-#    firstblob_eval = ast.literal_eval(firstblob[7:len(firstblob)])
-#globalvars.steam_ver = struct.unpack("<L", firstblob_eval["\x01\x00\x00\x00"])[0]
-#globalvars.steamui_ver = struct.unpack("<L", firstblob_eval["\x02\x00\x00\x00"])[0]
-#globalvars.record_ver = struct.unpack("<L", firstblob_eval["\x00\x00\x00\x00"])[0]
-
-#globalvars.steam_ver = 2
-#globalvars.steamui_ver = 2
-
-# create the Steam.exe file
-if globalvars.record_ver == 1 :
-    #f = open(config["packagedir"] + "betav2/" + config["steampkg"], "rb")
-    f = open(config["packagedir"] + "betav2/Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
-else :
-    #f = open(config["packagedir"] + config["steampkg"], "rb")
-    f = open(config["packagedir"] + "Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
-pkg = Package(f.read())
-f.close()
-# if config["public_ip"] != "0.0.0.0" and not os.path.isdir("client/wan"):
-    # shutil.rmtree("client")
-# elif config["public_ip"] == "0.0.0.0" and os.path.isdir("client/wan"):
-    # shutil.rmtree("client")
 dirs.create_dirs()
-file = pkg.get_file("SteamNew.exe")
-file2 = pkg.get_file("SteamNew.exe")
-if config["public_ip"] != "0.0.0.0" :
-    if not os.path.isdir("client/lan"): os.mkdir("client/lan")
-    if not os.path.isdir("client/wan"): os.mkdir("client/wan")
-    file = neuter_file(file, config["public_ip"], config["dir_server_port"], "SteamNew.exe", "wan")
-    file2 = neuter_file(file2, config["server_ip"], config["dir_server_port"], "SteamNew.exe", "lan")
-    f = open("client/wan/Steam.exe", "wb")
-    f.write(file)
-    f.close()
-    g = open("client/lan/Steam.exe", "wb")
-    g.write(file2)
-    g.close()
-else :
-    file = neuter_file(file, config["server_ip"], config["dir_server_port"], "SteamNew.exe", "lan")
-    f = open("client/Steam.exe", "wb")
-    f.write(file)
-    f.close()
 
-if config["hldsupkg"] != "" :
-    if globalvars.record_ver == 1 :
-        g = open(config["packagedir"] + "betav2/" + config["hldsupkg"], "rb")
-    else :
-        g = open(config["packagedir"] + config["hldsupkg"], "rb")
-    pkg = Package(g.read())
-    g.close()
-    file = pkg.get_file("HldsUpdateToolNew.exe")
-    if config["public_ip"] != "0.0.0.0" :
-        file = neuter_file(file, config["public_ip"], config["dir_server_port"], "HldsUpdateToolNew.exe", "wan")
-    else :
-        file = neuter_file(file, config["server_ip"], config["dir_server_port"], "HldsUpdateToolNew.exe", "lan")
-    g = open("client/HldsUpdateTool.exe", "wb")
-    g.write(file)
-    g.close()
+if config['http_ip'] != "" and config["http_domainname"] != "":
+    logging.error("Detected conflicting configurations:\n'http_ip' AND 'http_domainname' are set at the same time.\nPlease comment one out in order to run the server.\n")
 
-#NEED TO DEPRECATE THIS IN FAVOR OF PROTOCOL VERSIONING
-if globalvars.steamui_ver < 61 : #guessing steamui version when steam client interface v2 changed to v3
-    globalvars.tgt_version = "1"
-else :
-    globalvars.tgt_version = "2" #config file states 2 as default
+# Check if both files exist AND if they match what the config says
+if encryption.check_file_hashes() is False:
+    # Generate and export the keys
+    encryption.generate_and_export_rsa_keys()
 
-if globalvars.steamui_ver < 122 : #guessing when CASPackage changed to cas_x.pkg
-    if os.path.isfile("files/cafe/Steam.dll") :
-        log.info("Cafe files found")
-        g = open("files/cafe/Steam.dll", "rb")
-        file = g.read()
-        g.close()
-        if config["public_ip"] != "0.0.0.0" :
-            file_wan = neuter_file(file, config["public_ip"], config["dir_server_port"], "steam.dll", "wan")
-            file_lan = neuter_file(file, config["server_ip"], config["dir_server_port"], "steam.dll", "lan")
-            if os.path.isfile("files/cafe/CASpackage.zip") :
-                shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackageWAN.zip")
-                shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackageLAN.zip")
-                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Steam.dll", file_wan)
-                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Steam.dll", file_lan)
-                    
-                lsclient_line1 = "CAServerIP = " + config["public_ip"]
-                lsclient_line2 = "ExitSteamAfterGame = true"
-                lsclient_line3 = "AllowUserLogin = false"
-                lsclient_line4 = "AllowCafeLogin = true"
-                lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
-                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
-                tempdir = tempfile.mkdtemp()
-                try:
-                    tempname = os.path.join(tempdir, 'new.zip')
-                    with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'r') as zipread:
-                        with zipfile.ZipFile(tempname, 'w') as zipwrite:
-                            for item in zipread.infolist():
-                                if item.filename not in 'CAServer.cfg':
-                                    data = zipread.read(item.filename)
-                                    zipwrite.writestr(item, data)
-                    shutil.move(tempname, 'client/cafe_server/CASpackageWAN.zip')
-                finally:
-                    shutil.rmtree(tempdir)
-                    
-                lsclient_line1 = "CAServerIP = " + config["server_ip"]
-                lsclient_line2 = "ExitSteamAfterGame = true"
-                lsclient_line3 = "AllowUserLogin = false"
-                lsclient_line4 = "AllowCafeLogin = true"
-                lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
-                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
-                tempdir = tempfile.mkdtemp()
-                try:
-                    tempname = os.path.join(tempdir, 'new.zip')
-                    with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'r') as zipread:
-                        with zipfile.ZipFile(tempname, 'w') as zipwrite:
-                            for item in zipread.infolist():
-                                if item.filename not in 'CAServer.cfg':
-                                    data = zipread.read(item.filename)
-                                    zipwrite.writestr(item, data)
-                    shutil.move(tempname, 'client/cafe_server/CASpackageLAN.zip')
-                finally:
-                    shutil.rmtree(tempdir)
-                    
-                caserver_line1 = "MasterServerIP = " + config["public_ip"]
-                caserver_line2 = "MasterLogin = " + config["cafeuser"]
-                caserver_line3 = "MasterPass = " + config["cafepass"]
-                caserver_line4 = "IPRange1 = 192.168.0.1"
-                caserver_line5 = "EnableTimedUpdates = disable"
-                caserver_line6 = "UpdateStart = 2200"
-                caserver_line7 = "UpdateEnd = 0200"
-                caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
-                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("CAServer.cfg", caserver_lines)
-                    
-                caserver_line1 = "MasterServerIP = " + config["server_ip"]
-                caserver_line2 = "MasterLogin = " + config["cafeuser"]
-                caserver_line3 = "MasterPass = " + config["cafepass"]
-                caserver_line4 = "IPRange1 = 192.168.0.1"
-                caserver_line5 = "EnableTimedUpdates = disable"
-                caserver_line6 = "UpdateStart = 2200"
-                caserver_line7 = "UpdateEnd = 0200"
-                caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
-                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("CAServer.cfg", caserver_lines)
-                    
-                passwords_line = bytes(config["cafeuser"] + "%" + config["cafepass"])
-                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("passwords.txt", passwords_line)
-                    
-                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("passwords.txt", passwords_line)
-                    
-                if os.path.isfile("files/cafe/README.txt") :
-                    g = open("files/cafe/README.txt", "rb")
-                    file = g.read()
-                    g.close()
-                    with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
-                        zipped_f.writestr("README.txt", file)
-                    with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
-                        zipped_f.writestr("README.txt", file)
-                        
-                with open("client/wan/Steam.exe", "rb") as g:
-                    file_wan = g.read()
-                with open("client/lan/Steam.exe", "rb") as h:
-                    file_lan = h.read()
-                with zipfile.ZipFile('client/cafe_server/CASpackageWAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Client/wan/Steam.exe", file_wan)
-                with zipfile.ZipFile('client/cafe_server/CASpackageLAN.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Client/wan/Steam.exe", file_lan)
-        else :
-            file = neuter_file(file, config["server_ip"], config["dir_server_port"], "steam.dll", "lan")
-            if os.path.isfile("files/cafe/CASpackage.zip") :
-                shutil.copyfile("files/cafe/CASpackage.zip", "client/cafe_server/CASpackage.zip")
-                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Steam.dll", file)
-                lsclient_line1 = "CAServerIP = " + config["server_ip"]
-                lsclient_line2 = "ExitSteamAfterGame = true"
-                lsclient_line3 = "AllowUserLogin = false"
-                lsclient_line4 = "AllowCafeLogin = true"
-                lsclient_lines = bytes(lsclient_line1 + "\n" + lsclient_line2 + "\n" + lsclient_line3 + "\n" + lsclient_line4)
-                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                    zipped_f.writestr("Client/lsclient.cfg", lsclient_lines)
-                tempdir = tempfile.mkdtemp()
-                try:
-                    tempname = os.path.join(tempdir, 'new.zip')
-                    with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'r') as zipread:
-                        with zipfile.ZipFile(tempname, 'w') as zipwrite:
-                            for item in zipread.infolist():
-                                if item.filename not in 'CAServer.cfg':
-                                    data = zipread.read(item.filename)
-                                    zipwrite.writestr(item, data)
-                    shutil.move(tempname, 'client/cafe_server/CASpackage.zip')
-                finally:
-                    shutil.rmtree(tempdir)
-                caserver_line1 = "MasterServerIP = " + config["server_ip"]
-                caserver_line2 = "MasterLogin = " + config["cafeuser"]
-                caserver_line3 = "MasterPass = " + config["cafepass"]
-                caserver_line4 = "IPRange1 = 192.168.0.1"
-                caserver_line5 = "EnableTimedUpdates = disable"
-                caserver_line6 = "UpdateStart = 2200"
-                caserver_line7 = "UpdateEnd = 0200"
-                caserver_lines = bytes(caserver_line1 + "\n" + caserver_line2 + "\n" + caserver_line3 + "\n" + caserver_line4 + "\n" + caserver_line5 + "\n" + caserver_line6 + "\n" + caserver_line7)
-                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                    zipped_f.writestr("CAServer.cfg", caserver_lines)
-                passwords_line = bytes(config["cafeuser"] + "%" + config["cafepass"])
-                with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                    zipped_f.writestr("passwords.txt", passwords_line)
-                if os.path.isfile("files/cafe/README.txt") :
-                    g = open("files/cafe/README.txt", "rb")
-                    file = g.read()
-                    g.close()
-                    with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                        zipped_f.writestr("README.txt", file)
-                if os.path.isfile("client/Steam.exe"):
-                    g = open("client/Steam.exe", "rb")
-                    file = g.read()
-                    g.close()
-                    with zipfile.ZipFile('client/cafe_server/CASpackage.zip', 'a') as zipped_f:
-                        zipped_f.writestr("Client/Steam.exe", file)
-                
-        
-if config["use_sdk"] == "1" :
-    with open("files/pkg_add/steam/Steam.cfg", "w") as h :
-        h.write('SdkContentServerAdrs = "' + config["sdk_ip"] + ':' + config["sdk_port"] + '"\n')
-    if os.path.isfile("files/cache/Steam_" + str(globalvars.steam_ver) + ".pkg") :
-        os.remove("files/cache/Steam_" + str(globalvars.steam_ver) + ".pkg")
-else :
-    if os.path.isfile("files/pkg_add/steam/Steam.cfg") :
-        os.remove("files/cache/Steam_" + str(globalvars.steam_ver) + ".pkg")
-        os.remove("files/pkg_add/steam/Steam.cfg")
+encryption.main_key, encryption.network_key = encryption.import_rsa_keys()
+encryption.BERstring = encryption.network_key.public_key().export_key("DER")
+encryption.signed_mainkey_reply = encryption.get_mainkey_reply()
 
-if os.path.isfile("Steam.exe") :
-    os.remove("Steam.exe")
-if os.path.isfile("HldsUpdateTool.exe") :
-    os.remove("HldsUpdateTool.exe")
-if os.path.isfile("log.txt") :
-    os.remove("log.txt")
-if os.path.isfile("library.zip") :
-    os.remove("library.zip")
-if os.path.isfile("MSVCR71.dll") :
-    os.remove("MSVCR71.dll")
-if os.path.isfile("python24.dll") :
-    os.remove("python24.dll")
-if os.path.isfile("python27.dll") :
-    os.remove("python27.dll")
-if os.path.isfile("Steam.cfg") :
-    os.remove("Steam.cfg")
-if os.path.isfile("w9xpopen.exe") :
-    os.remove("w9xpopen.exe")
-#if os.path.isfile("submanager.exe") :
-#    os.remove("submanager.exe")
 
-if os.path.isfile("files/users.txt") :
-    users = {} #REMOVE LEGACY USERS
-    f = open("files/users.txt")
-    for line in f.readlines() :
-        if line[-1:] == "\n" :
-            line = line[:-1]
-        if line.find(":") != -1 :
-            (user, password) = line.split(":")
-            users[user] = user
-    f.close()
-    for user in users :
-        if (os.path.isfile("files/users/" + user + ".py")) :
-            os.rename("files/users/" + user + ".py", "files/users/" + user + ".legacy")
-    os.rename("files/users.txt", "files/users.off")
+def stmserver_initialization():
+    global config, log
 
-log.info("Checking for gcf files to convert...")
-convertgcf()
+    # operating system check
+    globalvars.current_os = platform.system()
+    globalvars.aio_server = True
 
-time.sleep(0.2)
-cserlistener = udplistener(27013, udpserver, config)
-cserlistener.start()
-log.info("Steam2 CSER Server listening on port 27013")
-time.sleep(0.2)
-dirlistener = listener(config["dir_server_port"], directoryserver, config)
-dirlistener.start()
-log.info("Steam2 General Directory Server listening on port " + str(config["dir_server_port"]))
-time.sleep(0.2)
-configlistener = listener(config["conf_server_port"], configserver, config)
-configlistener.start()
-log.info("Steam2 Config Server listening on port " + str(config["conf_server_port"]))
-time.sleep(0.2)
-authlistener = listener(config["auth_server_port"], authserver, config)
-authlistener.start()
-log.info("Steam2 Master Authentication Server listening on port " + str(config["auth_server_port"]))
-time.sleep(0.2)
-contentlistener = listener(config["contlist_server_port"], contentlistserver, config)
-contentlistener.start()
-log.info("Steam2 Content List Server listening on port " + str(config["contlist_server_port"]))
-time.sleep(0.2)
-filelistener = listener(config["file_server_port"], fileserver, config)
-filelistener.start()
-log.info("Steam2 Content Server listening on port " + str(config["file_server_port"]))
-time.sleep(0.2)
-clupdlistener = listener(config["clupd_server_port"], clientupdateserver, config)
-clupdlistener.start()
-log.info("Steam2 Client Update Server listening on port " + str(config["clupd_server_port"]))
-time.sleep(0.2)
-vallistener = listener(config["validation_port"], validationserver, config)
-vallistener.start()
-log.info("Steam2 User Validation Server listening on port " + str(config["validation_port"]))
-time.sleep(0.2)
-#hlmasterlistener = udplistener(27010, masterhl, config)
-hlmasterlistener = masterhl(27010, masterhl, config)
-hlmasterlistener.start()
-log.info("Steam2 Master HL1 Server listening on port 27010")
-time.sleep(0.2)
-#hl2masterlistener = udplistener(27011, masterhl2, config)
-hl2masterlistener = masterhl2(27011, masterhl2, config)
-hl2masterlistener.start()
-log.info("Steam2 Master HL2 Server listening on port 27011")
-time.sleep(0.2)
-#rdkfmasterlistener = udplistener(27012, masterrdkf, config)
-rdkfmasterlistener = masterrdkf(27012, masterrdkf, config)
-rdkfmasterlistener.start()
-log.info("Steam2 Master RDKF Server listening on port 27012")
-time.sleep(0.2)
-if config["enable_steam3_servers"] == "1":
-    cmunenclistener = cmunenc(27014, cmunenc, config)
-    cmunenclistener.start()
-    log.info("Steam3 CM Unencrypted Server listening on port 27014")
-    time.sleep(0.2)
-if config["enable_steam3_servers"] == "1":
-    cmenclistener = cmenc(27017, cmenc, config)
-    cmenclistener.start()
-    globalvars.tracker = 0
-    log.info("Steam3 CM Encrypted Server listening on port 27017")
-else:
-    if globalvars.record_ver == 1 :
-        globalvars.tracker = 1
-        subprocess.Popen("trackerserver.exe")
-        log.info("Started TRACKER server on port 1200")
-    else :
-        log.info("TRACKER unsupported on release client, not started")
-time.sleep(0.2)
-if config["use_webserver"] == "true" and os.path.isdir(config["apache_root"]):
-    if globalvars.steamui_ver < 87 or config["http_port"] == "steam" or config["http_port"] == "0" :
-        steamweb("80", config["http_ip"], config["apache_root"], config["web_root"])
-        http_port = "80"
+    from utilities.inputmanager import start_watchescape_thread
+    from utilities import auto_swap_blob
+
+    if getattr(sys, 'frozen', False):
+        # If the application is frozen (compiled with PyInstaller), this will be the path to the emulator.exe (not the temporary folder/drive that pyinstaller creates to run)
+        application_path = os.path.dirname(sys.executable)
     else:
-        steamweb(config["http_port"], config["http_ip"], config["apache_root"], config["web_root"])
-        http_port = str(config["http_port"])#[1:]
-    log.info("Steam Web Server listening on port " + http_port)
-    find_child_pid_timer = threading.Timer(10.0, check_child_pid())  
-    find_child_pid_timer.start() 
-    time.sleep(0.2)
-elif config["use_webserver"] == "true" and not os.path.isdir(config["apache_root"]):
-    log.error("Cannot start Steam Web Server: apache folder is missing")
-vttlistener = listener("27046", vttserver, config)
-vttlistener.start()
-log.info("Valve Time Tracking Server listening on port 27046")
-time.sleep(0.2)
-vttlistener2 = listener("27047", vttserver, config)
-vttlistener2.start()
-log.info("Valve CyberCafe Server listening on port 27047")
-time.sleep(0.2)
-if config["sdk_ip"] != "0.0.0.0" :
-    log.info("Steamworks SDK Content Server configured on port " + str(config["sdk_port"]))
-    time.sleep(0.2)
-log.debug("TGT set to version " + globalvars.tgt_version)
+        application_path = os.path.dirname(os.path.abspath(__file__))
 
-if config["http_port"] == "steam" :
-    log.info("...Steam Server ready using Steam DNS...")
-else :
-    log.info("...Steam Server ready...")
-authlistener.join()
+    # Change the working directory to the directory of the executable
+    os.chdir(application_path)
+
+    import utils
+    duplicates = utils.check_ini_duplicates()
+
+    import logger
+    logger.init_logger()
+    log = logging.getLogger('emulator')
+
+    if duplicates:
+        log.error("Duplicate lines found in emulator.ini: ", duplicates)
+        input("Cannot continue, press ENTER to exit.")
+        sys.exit(1)
+
+    utils.check_autoip_config()
+    globalvars.ORIGINAL_PYTHON_EXECUTABLE = sys.executable
+    globalvars.ORIGINAL_CMD_ARGS = sys.argv
+
+    # The following renames the custom folder to the blob_add
+    # utils.rename_custom_folder()
+
+    from utilities import firstrun
+    from utilities.database.setup_mariadb import setup_mariadb
+    # from utils import flush_cache, parent_initializer, autoupdate, every
+    from utils import parent_initializer, autoupdate, is_30_minutes_or_less
+    from utilities.time import every
+
+    # Check ticket expiration config to ensure it is set to a time higher than 30 minutes
+    result = is_30_minutes_or_less(config['ticket_expiration_time_length'])
+    if result:
+        config['ticket_expiration_time_length'] = "0d0h45m0s"
+
+    autoupdate()
+    if config["subtract_time"] != "0":
+        auto_swap_blob.swap_blobs()
+    if config["auto_blobs"] == "true":
+        print("Auto-blob rolling activated")
+        threading.Thread(target = lambda:every(60, auto_swap_blob.swap_blobs)).start()
+
+    # initialize logger, emulator.ini and mariadb if needed
+    if not os.path.exists(config['configsdir'] + '\\' + '.initialized'):
+        firstrun.check_initialization()
+    config = read_config()
+    #if config["uat"] != "1":
+    #    clearConsole = lambda:os.system('cls' if os.name in ('nt', 'dos') else 'clear')
+    #    clearConsole()
+
+    # start watching for 'esc' keyboard key
+    start_watchescape_thread()
+
+    # setup the built in mysql for the first time if it isnt already setup
+    if config["use_builtin_mysql"].lower() == "true":
+        setup_mariadb(config)
+    return parent_initializer, utils
+
+
+parent_initializer, utils = stmserver_initialization()
+
+from servers.authserver import authserver
+from servers.beta_authserver import Beta1_AuthServer
+from servers.clientupdateserver import clientupdateserver
+from steam3.cmserver_udp import CMServerUDP_27014, CMServerUDP_27017
+from steam3.cmserver_tcp import CMServerTCP_27014, CMServerTCP_27017
+from servers.configserver import configserver
+from servers.contentlistserver import contentlistserver
+from servers.contentserver import contentserver
+from servers.cserserver import CSERServer
+from servers.directoryserver import directoryserver
+from servers.harvestserver import HarvestServer
+from servers.masterserver import MasterServer
+from servers.trackerserver_beta import TrackerServer
+from servers.validationserver import validationserver
+from servers.valve_anticheat1 import VAC1Server
+from servers.vttserver import cafeserver, vttserver
+from steamweb.ftp import create_ftp_server
+from steamweb.steamweb import check_child_pid, steamweb
+from utilities.filesystem_monitor import DirectoryMonitor
+from utilities import filesystem_monitor
+# TODO Finish this before .81
+# from servers.administrationserver import administrationserver
+
+
+# TEST LOGGING
+# log.debug("LOG TEST - DEBUG")
+# log.info("LOG TEST - INFO")
+# log.warning("LOG TEST - WARNING")
+# log.error("LOG TEST - ERROR")
+# log.critical("LOG TEST - CRITICAL")
+
+new_password = parent_initializer()
+
+#if config["uat"] != "1":
+#    clearConsole = lambda:os.system('cls' if os.name in ('nt', 'dos') else 'clear')
+#    clearConsole()
+
+log.info("---Starting Steam Server---")
+
+# launch directoryserver first so server can heartbeat the moment they launch
+dirserver = directoryserver(int(config["dir_server_port"]), config)
+start_server_thread(dirserver, 'DirectoryServer', None)
+
+# Print if Directoryserver is a slave or a master
+if globalvars.dir_ismaster == "true":
+    log.info(f"Steam Master General Directory Server listening on port {str(config['dir_server_port'])}")
+else:
+    log.info(f"Steam Slave General Directory Server listening on port {str(config['dir_server_port'])}")
+
+cser_server = CSERServer(int(config["cser_server_port"]), config)
+start_server_thread(cser_server, 'CSERServer', 'Client Stats & Error Reporting Server')
+
+# Content List Server
+content_list_server = contentlistserver(int(config["contentdir_server_port"]), config)
+start_server_thread(content_list_server, 'ContentListServer', 'Content List Directory Server')
+
+# Content Server
+content_server = contentserver(int(config["content_server_port"]), config)
+start_server_thread(content_server, 'ContentServer', 'Application Content Server')
+
+# Other servers
+client_update_server = clientupdateserver(int(config["clupd_server_port"]), config)
+start_server_thread(client_update_server, 'ClientUpdateServer', 'Client Update Server')
+
+# Start the watchdog after launching server threads
+start_watchdog()
+
+config_server = configserver(int(config["config_server_port"]), config)
+start_server_thread(config_server, 'ConfigServer', 'Configuration Server')
+
+auth_server = authserver(int(config["auth_server_port"]), config)
+start_server_thread(auth_server, 'AuthServer', 'Authentication Server')
+
+validation_server = validationserver(int(config["validation_port"]), config)
+start_server_thread(validation_server, 'ValidationServer', 'Steam2 User Validation Server')
+
+master_server = MasterServer(int(config["masterhl1_server_port"]), config)
+start_server_thread(master_server, 'MasterServer', 'Master Server')
+
+harvest_server = HarvestServer(int(config["harvest_server_port"]), config)
+start_server_thread(harvest_server, 'HarvestServer', 'Harvest Server')
+
+vtt_server = vttserver(config["vtt_server_port"], config)
+start_server_thread(vtt_server, 'VTTServer', 'Valve Time Tracking Server')
+
+cafe_server = cafeserver(config["cafe_server_port"], config)
+start_server_thread(cafe_server, 'CafeServer', 'Valve CyberCafe Master Server')
+
+if config["enable_steam3_servers"].lower() == "true":
+    if config["run_all_servers"].lower() == "true":
+        cmtcp27014_server = CMServerTCP_27014(27014, config, master_server)
+        start_server_thread(cmtcp27014_server, 'CMTCP27014', 'Valve Connection Manager (CM) 1 TCP Server')
+        cmudp27014_server = CMServerUDP_27014(27014, config, master_server)
+        start_server_thread(cmudp27014_server, 'CMUDP27014', 'Valve Connection Manager (CM) 1 UDP Server')
+        cmtcp27017_server = CMServerTCP_27017(27017, config, master_server)
+        start_server_thread(cmtcp27017_server, 'CMTCP27017', 'Valve Connection Manager (CM) 2 TCP Server')
+        cmudp27017_server = CMServerUDP_27017(27017, config, master_server)
+        start_server_thread(cmudp27017_server, 'CMUDP27017', 'Valve Connection Manager (CM) 2 UDP Server')
+    else:
+        if globalvars.steamui_ver < 479:
+            # 27014 only needs to be active for steamui versions below 479
+            cmtcp27014_server = CMServerTCP_27014(27014, config, master_server)
+            start_server_thread(cmtcp27014_server, 'CMTCP27014', 'Valve Connection Manager (CM) 1 TCP Server')
+            cmudp27014_server = CMServerUDP_27014(27014, config, master_server)
+            start_server_thread(cmudp27014_server, 'CMUDP27014', 'Valve Connection Manager (CM) 1 UDP Server')
+        else:
+            cmtcp27017_server = CMServerTCP_27017(27017, config, master_server)
+            start_server_thread(cmtcp27017_server, 'CMTCP27017', 'Valve Connection Manager (CM) 2 TCP Server')
+            cmudp27017_server = CMServerUDP_27017(27017, config, master_server)
+            start_server_thread(cmudp27017_server, 'CMUDP27017', 'Valve Connection Manager (CM) 2 UDP Server')
+
+if config["run_all_servers"].lower() == "true":
+    tracker_server = TrackerServer(1200, config)
+    start_server_thread(tracker_server, 'TrackerServer', 'Tracker Server')
+    log.info("Made by ymgve Modified by STMServer Team")
+    vac_server = VAC1Server(int(config["vac_server_port"]), config)
+    start_server_thread(vac_server, 'VAC1Server', 'Valve Anti-Cheat V1 Server')
+    if os.path.isfile("files/secondblob.bin"): # Leave until beta blobs are in the CDDB
+        beta1auth_server = Beta1_AuthServer(5273, config)
+        start_server_thread(beta1auth_server, 'Beta1Server', 'Beta 1 (2002) Client Authentication Server')
+    ftp_server_thread = threading.Thread(target=create_ftp_server, args=("files/temp", "files/beta1_ftp", globalvars.server_ip, int(config['ftp_server_port'])))
+    start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server')
+else:
+    if int(globalvars.steamui_ver) < 120:
+        tracker_server = TrackerServer(1200, config)
+        start_server_thread(tracker_server, 'TrackerServer', 'Tracker Server')
+        log.info("Made by ymgve Modified by STMServer Team")
+
+        if int(globalvars.steam_ver) <= 14:
+            vac_server = VAC1Server(int(config["vac_server_port"]), config)
+            start_server_thread(vac_server, 'VAC1Server', 'Valve Anti-Cheat V1 Server')
+
+        if globalvars.record_ver == 0:
+            beta1auth_server = Beta1_AuthServer(5273, config)
+            start_server_thread(beta1auth_server, 'Beta1Server', 'Beta 1 (2002) Client Authentication Server')
+
+            ftp_server_thread = threading.Thread(target=create_ftp_server, args=("files/temp", "files/beta1_ftp", globalvars.server_ip, int(config['ftp_server_port'])))
+            start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server')
+
+# TODO Finish this before .81
+# admin_server = administrationserver(config["admin_server_port"], config)
+# start_server_thread(admin_server, 'AdminServer', 'STMServer Administration Server')
+
+
+apache_root_exists = True if os.path.isdir(config["apache_root"]) else False
+
+if globalvars.use_webserver and config["http_ip"] == "":
+    if apache_root_exists:
+        steamweb("80", config["server_ip"], config["apache_root"], config["web_root"])
+
+        log.info(f"Steam Web Server listening on port 80")
+        find_child_pid_timer = threading.Timer(10.0, check_child_pid()).start()
+    else:
+        log.error("Cannot start Steam Web Server: apache folder is missing")
+else:
+    log.info("Steam web services configured to " + config["http_ip"])
+
+if (config["use_sdk"].lower() != "false" or config["use_sdk_as_cs"].lower() != 'false'):
+    # TODO Should we launch the steamworks sdk content server? or let the user launch it themselves?
+    log.info(f"Steamworks SDK Content Server configured on port {str(config['sdk_port'])}")
+
+if new_password == 1:
+    log.info("New Peer Password Generated: \033[1;33m{}\033[0m".format(globalvars.peer_password))
+    log.info("Make sure to give this password to any servers that may want to add themselves to your network!")
+
+directories_to_watch = {
+os.path.abspath('files/mod_blob'),
+}
+# Monitor changes to secondblob.bin/py in the background while server is running
+specific_files_to_watch = {
+    os.path.abspath("files/secondblob.bin"),
+    os.path.abspath("files/secondblob.py"),
+    os.path.abspath("emulator.ini"),
+    os.path.abspath('files/mod_blob'),
+}
+filesystem_monitor.specific_files_to_watch = specific_files_to_watch
+paths_to_monitor = list(specific_files_to_watch) + list(directories_to_watch)
+directory_monitor = DirectoryMonitor(paths = paths_to_monitor, directories_to_watch = directories_to_watch)
+directory_monitor.start()
+
+time.sleep(1)  # This is needed for the following line to show up AFTER the sever initialization information
+
+if config["log_level"] == "logging.INFO":
+    clearConsole = lambda:os.system('cls' if os.name in ('nt', 'dos') else 'clear')
+    clearConsole()
+    
+print("")
+print(f"Steam 2002-2011 Server Emulator v{globalvars.local_ver}")
+print(("=" * 33) + ("=" * len(globalvars.local_ver)))
+print()
+print(" -== Half-Life 2 20th Anniversary Celebration 2004-2024 ==-")
+print()
+
+utils.print_stmserver_ipaddresses()
+
+log.info("...Steam Server ready...")
+
+print("Press Escape to exit...")
+print()
+print()
