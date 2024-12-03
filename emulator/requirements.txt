@@ -21,7 +21,7 @@ overload~=1.1
 asyncio~=3.4.3
 creditcard~=1.0.2
 ping3~=4.0.8
-pywin32;sys.platform='win32'
+pywin32;sys.platform=='win32'
 blessed~=1.20.0
 pillow~=10.3.0
 Levenshtein~=0.25.1
