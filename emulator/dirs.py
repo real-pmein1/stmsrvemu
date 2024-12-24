@@ -66,8 +66,11 @@ def rename_custom_folder():
     ]
 
     for old_folder, new_folder in folders_to_rename:
-        if os.path.exists(old_folder):
-            os.rename(old_folder, new_folder)
-            log.info(f"Folder renamed from {old_folder} to {new_folder}")
-        else:
+        try:
+            if os.path.exists(old_folder):
+                os.rename(old_folder, new_folder)
+                log.info(f"Folder renamed from {old_folder} to {new_folder}")
+            else:
+                pass
+        except:
             pass

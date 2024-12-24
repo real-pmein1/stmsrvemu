@@ -3,8 +3,10 @@ import struct
 
 from steam3 import database
 from steam3.ClientManager.client import Client
-from steam3.Responses.gameserver_responses import build_GSResponse
+from steam3.Responses.gameserver_responses import build_GSApprove, build_GSGetUserAchievementStatusResponse, build_GSResponse
 from steam3.cm_packet_utils import CMPacket
+from steam3.messages.MsgGSApprove import MsgGSApprove
+from steam3.messages.MsgGSUserPlaying3 import MsgGSUserPlaying3
 from steam3.utilities import getAccountId
 
 
@@ -60,9 +62,9 @@ def handle_GS_StatusUpdate(cmserver_obj, packet: CMPacket, client_obj: Client):
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS Status Update")
     request = packet.CMRequest
     data = request.data
-    format_str = '<IIIII'  # Corresponds to four DWORDs
+    format_str = '<IIII'  # Corresponds to four DWORDs
     try:
-        playercount, maxplayers, totalbots, unknown1, unknown2 = struct.unpack_from(format_str, data, 0)
+        playercount, maxplayers, totalbots, unknown1 = struct.unpack_from(format_str, data, 0)
 
         # Calculate the starting position of the appName string
         offset = 16  # After the first 3 DWORDs (4 bytes each)
@@ -77,23 +79,62 @@ def handle_GS_StatusUpdate(cmserver_obj, packet: CMPacket, client_obj: Client):
         # Find null terminator for the mapName string
         mapName_end = data.index(b'\x00', offset)
         mapName = data[offset:mapName_end].decode('latin-1')
-        cmserver_obj.log.debug(f"playercount: {playercount}, maxplayers: {maxplayers}, totalbots: {totalbots}\n unknown1: {unknown1}, unknown2: {unknown2}, appName: {appName}, mapName: {mapName}")
+        cmserver_obj.log.debug(f"playercount: {playercount}, maxplayers: {maxplayers}, totalbots: {totalbots}\n unknown1: {unknown1}, appName: {appName}, mapName: {mapName}")
         cmserver_obj.log.debug(f"Rest of packet: {data[mapName_end:]}")
     except Exception as e:
-        cmserver_obj.log.error(f"gs status update: {e}")
+        cmserver_obj.log.error(f"gs status update error: {e}")
         pass
 
     return [build_GSResponse(client_obj)]
 
 
-
 def handle_GS_PlayerList(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS Player List")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received GS Player List")
+
     request = packet.CMRequest
     data = request.data
+    offset = 0  # Use an offset to track position in the binary data
 
-    # Define the struct format for a single player entry
+    # Read the count of players (4 bytes, little-endian)
+    count, = struct.unpack_from('<I', data, offset)
+    offset += 4
+
+    players = []  # List to store player information
+
+    for _ in range(count):
+        # Create a new player object
+        player = {
+                "playerGlobalId":None,
+                "publicIp":      None,
+                "token":         None,
+        }
+
+        # Read player data
+        player["playerGlobalId"], = struct.unpack_from('<Q', data, offset)
+        offset += 8  # Move past 8 bytes (int64) and 4 bytes (int32)
+
+        player["publicIp"], = struct.unpack_from('>I', data, offset)
+        offset += 4
+
+        # Read token length (4 bytes, little-endian)
+        token_len, = struct.unpack_from('<I', data, offset)
+        offset += 4
+
+        if token_len:
+            if token_len != GameConnectToken.SIZE:
+                raise Exception("Invalid game connect token size")
+
+            # Read the token (token_len bytes)
+            player["token"] = data[offset:offset + token_len]
+            offset += token_len  # Move past the token data
+
+        # Add the player to the list
+        players.append(player)
+
+    cmserver_obj.log.info(f"Parsed {len(players)} players.")
+    # Not sure how i came up with the code below...
+    """# Define the struct format for a single player entry
     player_format = 'Qii'  # steamID (Q), ip (i), game connect token (i)
     player_size = struct.calcsize(player_format)  # Calculate the size of one player's data block
 
@@ -122,19 +163,18 @@ def handle_GS_PlayerList(cmserver_obj, packet: CMPacket, client_obj: Client):
         cmserver_obj.log.info(f"Processed {len(players)} players")
     except Exception as e:
         cmserver_obj.log.error(f"gs player list: {e}")
-        pass
+        pass"""
     return -1
 
 def handle_GS_UserPlaying(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS User Playing")
     request = packet.CMRequest
-    # FIXME might only contain the following: steamID, public ip and game connect token; 'QII'
-    # TODO EMSG GSUserplaying3 (GSUserPlaying = 905) AKA user connected to game server:
-    #    CClientMsg<MsgGSUserPlaying3_t>::Body(&clientMsg)->m_unIPPublic = unIPPublic;
-    #    CClientMsg<MsgGSUserPlaying3_t>::Body(&clientMsg)->m_cubGameConnectToken = cubCookie;
-    #    CMsgBase_t<ExtendedClientMsgHdr_t>::AddVariableLenData(&clientMsg, pvCookie, cubCookie);
-    return -1
+    userplaying_msg = MsgGSUserPlaying3()
+    userplaying_data = userplaying_msg.parse(request.data)
+    # TODO  Check if token is valid! need to store connection tokens somewhere, then send gsapprove or gsdeny depending on validity
+
+    return build_GSApprove(userplaying_data.connnect_token)
 
 def handle_GS_DisconnectNotice(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
@@ -143,3 +183,32 @@ def handle_GS_DisconnectNotice(cmserver_obj, packet: CMPacket, client_obj: Clien
     accountid = getAccountId(request)
     client_obj.disconnect_Game(cmserver_obj)
     return -1
+
+import struct
+
+def handle_GetUserAchievementStatus(cmserver_obj, packet: CMPacket, client_obj: Client):
+    client_address = client_obj.ip_port
+    request = packet.CMRequest
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS User Achievement Status Request")
+
+    # Initialize offset to keep track of position in the buffer
+    offset = 0
+
+    # Parse accountid (4 bytes, little-endian)
+    accountid, = struct.unpack_from('<I', request.data, offset)
+    offset += 4
+
+    # Parse clientid2 (4 bytes, little-endian)
+    clientid2, = struct.unpack_from('<I', request.data, offset)
+    offset += 4
+
+    # Parse achievement string until null byte
+    null_terminator_index = request.data.find(b'\x00', offset)
+    if null_terminator_index == -1:
+        cmserver_obj.log.error(f"Achievement string not null-terminated: {request.data}")
+
+    achievement = request.data[offset:null_terminator_index].decode('utf-8')
+    offset = null_terminator_index + 1  # Move past the null byte
+
+    # FIXME grab the unlocked status from the database!
+    return build_GSGetUserAchievementStatusResponse(client_obj, accountid + clientid2, achievement, True)

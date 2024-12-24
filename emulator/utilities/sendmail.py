@@ -203,6 +203,20 @@ def send_friends_invite_email(to_email, ipaddress, username):
 
     send_email_via_smtp(msg)
 
+def send_validation_code_email(to_email, verification_token, ipaddress, username):
+    subject = f"{config['network_name']}: Email Address Validation"
+    body = load_email_template('email_validation.tpl', verification_code = verification_token, ipaddress = ipaddress[0], username = username)
+
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = subject
+    msg['From'] = config['smtp_username']
+    msg['To'] = to_email
+
+    # Attach the HTML version of the body
+    part = MIMEText(body, 'html')
+    msg.attach(part)
+
+    send_email_via_smtp(msg)
 
 if __name__ == "__main__":
     send_new_user_email(sys.argv[1], sys.argv[2], sys.argv[3], 0)

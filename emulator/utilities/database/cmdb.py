@@ -1,16 +1,19 @@
 import binascii
 import hashlib
 import logging
+import random
+import string
+import time
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, exists, func, or_
-from sqlalchemy.exc import NoResultFound, SQLAlchemyError
+from sqlalchemy.exc import NoResultFound, OperationalError, SQLAlchemyError
 
 import globalvars
 from steam3.Types.community_types import FriendRelationship, PlayerState
 from steam3.Types.steam_types import EAccountFlags, EResult
 from utilities.database import authdb, base_dbdriver, dbengine
-from utilities.database.base_dbdriver import AppOwnershipTicketRegistry, ClientInventoryItems, CommunityClanMembers, CommunityRegistry, ExternalPurchaseInfoRecord, FriendsChatHistory, FriendsGroupMembers, FriendsGroups, FriendsList, FriendsNameHistory, FriendsPlayHistory, FriendsRegistry, GuestPassRegistry, Steam3CCRecord, Steam3GiftTransactionRecord, Steam3TransactionAddressRecord, Steam3TransactionsRecord, SteamApplications, UserMachineIDRegistry, VACBans
+from utilities.database.base_dbdriver import AppOwnershipTicketRegistry, ChatRoomRegistry, ClientInventoryItems, CommunityClanMembers, CommunityRegistry, ExternalPurchaseInfoRecord, FriendsChatHistory, FriendsGroupMembers, FriendsGroups, FriendsList, FriendsNameHistory, FriendsPlayHistory, FriendsRegistry, GuestPassRegistry, Steam3CCRecord, Steam3GiftTransactionRecord, Steam3TransactionAddressRecord, Steam3TransactionsRecord, SteamApplications, UserMachineIDRegistry, VACBans
 from utils import get_derived_appids
 
 log = logging.getLogger('CMDB')
@@ -126,6 +129,23 @@ class cm_dbdriver:
                 self.session.add(new_community)
                 self.session.commit()
             return new_friend, True
+
+    def check_user_loginkey_information(self, username, loginkey):
+        user = self.session.query(self.UserRegistry).filter_by(UniqueUserName=username.rstrip('\x00')).first()
+        if user:
+            if user.Banned is not None or user.Banned != 0:
+                print(f"loginkey: {loginkey}\n db loginkey: {user.loginkey}\n keys match: {user.loginkey == loginkey}")
+                if user.loginkey == loginkey.rstrip('\x00'):
+                    return 1
+                else:
+                    log.info(f"User {user.UniqueUserName} Tried logging in with an invalid login key!")
+                    return 5
+            else:
+                log.info(f"User {user.UniqueUserName} is banned!")
+                return 17
+        else:
+            log.info(f"Uknown User {username} tried to log in")
+            return 18
 
     def check_user_information(self, email, password):
         user = self.session.query(self.UserRegistry).filter_by(AccountEmailAddress=email).first()
@@ -336,6 +356,42 @@ class cm_dbdriver:
             # email_verified is stored as an integer; convert it to a boolean
             return user.AccountEmailAddress, bool(user.email_verified)
         return None
+
+    def generate_verification_code(self, accountid: int):
+        """
+        Generates a verification code for the user if their email is not verified,
+        updates the email_verificationcode field, and returns their email address
+        and verification code as a dictionary.
+
+        :param accountid: The UniqueID of the user.
+        :return: A dictionary {'email': email_address, 'verification_code': code}
+                 or None if the account does not exist.
+        """
+        # Fetch the user from the database
+        user = self.session.query(self.UserRegistry).filter(self.UserRegistry.UniqueID == accountid).first()
+
+        if user is None:
+            # Account does not exist
+            return None
+
+        if not user.email_verified:
+            # Generate a 6-character verification code
+            verification_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k = 6))
+
+            # Update the user record with the new verification code
+            user.email_verificationcode = verification_code
+
+            # Commit the changes to the database
+            self.session.commit()
+        else:
+            # If email is already verified, use the existing verification code
+            verification_code = user.email_verificationcode
+
+        # Return the email address and verification code
+        return {
+                'email':            user.AccountEmailAddress,
+                'verification_code':verification_code
+        }
 
     def compute_accountflags(self, userid: int) -> int:
         """
@@ -611,7 +667,93 @@ class cm_dbdriver:
         else:
             #we grab the username from userregistry table
             userreg_record = self.session.query(self.UserRegistry).filter_by(UniqueID = accountid).first()
-            return str(userreg_record.UniqueUserName)
+
+        if userreg_record is None:
+            log.debug(f"No record found for account ID {accountid} in FriendsRegistry")
+            username = '[unset]'
+        else:
+            username = userreg_record.UniqueUserName
+
+        return str(username)
+
+    def update_user_login_key(self, unique_id, login_key):
+        """
+        Updates the login key for a user in the user registry.
+
+        :param unique_id: The unique ID of the user.
+        :param login_key: The 20-character login key to store.
+        :param db_url: The database connection URL (default is SQLite for demonstration).
+        """
+        try:
+            # Check if the user exists
+            user = self.session.query(self.UserRegistry).filter_by(UniqueID = unique_id).first()
+            if user:
+                # Update the login key
+                user.loginkey = login_key
+                log.debug(f"Updated login key for user with unique_id {unique_id}.")
+            else:
+                log.error(f"No user found with unique_id {unique_id}.")
+                return False
+
+            # Commit the changes
+            self.session.commit()
+            return True
+        except Exception as e:
+            log.error(f"An error occurred: {e}")
+            self.session.rollback()
+            return False
+
+    def update_user_session_key(self, unique_id, session_key):
+        """
+        Updates the session key for a user in the user registry.
+
+        :param unique_id: The unique ID of the user.
+        :param session_key: The session key to store.
+        """
+        try:
+            # Check if the user exists
+            user = self.session.query(self.UserRegistry).filter_by(UniqueID=unique_id).first()
+            if user:
+                # Update the session key
+                user.sessionkey = session_key
+                log.debug(f"Updated session key for user with unique_id {unique_id}.")
+            else:
+                log.error(f"No user found with unique_id {unique_id}.")
+                return False
+
+            # Commit the changes
+            self.session.commit()
+            return True
+        except Exception as e:
+            log.error(f"An error occurred: {e}")
+            self.session.rollback()
+            return False
+
+    def update_user_symmetric_key(self, unique_id, symmetric_key):
+        """
+        Updates the symmetric key for a user in the user registry.
+
+        :param unique_id: The unique ID of the user.
+        :param symmetric_key: The symmetric key to store.
+        """
+        try:
+            # Check if the user exists
+            user = self.session.query(self.UserRegistry).filter_by(UniqueID=unique_id).first()
+            if user:
+                # Update the symmetric key
+                user.symmetric_key = symmetric_key
+                log.debug(f"Updated symmetric key for user with unique_id {unique_id}.")
+            else:
+                log.error(f"No user found with unique_id {unique_id}.")
+                return False
+
+            # Commit the changes
+            self.session.commit()
+            return True
+        except Exception as e:
+            log.error(f"An error occurred: {e}")
+            self.session.rollback()
+            return False
 
     def add_chat_history_entry(self, from_userid, to_userid, message, acked = 0):
         """
@@ -647,6 +789,37 @@ class cm_dbdriver:
         return chat_entries
 
     ##################
+    # Chatrooms
+    ##################
+
+    def save_chatroom(self, chatroom):
+        try:
+            registry_entry = ChatRoomRegistry(
+                    UniqueID = chatroom.globalID,
+                    chatroom_type = chatroom.chat_type,
+                    owner_accountID = chatroom.owner_accountID,
+                    groupID = chatroom.associated_groupID,
+                    appID = chatroom.applicationID,
+                    chatroom_name = chatroom.name,
+                    datetime = chatroom.creation_time,
+                    message = chatroom.motd,
+                    servermessage = chatroom.servermessage,
+                    chatroom_flags = chatroom.flags,
+                    owner_permissions = chatroom.permissions.get("owner", {}).get("permissions", 0),
+                    moderator_permissions = chatroom.permissions.get("moderator", {}).get("permissions", 0),
+                    member_permissions = chatroom.permissions.get("member", {}).get("permissions", 0),
+                    default_permissions = chatroom.permissions.get("default", {}).get("permissions", 0),
+                    maxmembers = chatroom.member_limit,
+                    current_usercount = len(chatroom.clientlist),
+            )
+            self.session.add(registry_entry)
+            self.session.commit()
+        except Exception as e:
+            self.session.rollback()
+            raise e
+
+
+    ##################
     # Games Played History
     ##################
     def get_all_play_histories(self, accountID):
@@ -657,34 +830,61 @@ class cm_dbdriver:
     def add_play_history(self, accountID, processID = None, appID = None, name = '', serverID = None,
             server_ip = None, server_port = None, game_data = None, token_crc = None,
             vr_hmd_vendor = '', vr_hmd_model = '', launch_option_type = None,
-            vr_hmd_runtime = None, controller_connection_type = None, end_datetime = None):
+            vr_hmd_runtime = None, controller_connection_type = None, end_datetime = None, max_retries = 3):
         """ Adds a play history record for a user and updates the currently_playing field """
-        new_play_history = FriendsPlayHistory(
-                friendRegistryID = accountID,
-                processID = processID,
-                appID = appID,
-                name = name,
-                serverID = serverID,
-                server_ip = server_ip,
-                server_port = server_port,
-                game_data = game_data,
-                token_crc = token_crc,
-                vr_hmd_vendor = vr_hmd_vendor,
-                vr_hmd_model = vr_hmd_model,
-                launch_option_type = launch_option_type,
-                vr_hmd_runtime = vr_hmd_runtime,
-                controller_connection_type = controller_connection_type,
-                start_datetime = datetime.now(),
-                end_datetime = end_datetime
-        )
-        self.session.add(new_play_history)
-        self.session.flush()  # Ensures new_play_history gets an ID
+        retry_count = 0
 
-        # Update currently_playing in FriendsRegistry
-        friend_registry = self.session.query(FriendsRegistry).filter_by(accountID = accountID).first()
-        if friend_registry:
-            friend_registry.currently_playing = new_play_history.UniqueID
-        self.session.commit()
+        while retry_count < max_retries:
+            try:
+                # Add play history entry
+                new_play_history = FriendsPlayHistory(
+                        friendRegistryID = accountID,
+                        processID = processID,
+                        appID = appID,
+                        name = name,
+                        serverID = serverID,
+                        server_ip = server_ip,
+                        server_port = server_port,
+                        game_data = game_data,
+                        token_crc = token_crc,
+                        vr_hmd_vendor = vr_hmd_vendor,
+                        vr_hmd_model = vr_hmd_model,
+                        launch_option_type = launch_option_type,
+                        vr_hmd_runtime = vr_hmd_runtime,
+                        controller_connection_type = controller_connection_type,
+                        start_datetime = datetime.now(),
+                        end_datetime = end_datetime
+                )
+                self.session.add(new_play_history)
+                self.session.flush()  # Ensures new_play_history gets an ID
+
+                # Update currently_playing in FriendsRegistry
+                friend_registry = self.session.query(FriendsRegistry).filter_by(accountID = accountID).with_for_update().first()
+                if friend_registry:
+                    friend_registry.currently_playing = new_play_history.UniqueID
+                else:
+                    # Log if the accountID was not found
+                    log.warning(f"FriendsRegistry entry not found for accountID: {accountID}")
+
+                # Commit transaction
+                self.session.commit()
+                return new_play_history
+
+            except OperationalError as e:
+                if "Deadlock found when trying to get lock" in str(e):
+                    retry_count += 1
+                    log.warning(f"Deadlock detected. Retrying transaction {retry_count}/{max_retries}...")
+                    time.sleep(0.5 * retry_count)  # Exponential backoff
+                else:
+                    log.error(f"Database error: {e}")
+                    raise
+            except Exception as e:
+                log.error(f"Unexpected error: {e}")
+                self.session.rollback()
+                raise
+        else:
+            log.error(f"Failed to add play history after {max_retries} retries due to deadlock.")
+            raise RuntimeError("Failed to add play history due to repeated deadlocks.")
 
     def exiting_app(self, accountID):
         """

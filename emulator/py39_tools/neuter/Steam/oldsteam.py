@@ -172,7 +172,7 @@ class Checksum :
         checksumpointer = fileid * 8 + 16
         (numchecksums, checksumstart) = struct.unpack("<LL", self.checksumdata[checksumpointer:checksumpointer + 8])
         start = self.checksumliststart + (checksumstart + chunkid) * 4
-        crc = struct.unpack("<i", self.checksumdata[start:start+4])[0]
+        crc = struct.unpack("<I", self.checksumdata[start:start+4])[0]
 
         return crc
 

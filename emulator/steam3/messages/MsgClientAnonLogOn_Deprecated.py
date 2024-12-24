@@ -1,66 +1,102 @@
 import struct
-from io import BytesIO
 
+class MsgClientAnonLogOn_Deprecated:
+    def __init__(self, data: bytes):
+        self.protocol_version = None
+        self.private_ip = None
+        self.public_ip = None
+        self.steam_id = None
+        self.ticket_length = None
+        self.ticket = None
+        self.email = None
+        self.language = None
+        self.client_version = None
+        self.remaining_bytes = None
 
-class ClientAnonLogOn_Deprecated:
-    def __init__(self):
-        self.protocolVersion = 0
-        self.privateIp = 0
-        self.publicIp = 0
-        self.steamGlobalId = 0
-        self.unknown1 = 0
-        self.unknown2 = 0
-        self.unknown3 = 0
-        self.unknown4 = 0
-        self.clientAppVersion = None
+        self._deserialize(data)
 
-    def deSerialize(self, byte_buffer):
-        # Create a BytesIO stream from the byte buffer
-        stream = BytesIO(byte_buffer)
-
-        # Read protocolVersion (int32)
-        self.protocolVersion = struct.unpack('<I', stream.read(4))[0]
-
-        # Read privateIp (int32) and XOR with 0xBAADF00D
-        privateIp = struct.unpack('<i', stream.read(4))[0] ^ 0xBAADF00D
-        self.privateIp = self.convert_ip(self.reverse_ip_int(privateIp))
-
-        # Read publicIp (int32)
-        self.publicIp = struct.unpack('<i', stream.read(4))[0]
-
-        # Read steamGlobalId (int64)
-        self.steamGlobalId = struct.unpack('<q', stream.read(8))[0]
+    def _deserialize(self, data: bytes):
+        """
+        Deserialize the MsgClientAnonLogOn structure from a byte stream.
+        """
+        buffer = memoryview(data)
+        cursor = 0
 
         try:
-            # Read unknown1 (int32), unknown2 (int32), unknown3 (int16), and unknown4 (int8)
-            self.unknown1 = struct.unpack('<i', stream.read(4))[0]
-            self.unknown2 = struct.unpack('<i', stream.read(4))[0]
-            self.unknown3 = struct.unpack('<h', stream.read(2))[0]
-            self.unknown4 = struct.unpack('<b', stream.read(1))[0]
+            # Protocol version (4 bytes)
+            self.protocol_version = buffer[cursor:cursor + 4].tobytes()
+            cursor += 4
 
+            # Private IP (4 bytes, deobfuscated)
+            private_ip_obfuscated = buffer[cursor:cursor + 4].tobytes()
+            self.private_ip = struct.unpack('<I', private_ip_obfuscated)[0] ^ 0xBAADF00D
+            cursor += 4
+
+            # Public IP (4 bytes)
+            self.public_ip = struct.unpack('<I', buffer[cursor:cursor + 4])[0]
+            cursor += 4
+
+            # SteamID (8 bytes)
+            self.steam_id = struct.unpack('<Q', buffer[cursor:cursor + 8])[0]
+            cursor += 8
+
+            # Ticket length (4 bytes)
+            self.ticket_length = struct.unpack('<I', buffer[cursor:cursor + 4])[0]
+            cursor += 4
+
+            # Ticket (if ticket length > 0, read until null byte)
+            if self.ticket_length > 0:
+                ticket_end = buffer[cursor:].tobytes().find(b'\x00')
+                if ticket_end == -1:
+                    raise ValueError("Null terminator not found for ticket.")
+                self.ticket = buffer[cursor:cursor + ticket_end].tobytes()
+                cursor += ticket_end + 1  # Skip the null byte
+            else:
+                self.ticket = None
+
+            # Email (read until null byte)
+            email_end = buffer[cursor:].tobytes().find(b'\x00')
+            if email_end == -1:
+                raise ValueError("Null terminator not found for email.")
+            self.email = buffer[cursor:cursor + email_end].tobytes().decode('utf-8')
+            cursor += email_end + 1  # Skip the null byte
+
+            # Language (read until null byte)
+            lang_end = buffer[cursor:].tobytes().find(b'\x00')
+            if lang_end == -1:
+                raise ValueError("Null terminator not found for language.")
+            self.language = buffer[cursor:cursor + lang_end].tobytes().decode('utf-8')
+            cursor += lang_end + 1  # Skip the null byte
+
+            # 4-byte null padding
+            null_padding = buffer[cursor:cursor + 4].tobytes()
+            if null_padding != b'\x00\x00\x00\x00':
+                raise ValueError("Expected 4-byte null padding.")
+            cursor += 4
+
+            # 1-byte null padding
+            if buffer[cursor] != 0:
+                raise ValueError("Expected 1-byte null padding.")
+            cursor += 1
+
+            # Client version (4 bytes)
+            self.client_version = struct.unpack('<I', buffer[cursor:cursor + 4])[0]
+            cursor += 4
+
+            # Remaining bytes
+            self.remaining_bytes = buffer[cursor:].tobytes()
 
         except Exception as e:
-            print(f"anon client login: {e}")
-            pass
+            print(f"Error during deserialization: {e}")
+            raise
 
-        # If there are remaining bytes in the stream, read clientAppVersion (int32)
-        if stream.tell() < len(byte_buffer):
-            self.clientAppVersion = struct.unpack('<i', stream.read(4))[0]
+    def __str__(self):
+        return (f"MsgClientAnonLogOn(Protocol Version={self.protocol_version}, Private IP={self.private_ip}, "
+                f"Public IP={self.public_ip}, Steam ID={self.steam_id}, Ticket Length={self.ticket_length}, "
+                f"Email='{self.email}', Language='{self.language}', Client Version={self.client_version})")
 
-        return self
-
-    @staticmethod
-    def convert_ip(ip_int):
-        # Convert an integer IP address to dotted format
-        return f'{ip_int & 0xFF}.{(ip_int >> 8) & 0xFF}.{(ip_int >> 16) & 0xFF}.{(ip_int >> 24) & 0xFF}'
-
-    @staticmethod
-    def reverse_ip_int(ip_int):
-        # Reverse the 4 bytes in the integer using bitwise shifts
-        reversed_ip = (
-                ((ip_int >> 24) & 0xFF) |  # Move the highest byte to the lowest
-                ((ip_int >> 8) & 0xFF00) |  # Move the second highest byte to the second lowest
-                ((ip_int << 8) & 0xFF0000) |  # Move the second lowest byte to the second highest
-                ((ip_int << 24) & 0xFF000000)  # Move the lowest byte to the highest
-        )
-        return reversed_ip
+    def __repr__(self):
+        return (f"MsgClientAnonLogOn(protocol_version={self.protocol_version}, private_ip={self.private_ip}, "
+                f"public_ip={self.public_ip}, steam_id={self.steam_id}, ticket_length={self.ticket_length}, "
+                f"ticket={self.ticket}, email='{self.email}', language='{self.language}', "
+                f"client_version={self.client_version}, remaining_bytes={self.remaining_bytes})")

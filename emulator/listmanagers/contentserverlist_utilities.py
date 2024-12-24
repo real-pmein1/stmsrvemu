@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import socket
 import struct
 import time
@@ -9,6 +10,8 @@ import globalvars
 from globalvars import config
 from utilities.encryption import derive_key, peer_decrypt_message, peer_encrypt_message
 import utilities.encryption as encryption
+from utils import launch_neuter_application_standalone
+
 log = logging.getLogger("CSLSTMGR")
 
 HEADER = b"\x00\x4f\x8c\x11"
@@ -125,9 +128,9 @@ def send_client_info(client_socket, server_address, key, server_instance):
     while i < num_chunks:
         print(f"Sending Chunk {i}")  # Adjust index display
         encrypted_message = chunks[i]
-        print(encrypted_message)
-        print(client_socket.send(encrypted_message))
-
+        #print(encrypted_message)
+        #print(client_socket.send(encrypted_message))
+        client_socket.send(encrypted_message)
         i += 1
         time.sleep(.1)
 
@@ -157,15 +160,24 @@ def handshake(client_socket, server_address, shared_secret, CLIENT_IDENTIFIER):
     log.debug(f"Handshake packet sent: {HEADER + command_byte + salt + message}")
 
     # Wait for server response
-    data = client_socket.recv(4096)
-    log.debug(f"Received handshake response: {data}")
-    if data.startswith(b"error:"):
-        handle_server_error(data.decode("latin-1"))
+    assembled_data = b""
+    while True:
+        packet = client_socket.recv(4096)
+        log.debug(f"Received packet: {packet}")
+        assembled_data += packet
+        if b"END_OF_BLOB" in packet:
+            assembled_data = assembled_data.replace(b"END_OF_BLOB", b"")
+            break
+
+    log.debug(f"Full assembled data: {assembled_data}")
+
+    if assembled_data.startswith(b"error:"):
+        handle_server_error(assembled_data.decode("latin-1"))
         return None
 
-    server_salt = data[:16]
+    server_salt = assembled_data[:16]
     key = derive_key(shared_secret, server_salt)
-    decrypted_data = peer_decrypt_message(key, data[16:])
+    decrypted_data = peer_decrypt_message(key, assembled_data[16:])
     log.debug(f"Decrypted handshake response: {decrypted_data}")
 
     # Parse the decrypted data
@@ -213,6 +225,31 @@ def handshake(client_socket, server_address, shared_secret, CLIENT_IDENTIFIER):
     key2_data = decrypted_data[offset:offset+key2_length]
     offset += key2_length
 
+    # Read secondblob_length
+    if len(decrypted_data) < offset + 4:
+        log.warning("Failed to retrieve second blob: incomplete data.")
+        return None
+    secondblob_length = int.from_bytes(decrypted_data[offset:offset + 4], 'big')
+    offset += 4
+
+    # Read second blob data
+    if len(decrypted_data) < offset + secondblob_length:
+        log.warning("Failed to retrieve second blob: incomplete data.")
+        return None
+
+    second_blob = decrypted_data[offset:offset + secondblob_length]
+    offset += secondblob_length
+
+    # Save to file
+    with open('files/cache/secondblob_wan.bin', 'wb') as f:
+        f.write(second_blob)
+        try:
+            shutil.rmtree('files/cache/secondblob_lan.bin')
+        except:
+            pass
+    log.debug("Saved second blob data to files/cache/secondblob_wan.bin")
+
+
     if message == b"handshake successful":
         log.debug("Handshake successful with server.")
         # Save the keys to files
@@ -224,10 +261,12 @@ def handshake(client_socket, server_address, shared_secret, CLIENT_IDENTIFIER):
         encryption.BERstring = encryption.network_key.public_key().export_key("DER")
         encryption.signed_mainkey_reply = encryption.get_mainkey_reply()
         log.debug("Received RSA keys saved to files.")
+
         return key
     else:
         log.warning(f"Handshake failed. Received message: {message}")
         return None
+
 
 def heartbeat_thread(server_instance):
     shared_secret = server_instance.config['peer_password']  # Predefined shared secret for simplicity
@@ -249,11 +288,10 @@ def heartbeat_thread(server_instance):
     if not send_client_info(client_socket, server_address, key, server_instance):
         log.error("Failed to send client info. Exiting.")
         return
-
     # Start heartbeat loop
     heartbeat_attempts = 0
     client_socket.settimeout(5)  # Set a 5-second timeout for heartbeat responses
-
+    launch_neuter_application_standalone()
     while heartbeat_attempts < 3:
         success = send_heartbeat(client_socket, server_address, key)
         if success:

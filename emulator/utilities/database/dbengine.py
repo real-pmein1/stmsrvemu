@@ -7,6 +7,7 @@ import mariadb
 import time
 import os
 import zipfile
+import psutil
 from datetime import datetime, timedelta
 from sqlalchemy import TextClause, create_engine, delete, inspect, select, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
@@ -43,6 +44,18 @@ class DatabaseDriver():
             if globalvars.mariadb_initialized:
                 self.real_connect(connection_string)
                 return
+            else:
+                # Check if mariadbd.exe is already running
+                mariadb_running = any(
+                    proc.name().lower() == "mariadbd.exe" for proc in psutil.process_iter(attrs=['name'])
+                )
+
+                if mariadb_running:
+                    log.info("MariaDB server is already running. Skipping initialization wait.")
+                    globalvars.mariadb_initialized = True
+                    self.real_connect(connection_string)
+                    return
+
             start_time = datetime.now()
             # Wait for the specific readiness line
             while True:
@@ -108,12 +121,14 @@ class DatabaseDriver():
 
         log.info(f"Executing {sql_file}.")
         try:
-            if sql_file == "files/sql/ContentDescriptionDB.sql" or sql_file == "files/sql/ClientConfigurationDB.sql":
+            if sql_file == "files/sql/ContentDescriptionDB.sql" or sql_file == "files/sql/ClientConfigurationDB.sql" or sql_file == "files/sql/appinfo_pkv.sql":
 
                 if sql_file == "files/sql/ClientConfigurationDB.sql":
                     database_schema = "ClientConfigurationDB"
-                else:
+                elif sql_file == "files/sql/ContentDescriptionDB.sql":
                     database_schema = "ContentDescriptionDB"
+                else:
+                    database_schema = "appinfo_pkv"
 
                 config = globalvars.config
                 with Session(self.engine) as session:

@@ -374,6 +374,18 @@ def replace_string_name_space(islan, is2003_gcf = False):
                              (b'"207.173.177.45:1200"',
                               b'"' + trk_ip + b':' + trk_port + b'"',
                               b"Tracker IP 4"),
+                             (b'"207.173.178.42:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 5"),
+                             (b'"207.173.178.43:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 6"),
+                             (b'"207.173.178.44:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 7"),
+                             (b'"207.173.178.45:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 8"),
                              (b'"207.173.177.10:27010"',
                               b'"' + conn_ip + b':' + hl1master_port + b'"',
                               b"HL Master Server 3"),
@@ -398,6 +410,15 @@ def replace_string_name_space(islan, is2003_gcf = False):
                              (b'half-life.speakeasy-chi.hlauth.net:27012',
                               conn_ip + b':' + vac1_port,
                               b"HL VAC Secure Server 3"),
+                             (b'"leaknet.org:27010"',
+                              b'"' + conn_ip + b':' + hl1master_port + b'"',
+                              b"Leaknet Master Server 1"),
+                             (b'"leaknet.tk:27010"',
+                              b'"' + conn_ip + b':' + hl1master_port + b'"',
+                              b"Leaknet Master Server 2"),
+                             (b'"94.158.153.11:27010"',
+                              b'"' + conn_ip + b':' + hl1master_port + b'"',
+                              b"Leaknet Master Server 3"),
                              (b'"http://www.steampowered.com/?area=news"',
                               b'"http://' + octal_ip + b"/?area=news" + b'"',
                               b"Steam news URL 1"),
@@ -414,10 +435,12 @@ def replace_string_name(islan, is2003_gcf = False):
     octal_ip = get_octal_ip(islan)
 
     octal_ip = octal_ip.encode('latin-1')
+    conn_ip = config["server_ip"].encode('latin-1') if islan else config["public_ip"].encode('latin-1')
 
     community_ip = get_octal_ip(islan, True).encode('latin-1')
     store_url_new = config["store_url_new"].encode('latin-1')
     support_url_net = config["support_url_new"].encode('latin-1')
+    hl1master_port = config['masterhl1_server_port'].encode('latin-1')
 
     replace_string_name = (
             (b"http://www.steampowered.com/platform/banner/random.php",
@@ -459,7 +482,7 @@ def replace_string_name(islan, is2003_gcf = False):
             (b"http://steamcommunity.com/",
              b"http://" + community_ip + b"/",
              b"Community URL"),
-            (b"http:/beta.steamcommunity.com/",
+            (b"http://beta.steamcommunity.com/",
              b"http://" + community_ip + b"/",
              b"Community URL"),
             (b"http://api.steampowered.com",
@@ -522,6 +545,9 @@ def replace_string_name(islan, is2003_gcf = False):
                             (b"\x00" + b'storefront.steampowered.com' + b"\x00",
                              b"\x00" + octal_ip + b"\x00",
                              b"Storefront App Info URL"),
+                            (b"\x00" + b'half-life.west.won.net:27010' + b"\x00",
+                             b"\x00" + conn_ip + b':' + hl1master_port + b"\x00",
+                             b"Master Server 1")
                             )
 
     return replace_string_name

@@ -277,7 +277,7 @@ class EServerType(SteamIntEnum):
     OGS = 39
     WebAPI = 40
     UDS = 41
-    MMS = 42
+    MMS = 42 # LOBBY
     GMS = 43
     KGS = 44
     UCM = 45
@@ -298,7 +298,7 @@ class EServerType(SteamIntEnum):
     Secrets = 60
     Logsink = 61
     Market = 62
-    Quest = 63
+    Quest = 63  #EMOTICONs
     WDS = 64
     ACS = 65
     PNP = 66
@@ -1162,18 +1162,41 @@ class AppInfoSectionPropagationType(SteamIntEnum):
     AppInfoSectionPropagationType_ServerAndWGOnly = 5
 
 
+
 class AppInfoRequest:
     def __init__(self):
         self.app_id = 0
         self.request_all_sections = False
         self.local_app_info_sections_crc32 = defaultdict(int)
 
+    def __repr__(self):
+        return (f"AppInfoRequest(app_id={self.app_id}, "
+                f"request_all_sections={self.request_all_sections}, "
+                f"local_app_info_sections_crc32={dict(self.local_app_info_sections_crc32)})")
 
+    def __str__(self):
+        crc32_str = ", ".join(f"{section}: {crc32}" for section, crc32 in self.local_app_info_sections_crc32.items())
+        return (f"App Info Request:\n"
+                f"  App ID: {self.app_id}\n"
+                f"  Request All Sections: {self.request_all_sections}\n"
+                f"  Local App Info Sections CRC32:\n    {crc32_str}")
 class AppInfo:
     def __init__(self):
         self.app_id = 0
         self.last_change_number = 0
         self.app_info_sections = defaultdict(lambda: None)
+
+    def __repr__(self):
+        return (f"AppInfo(app_id={self.app_id}, "
+                f"last_change_number={self.last_change_number}, "
+                f"app_info_sections={dict(self.app_info_sections)})")
+
+    def __str__(self):
+        sections_str = "\n    ".join(f"{section}: {info}" for section, info in self.app_info_sections.items())
+        return (f"App Info:\n"
+                f"  App ID: {self.app_id}\n"
+                f"  Last Change Number: {self.last_change_number}\n"
+                f"  App Info Sections:\n    {sections_str}")
 
 
 # Do not remove

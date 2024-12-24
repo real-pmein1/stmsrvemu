@@ -2,16 +2,11 @@ import copy
 import struct
 
 import globalvars
-import utils
-from steam3.Managers.newsmanager import NewsManager
-from steam3.Types.MessageObject.GuestPass import GuestPass_Deprecated
 from steam3.Types.emsg import EMsg
 from steam3.Types.steam_types import SystemIMType
 
 from steam3.cm_packet_utils import CMResponse
-from steam3.messages.MsgClientCMList import MsgClientCMList
 from steam3.messages.MsgClientMarketingMessageUpdate import MsgClientMarketingMessageUpdate
-from steam3.utilities import add_time_to_current_uint32, get_current_time_uint32
 
 
 def build_client_newsupdate_response(client_obj):
@@ -125,22 +120,31 @@ def build_General_response(client_obj, eResult):
     return packet
 
 
-def build_GeneralAck(packet, client_address, socket, eresult = b''):
-    packet_reply = copy.copy(packet)
-    packet_reply.packetid = b'\x07'
-    packet_reply.size = 0
-    packet_reply.data_len = 0
-    packet_reply.destination_id = packet.source_id
-    packet_reply.source_id = packet.destination_id  # Swap .to and .from_
-    packet_reply.last_recv_seq = packet.sequence_num
-    packet_reply.sequence_num = 0
-    packet_reply.split_pkt_cnt = 0
-    packet_reply.seq_of_first_pkt = 0
-    packet_reply.data = eresult  # Assuming data should be an empty bytes object
+def build_GeneralAck(client_obj, packet, client_address, cmserver_obj, eresult = b''):
 
-    # Serialize the packet
-    packet = packet_reply.serialize()
-    socket.sendto(packet, client_address)
+    if client_obj.socket:  # TCP
+        packet = CMResponse(eMsgID = EMsg.GenericReply, client_obj = client_obj)
+
+        packet.data = struct.pack('<I', 1)
+        packet.length = len(packet.data)
+        cmserver_obj.sendReply(client_obj, [packet])
+    else:  # UDP
+        packet_reply = copy.copy(packet)
+        packet_reply.packetid = b'\x07'
+        packet_reply.size = 0
+        packet_reply.data_len = 0
+        packet_reply.destination_id = packet.source_id
+        packet_reply.source_id = packet.destination_id  # Swap .to and .from_
+        packet_reply.last_recv_seq = packet.sequence_num
+        packet_reply.sequence_num = 0
+        packet_reply.split_pkt_cnt = 0
+        packet_reply.seq_of_first_pkt = 0
+        packet_reply.data = eresult  # Assuming data should be an empty bytes object
+
+        # Serialize the packet
+        packet = packet_reply.serialize()
+
+        cmserver_obj.socket.sendto(packet, client_address)
 
 
 def build_ClientMarketingMessageUpdate(client_obj):
@@ -165,3 +169,14 @@ def build_ClientMarketingMessageUpdate(client_obj):
     #packet.data = b'\xee\xdaLJ\x08\x00\x00\x00\xb7\xf9N4\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464089635255/\x00\x0f\xdfP0\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464022650639/\x00\x94\xaaHB\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464324102804/\x00V$\xd7@\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464299885654/\x00;\x8c\x873\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464076565563/\x00\xe9\xc1\xf42\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464066945513/\x00B\xb2\xde6\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464132608578/\x00\xa8\x99L7\xaa\x86@\x00http://cdn.store.steampowered.com/message/18162464139811240/\x00'
 
     return packet
+
+def build_ClientRequestValidationMail_Response(client_obj, eresult):
+
+    packet = CMResponse(eMsgID = EMsg.ClientRequestValidationMailResponse, client_obj = client_obj)
+
+    packet.data = struct.pack('<I',
+                              eresult)
+
+    return packet
+
+

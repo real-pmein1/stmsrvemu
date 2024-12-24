@@ -89,6 +89,8 @@ class latencychecker:
         self.server_port = port
 
     def start(self):
+        from config import get_config
+        config = get_config()
         # Create a UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind((self.server_ip, self.server_port))
@@ -100,6 +102,12 @@ class latencychecker:
             if data[0:4] == b"\x66\x22\x44\x12":
                 client_ip = socket.inet_ntoa(data[4:8])
                 self.logger.debug(f"Received client IP: {client_ip} from {addr}")
+
+                if client_ip == config['server_ip'] or client_ip == config['public_ip']:
+                    latency = 0
+                    latency_packet = self.create_response_packet(client_ip, latency)
+                    sock.sendto(latency_packet, addr)
+                    continue
 
                 latency = self.ping_client(client_ip)
                 if latency is not None:

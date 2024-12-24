@@ -41,6 +41,7 @@ def build_CreateChatResponse(client_obj, chatinfo: MsgClientCreateChat):
     };
     """
     packet = CMResponse(eMsgID = EMsg.ClientCreateChatResponse, client_obj = client_obj)
+    # NOTE: if type 3, it is a game lobby, it is temporary and does not need to be added to the database
 
     # Format string: < indicates little-endian, i for int32, q for int64
     format_str = '<iqiq'

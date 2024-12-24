@@ -331,7 +331,11 @@ class clientupdateserver(TCPNetworkHandler):
             else:
                 self.log.warning("2 Invalid Command: " + binascii.b2a_hex(msg).decode())
         except Exception as e:
+            traceback.print_exc()
             self.log.error(f"{clientid}An error occurred: {e}")
+            tb = sys.exc_info()[2]  # Get the original traceback
+            self.log.error(''.join(traceback.format_tb(tb)))  # Logs traceback up to this point
+            raise e.with_traceback(tb)  # Re-raise with the original traceback
         finally:
             client_socket.close()
             self.log.info(clientid + "Disconnected from Client Update Server")

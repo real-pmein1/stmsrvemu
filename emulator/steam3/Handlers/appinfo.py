@@ -39,30 +39,23 @@ from steam3.Responses.appinfo_responses import build_appinfo_response, build_app
 def handle_ClientAppInfoRequest_obsolete(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"{client_address} Application Info Request")
-
-    input_stream = InputStream(request.data)
-
-    """num_of_apps_requested = input_stream.read_int32()
-    appinfo_requests = []
+    data = io.BytesIO(request.data)
+    cmserver_obj.log.info(f"{client_address}: Application Info Request")
+    app_ids = []
     msg = MsgClientAppInfoRequest()
-    msg.deserialize(io.BytesIO(request.data[4:]))
+    msg.deserialize(data)
 
     # Access the parsed data
     for request in msg.appInfoRequests:
-        print(f"App ID: {request.appId}, Request All Sections: {request.requestAllSections}")
-        appinfo_requests.append(request.appId)
-        # FIXME this is only for single appinfo file requests
-        #for section, crc32 in request.localAppInfoSectionsCRC32.items():
-        #    print(f"  Section {section}: CRC32 = {crc32}")"""
-    appinfo_requests = [7, 240, 520]
+        app_ids.append(request.appId)
 
-    return build_appinfo_response(client_obj, appinfo_requests, True)
+    return build_appinfo_response(client_obj, app_ids, True)
 
 
 def handle_ClientAppInfoRequest(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
+    cmserver_obj.log.info(f"{client_address}: Application Info Request")
     data = io.BytesIO(request.data)
 
     app_ids = []
@@ -86,5 +79,4 @@ def handle_ClientAppInfoupdate(cmserver_obj, packet: CMPacket, client_obj: Clien
     # FIXME we only send this response to newer clients (2010? or later), need to figure out when
     #return build_appinfochanges_response(client_obj, last_change_number, send_change_list)
 
-    app_ids = [7, 240, 520]
-    return build_appinfochanges_response(client_obj, app_ids, last_change_number, True)
+    return build_appinfochanges_response(client_obj, last_change_number, True)

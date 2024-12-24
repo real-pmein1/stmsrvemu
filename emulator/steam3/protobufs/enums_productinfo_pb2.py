@@ -22,7 +22,7 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-import steammessages_base_pb2 as steammessages__base__pb2
+from steam3.protobufs import steammessages_base_pb2 as steammessages__base__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17\x65nums_productinfo.proto\x1a\x18steammessages_base.proto*\xfb\x01\n\x14\x45\x43ontentDescriptorID\x12\x36\n2k_EContentDescriptor_FrequentNudityOrSexualContent\x10\x01\x12/\n+k_EContentDescriptor_FrequentViolenceOrGore\x10\x02\x12,\n(k_EContentDescriptor_StrongSexualContent\x10\x03\x12!\n\x1dk_EContentDescriptor_UNUSED_4\x10\x04\x12)\n%k_EContentDescriptor_AnyMatureContent\x10\x05\x42\tH\x01\x90\x01\x01\x80\xb5\x18\x01')

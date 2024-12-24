@@ -2,6 +2,7 @@ import ipaddress
 import struct
 from datetime import datetime
 from io import BytesIO
+from typing import List
 
 from Crypto.Hash import SHA1
 from Crypto.Signature import pkcs1_15
@@ -9,7 +10,8 @@ from Crypto.Signature import pkcs1_15
 from steam3.utilities import ip_to_int, ip_to_reverse_int
 from utilities import encryption
 
-
+# TODO figure out if this class should call the database class to grab the correct subscription for v4 tickets
+#  Or if it should be called outside of this class and added to the initialization as a parameter
 class Steam3AppOwnershipTicket:
     def __init__(self, ticket_length=0, ticket_version=0, steam_id=0, app_id=0, public_ip=0, private_ip=0, app_ownership_ticket_flags=0, time_issued=0, time_expire=0):
         self._ticket_length = ticket_length
@@ -64,9 +66,7 @@ class Steam3AppOwnershipTicket:
         self._time_issued = datetime.utcfromtimestamp(fields[7]).strftime('%m/%d/%Y %H:%M:%S')
         self._time_expire = datetime.utcfromtimestamp(fields[8]).strftime('%m/%d/%Y %H:%M:%S')
 
-        version = fields[1]
-
-        if version > 2:
+        if self._ticket_version > 2:
             sub_id_count = struct.unpack('<H', ticket_stream.read(2))[0]
             self.subscription_ids = []
             for _ in range(sub_id_count):
@@ -74,7 +74,7 @@ class Steam3AppOwnershipTicket:
                 ticket_stream.read(1)  # Skip null byte
                 self.subscription_ids.append(sub_id)
 
-        if version > 3:
+        if self._ticket_version > 3:
             dlc_id_count = struct.unpack('<H', ticket_stream.read(2))[0]
             self.dlc_ids = []
             for _ in range(dlc_id_count):
@@ -89,12 +89,12 @@ class Steam3AppOwnershipTicket:
             print(f"Extra bytes in ticket: {remaining_bytes.hex()}")
 
     # Add subscription ID method for version 3 and above
-    def add_subscription_ids(self, sub_ids):
+    def add_subscription_ids(self, sub_ids: List[int]):
         self.subscription_ids.extend(sub_ids)
         self._ticket_length += 2 + len(sub_ids) * 5  # Update ticket length accordingly
 
     # Add DLC ID method for version 4 and above
-    def add_dlc_ids(self, dlc_ids):
+    def add_dlc_ids(self, dlc_ids: List[int]):
         self.dlc_ids.extend(dlc_ids)
         self._ticket_length += 2 + len(dlc_ids) * 5  # Update ticket length accordingly
 
@@ -174,23 +174,9 @@ class Steam3AppOwnershipTicket:
         self.signature = encryption.rsa_sign_message(encryption.network_key, self.data)
         return self.signature
 
-    """
-    28000000                ticket length
-    02000000                ticket version
-    c4a09b0101001001        steam ID
-    00000000                appid 0
-    c4efca50                (80, 202, 239, 196)
-    0200000a                (10, 0, 0, 2)
-    00000000
-    a2adba48                Sun Aug 31 2008 14:41:38 GMT+0000
-    225dd648                Sun Sep 21 2008 14:41:38 GMT+0000
-    """
-
     # Serialization method
     def serialize(self, addsignature = False):
-        self.data = struct.pack("<I I Q I I I I I I",
-                                self._ticket_length,
-                                self._ticket_version,
+        self.data = struct.pack("<Q I I I I I I",
                                 self._steam_id,
                                 self._app_id,
                                 self._public_ip,
@@ -198,23 +184,26 @@ class Steam3AppOwnershipTicket:
                                 self._app_ownership_ticket_flags,
                                 self._time_issued,
                                 self._time_expire)
-
+        self._ticket_version = 2
         if self._ticket_version > 2:
+            self._ticket_version = 3
             self.data += struct.pack('<H', len(self.subscription_ids))
             for sub_id in self.subscription_ids:
                 self.data += struct.pack('<I', sub_id) + b'\x00'  # Append null byte after each ID
 
         if self._ticket_version > 3:
+            self._ticket_version = 4
             self.data += struct.pack('<H', len(self.dlc_ids))
             for dlc_id in self.dlc_ids:
                 self.data += struct.pack('<I', dlc_id) + b'\x00'  # Append null byte after each DLC ID
             self.data += struct.pack('<H', int(self.vac_banned))  # 2-byte VAC banned flag
 
+        self._ticket_length = len(self.data)
         if addsignature:
             self.add_signature()
             self.data += self.signature
 
-        return self.data, len(self.signature)
+        return struct.pack('<I I', self._ticket_length, self._ticket_version) + self.data, len(self.signature)
 
     # Deserialization using struct.unpack
     @classmethod

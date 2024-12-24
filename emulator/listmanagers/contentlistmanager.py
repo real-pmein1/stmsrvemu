@@ -84,7 +84,7 @@ class ContentServerManager(object):
         else:
             return None, 0  # No entries found
 
-    def find_ip_address(self, cellid = None, appid = None, version = None, islan = False):
+    def find_ip_address(self, cellid = None, appid = None, version = None, islan = False, client_address = None):
         matches = []
         appid_version_matches = []
 
@@ -129,18 +129,25 @@ class ContentServerManager(object):
                         ip = entry[1] if islan else entry[0]
                         matches.append((ip, entry[2]))  # IP and port
 
+        # Check if any server matches the client's IP address
+        client_ip = client_address if client_address else None
+        if client_ip:
+            for match in matches:
+                if match[0] == client_ip:
+                    return [match], 1  # Return only the matching server with the client's IP
+
         count = len(matches)
         if count > 0:
             return matches, count
         else:
             return None, 0  # No matching entries found
 
-    def get_content_server_groups_list(self, cellid = None, appid = None, versionid = None, islan = False):
+    def get_content_server_groups_list(self, cellid = None, appid = None, versionid = None, islan = False, client_address = None):
         # Get servers without an app list (client update servers)
         update_servers, update_count = self.get_empty_or_no_applist_entries(islan)
 
         # Get servers with an app list (content servers), filter by cellid, appid, and versionid
-        content_servers, content_count = self.find_ip_address(cellid = cellid, appid = appid, version = versionid, islan = islan)
+        content_servers, content_count = self.find_ip_address(cellid = cellid, appid = appid, version = versionid, islan = islan, client_address = client_address)
 
         if cellid:
             log.info(f"Getting content server groups for cellid {cellid}, appid {appid}, version {versionid}")
@@ -311,6 +318,5 @@ class ContentServerManager(object):
                         appcount += 1
                     print("Number of Apps Available: " + str(appcount))
                 print("--------------------")
-
 
 manager = ContentServerManager()

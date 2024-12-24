@@ -70,4 +70,8 @@ if __name__ == "__main__":
     num_nops = abs(patch_location_offset) - len(bytes.fromhex("B8 01 00 00 00"))
     with open(dll_path, "rb") as f:
         file_bytes = f.read()
+
+    browserfirneds_bytes = "83 C4 04 85 C0 74 02 B3"
+    offset = 0
+    replacement = "83 C4 04 85 C0 75 02 B3"
     find_and_replace_pattern(file_bytes, dll_path, pattern, replacement, patch_location_offset, True)

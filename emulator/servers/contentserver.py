@@ -6,13 +6,15 @@ import os
 import os.path
 import pickle
 import threading
-import time
+import time  # Required for time.sleep()
 import zlib
 import struct
-
-import ipcalc
-from Crypto.Hash import SHA
 import random
+import ipcalc
+
+from Crypto.Hash import SHA
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 import globalvars
 import utils
@@ -24,15 +26,45 @@ from utilities.checksums import Checksum2, Checksum3, Checksum4, SDKChecksum
 from utilities.manifests import *
 from utilities.networkhandler import TCPNetworkHandler
 from utilities.ticket_utils import Steam2Ticket
-import threading
-import time  # Required for time.sleep()
-
-# Function to run the latencychecker
 
 
 app_list = []
 csConnectionCount = 0
 
+class FolderEventHandler(FileSystemEventHandler):
+    def __init__(self, callback, debounce_time=2.0):
+        """
+        Initialize with a callback to handle file events and a debounce time.
+        """
+        self.callback = callback
+        self.debounce_time = debounce_time
+        self.event_lock = threading.Lock()
+        self.timer = None
+
+    def _debounced_callback(self):
+        """
+        Calls the provided callback after debounce time has passed.
+        """
+        with self.event_lock:
+            self.timer = None
+        self.callback()
+
+    def _trigger_debounce(self):
+        """
+        Handles resetting the debounce timer and eventually triggering the callback.
+        """
+        with self.event_lock:
+            if self.timer:
+                self.timer.cancel()
+            self.timer = threading.Timer(self.debounce_time, self._debounced_callback)
+            self.timer.start()
+
+    def on_any_event(self, event):
+        """
+        Trigger callback for relevant file events with debounce.
+        """
+        if not event.is_directory and event.src_path.endswith(('.manifest', '.blob')):
+            self._trigger_debounce()
 
 class contentserver(TCPNetworkHandler):
 
@@ -42,20 +74,21 @@ class contentserver(TCPNetworkHandler):
         super(contentserver, self).__init__(config, port, self.server_type)  # Create an instance of NetworkHandler
 
         if globalvars.public_ip == "0.0.0.0":
-            server_ip = globalvars.server_ip_b
+            self.server_ip = globalvars.server_ip_b
         else:
-            server_ip = globalvars.public_ip_b
+            self.server_ip = globalvars.public_ip_b
 
         self.config = config
         self.secret_identifier = utils.generate_unique_server_id()
         self.key = None
         self.applist = self.parse_manifest_files()
-
+        self.port = int(port)
+        self.stop_event = threading.Event()
         self.contentserver_info = {
                 'server_id':self.secret_identifier,
-                'wan_ip':   server_ip,
+                'wan_ip':   self.server_ip,
                 'lan_ip':   globalvars.server_ip_b,
-                'port':     int(port),
+                'port':     self.port,
                 'region':   globalvars.cs_region.encode('latin-1'),
                 'cellid':   globalvars.cellid,
         }
@@ -69,12 +102,14 @@ class contentserver(TCPNetworkHandler):
         latency_checker_thread.daemon = True
         latency_checker_thread.start()
 
-        if not globalvars.aio_server:
-            self.thread = threading.Thread(target = heartbeat_thread, args = (self,))
+        if globalvars.aio_server:
+            self.start_folder_watcher()
+            manager.add_contentserver_info(self.secret_identifier, self.server_ip, globalvars.server_ip, self.port,
+                                           globalvars.cs_region, app_list, globalvars.cellid, True, False)
+        else:
+            self.thread = threading.Thread(target=heartbeat_thread, args=(self,))
             self.thread.daemon = True
             self.thread.start()
-        else:
-            manager.add_contentserver_info(self.secret_identifier, server_ip, globalvars.server_ip, int(port), globalvars.cs_region, app_list, globalvars.cellid, True, False)
 
     def cleanup(self):
         """Content Server specific cleanup routine"""
@@ -83,6 +118,66 @@ class contentserver(TCPNetworkHandler):
         if not globalvars.aio_server:
             send_removal(self.secret_identifier)
         super().cleanup()
+
+    def start_folder_watcher(self):
+        # Start a thread for folder watching
+        self.folder_watcher_thread = threading.Thread(target=self.folder_watcher)
+        self.folder_watcher_thread.daemon = True
+        self.folder_watcher_thread.start()
+
+    def folder_watcher(self):
+        # Specify up to 5 folders to monitor
+        folders_to_watch = [
+            self.config['manifestdir'],
+            self.config['v2manifestdir'],
+            self.config['v3manifestdir2'],
+            self.config['v4manifestdir'],
+            self.config['steam2sdkdir']
+        ]
+
+        # Filter out invalid or non-existent folders
+        folders_to_watch = [folder for folder in folders_to_watch if folder and os.path.exists(folder)]
+
+        if not folders_to_watch:
+            return
+
+        def handle_change():
+            global app_list
+            """
+            Processes folder changes after files are done moving/copying.
+            """
+            self.applist = self.parse_manifest_files()
+            manager.add_contentserver_info(
+                self.secret_identifier,
+                self.server_ip,
+                globalvars.server_ip,
+                self.port,
+                globalvars.cs_region,
+                app_list,
+                globalvars.cellid,
+                True,
+                False
+            )
+        # Initialize the event handler and observer with a debounce time
+        event_handler = FolderEventHandler(callback=handle_change, debounce_time=2.0)
+        observer = Observer()
+
+        # Schedule watching for each folder
+        for folder in folders_to_watch:
+            observer.schedule(event_handler, path=folder, recursive=False)
+
+        observer.start()
+
+        # Wait for the stop event to be set
+        self.stop_event.wait()
+
+        observer.stop()
+        observer.join()
+
+    def stop_folder_watcher(self):
+        """Stop the folder watcher thread by setting the stop event."""
+        self.stop_event.set()
+
 
     def handle_client(self, client_socket, client_address):
         global csConnectionCount
@@ -494,7 +589,7 @@ class contentserver(TCPNetworkHandler):
                                 if self.config['enable_custom_banner'].lower() == "true":
                                     url = self.config['custom_banner_url']
                                 else:
-                                    url = ("http://" + globalvars.get_octal_ip(islan,False) + "/platform/banner/random.php")
+                                    url = ("http://" + globalvars.get_octal_ip(islan, False) + "/platform/banner/random.php")
 
                                 reply = struct.pack(">H", len(url)) + url.encode("latin-1")
 
@@ -543,7 +638,7 @@ class contentserver(TCPNetworkHandler):
 
                     break
         # \X06 FOR 2003 RELEASE
-        elif msg in [ b"\x00\x00\x00\x05", b"\x00\x00\x00\x06"]:
+        elif msg in [b"\x00\x00\x00\x05", b"\x00\x00\x00\x06"]:
 
             self.log.info(f"{clientid}Storage mode entered")
 
@@ -555,7 +650,7 @@ class contentserver(TCPNetworkHandler):
             while True:
 
                 command = client_socket.recv_withlen()
-                #log.debug(f"{clientid}Content server command: {command[0:1]}")
+                # log.debug(f"{clientid}Content server command: {command[0:1]}")
 
                 if command[0:1] == b"\x00":  # BANNER
 
@@ -817,7 +912,7 @@ class contentserver(TCPNetworkHandler):
                     manifestOld = Manifest2(appid, oldversion)
 
                     if os.path.isfile("files/cache/" + str(appid) + "_" + str(version) + "/" + str(appid) + "_" + str(version) + suffix + ".checksums"):
-                        checksumNew = Checksum2(appid, version, islan)
+                        checksumNew = Checksum2(appid, version, islan, False)
                     elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(version) + ".v4.manifest"):
                         checksumNew = Checksum4(appid)
                     elif os.path.isfile(self.config["v4manifestdir"] + str(appid) + "_" + str(version) + ".manifest"):
@@ -826,11 +921,15 @@ class contentserver(TCPNetworkHandler):
                         checksumNew = Checksum3(appid)
                     elif os.path.isfile(self.config["v2manifestdir"] + str(appid) + "_" + str(version) + ".manifest"):
                         checksumNew = Checksum3(appid)
+                    elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(version) + ".v3e.manifest"):
+                        checksumNew = Checksum2(appid, version, islan, True)
+                    elif os.path.isfile(self.config["v3manifestdir2"] + str(appid) + "_" + str(version) + ".manifest"):
+                        checksumNew = Checksum2(appid, version, islan, True)
                     else:
-                        checksumNew = Checksum2(appid, version, islan)
+                        checksumNew = Checksum2(appid, version, islan, False)
 
-                    if os.path.isfile("files/cache/" + str(appid) + "_" + str(version) + "/" + str(appid) + "_" + str(version) + suffix + ".checksums"):
-                        checksumOld = Checksum2(appid, version, islan)
+                    if os.path.isfile("files/cache/" + str(appid) + "_" + str(oldversion) + "/" + str(appid) + "_" + str(oldversion) + suffix + ".checksums"):
+                        checksumOld = Checksum2(appid, oldversion, islan, False)
                     elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(oldversion) + ".v4.manifest"):
                         checksumOld = Checksum4(appid)
                     elif os.path.isfile(self.config["v4manifestdir"] + str(appid) + "_" + str(oldversion) + ".manifest"):
@@ -839,8 +938,12 @@ class contentserver(TCPNetworkHandler):
                         checksumOld = Checksum3(appid)
                     elif os.path.isfile(self.config["v2manifestdir"] + str(appid) + "_" + str(oldversion) + ".manifest"):
                         checksumOld = Checksum3(appid)
+                    elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(oldversion) + ".v3e.manifest"):
+                        checksumOld = Checksum2(appid, oldversion, islan, True)
+                    elif os.path.isfile(self.config["v3manifestdir2"] + str(appid) + "_" + str(oldversion) + ".manifest"):
+                        checksumOld = Checksum2(appid, oldversion, islan, True)
                     else:
-                        checksumOld = Checksum2(appid, oldversion, islan)
+                        checksumOld = Checksum2(appid, oldversion, islan, False)
 
                     filesOld = {}
                     filesNew = {}
@@ -870,7 +973,7 @@ class contentserver(TCPNetworkHandler):
                             self.log.debug("Deleted file: " + str(filename) + " : " + str(filesOld[filename].fileId))
 
                     # for x in range(len(changedFiles)):
-                        # self.log.debug(changedFiles[x], )
+                    # self.log.debug(changedFiles[x], )
 
                     count = len(changedFiles)
                     self.log.info("Number of changed files: " + str(count))
@@ -903,7 +1006,7 @@ class contentserver(TCPNetworkHandler):
                     else:
                         suffix = "_wan"
                     # else:
-                        # suffix = ""
+                    # suffix = ""
 
                     if os.path.isfile("files/cache/" + str(storages[storageid].app) + "_" + str(storages[storageid].version) + "/" + str(storages[storageid].app) + "_" + str(storages[storageid].version) + suffix + ".checksums"):
                         filename = "files/cache/" + str(storages[storageid].app) + "_" + str(storages[storageid].version) + "/" + str(storages[storageid].app) + "_" + str(storages[storageid].version) + suffix + ".checksums"
@@ -952,8 +1055,8 @@ class contentserver(TCPNetworkHandler):
                     reply = struct.pack(">LLcL", storageid, messageid, b"\x00", len(file))
 
                     client_socket.send(reply)
-                    #00000000 02000000 00 0000630c #v7
-                    #00000000 00000002 00 0000630c #v5
+                    # 00000000 02000000 00 0000630c #v7
+                    # 00000000 00000002 00 0000630c #v5
 
                     reply = struct.pack(">LLL", storageid, messageid, len(file))
 
@@ -1004,7 +1107,7 @@ class contentserver(TCPNetworkHandler):
             while True:
 
                 command = client_socket.recv_withlen()
-                #log.debug(f"{clientid}Content server command: {command[0:1]}")
+                # log.debug(f"{clientid}Content server command: {command[0:1]}")
 
                 # BANNER
                 if command[0:1] == b"\x00":
@@ -1036,7 +1139,7 @@ class contentserver(TCPNetworkHandler):
                         real_ticket = command[19:]
                         # Ensure the ticket is real, otherwise it is probably cftoolkit trying to download apps
                         # FIXME: the 2010 client does not seem to re-authenticate to get a refreshed ticket when it is rejected...
-                        if len(real_ticket) > 70:
+                        """if len(real_ticket) > 70:
                             ticket = Steam2Ticket(real_ticket)
                             # Validate the expiration time in the ticket
                             if ticket.is_expired:
@@ -1044,7 +1147,7 @@ class contentserver(TCPNetworkHandler):
                                 # FIXME temporary hack for 2010 clients until i figure out why the client wont reauth when the cs rejects the ticket
                                 reply = struct.pack(">LLc", connid, messageid, b"\x00")  # b"\x01")
                                 client_socket.send(reply)
-                                break
+                                break"""
 
                     self.log.info(f"{clientid}Opening application {app:d} {version:d}")
 
@@ -1057,7 +1160,7 @@ class contentserver(TCPNetworkHandler):
                         manifest = manifest_class.manifestData
                         s = stmstorages.Steam2Storage(app, self.config["storagedir"], version, islan)
                     else:
-                        #print("non-sdk manifest")
+                        # print("non-sdk manifest")
                         is_sdkdepot = False
                         try:
                             s = stmstorages.Storage(app, self.config["storagedir"], version, islan)
@@ -1094,7 +1197,7 @@ class contentserver(TCPNetworkHandler):
                         manifest = None
                         for base_dir, manifestpath, message in manifest_dirs:
                             file_path = os.path.join(base_dir, manifestpath)
-                            #print(file_path)
+                            # print(file_path)
                             if os.path.isfile(file_path):
                                 with open(file_path, "rb") as f:
                                     self.log.info(f"{clientid}{app}_{version} {message}")
@@ -1199,7 +1302,7 @@ class contentserver(TCPNetworkHandler):
                         manifestOld = Manifest2(appid, oldversion)
 
                         if os.path.isfile("files/cache/" + str(appid) + "_" + str(version) + "/" + str(appid) + "_" + str(version) + suffix + ".checksums"):
-                            checksumNew = Checksum2(appid, version, islan)
+                            checksumNew = Checksum2(appid, version, islan, False)
                         elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(version) + ".v4.manifest"):
                             checksumNew = Checksum4(appid)
                         elif os.path.isfile(self.config["v4manifestdir"] + str(appid) + "_" + str(version) + ".manifest"):
@@ -1208,11 +1311,15 @@ class contentserver(TCPNetworkHandler):
                             checksumNew = Checksum3(appid)
                         elif os.path.isfile(self.config["v2manifestdir"] + str(appid) + "_" + str(version) + ".manifest"):
                             checksumNew = Checksum3(appid)
+                        elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(version) + ".v3e.manifest"):
+                            checksumNew = Checksum2(appid, version, islan, True)
+                        elif os.path.isfile(self.config["v3manifestdir2"] + str(appid) + "_" + str(version) + ".manifest"):
+                            checksumNew = Checksum2(appid, version, islan, True)
                         else:
-                            checksumNew = Checksum2(appid, version, islan)
+                            checksumNew = Checksum2(appid, version, islan, False)
 
-                        if os.path.isfile("files/cache/" + str(appid) + "_" + str(version) + "/" + str(appid) + "_" + str(version) + suffix + ".checksums"):
-                            checksumOld = Checksum2(appid, version, islan)
+                        if os.path.isfile("files/cache/" + str(appid) + "_" + str(oldversion) + "/" + str(appid) + "_" + str(oldversion) + suffix + ".checksums"):
+                            checksumOld = Checksum2(appid, oldversion, islan, False)
                         elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(oldversion) + ".v4.manifest"):
                             checksumOld = Checksum4(appid)
                         elif os.path.isfile(self.config["v4manifestdir"] + str(appid) + "_" + str(oldversion) + ".manifest"):
@@ -1221,8 +1328,12 @@ class contentserver(TCPNetworkHandler):
                             checksumOld = Checksum3(appid)
                         elif os.path.isfile(self.config["v2manifestdir"] + str(appid) + "_" + str(oldversion) + ".manifest"):
                             checksumOld = Checksum3(appid)
+                        elif os.path.isfile(self.config["manifestdir"] + str(appid) + "_" + str(oldversion) + ".v3e.manifest"):
+                            checksumOld = Checksum2(appid, oldversion, islan, True)
+                        elif os.path.isfile(self.config["v3manifestdir2"] + str(appid) + "_" + str(oldversion) + ".manifest"):
+                            checksumOld = Checksum2(appid, oldversion, islan, True)
                         else:
-                            checksumOld = Checksum2(appid, oldversion, islan)
+                            checksumOld = Checksum2(appid, oldversion, islan, False)
 
                     filesOld = {}
                     filesNew = {}
@@ -1276,7 +1387,7 @@ class contentserver(TCPNetworkHandler):
                 elif command[0:1] == b"\x06":
                     (storageid, messageid) = struct.unpack(">xLL", command)
 
-                    #if storages[storageid].app in globalvars.game_engine_file_appids + globalvars.dedicated_server_appids:
+                    # if storages[storageid].app in globalvars.game_engine_file_appids + globalvars.dedicated_server_appids:
                     if islan:
                         suffix = "_lan"
                     else:
@@ -1332,16 +1443,16 @@ class contentserver(TCPNetworkHandler):
                     # hack to rip out old sig, insert new
                     file = file[0:-128]
                     signature = encryption.rsa_sign_message(encryption.network_key, file)
+                    file += signature
 
-                    file = file + signature
-
+                    # Send initial response with file size
                     reply = struct.pack(">LLcL", storageid, messageid, b"\x00", len(file))
-
                     client_socket.send(reply)
 
+                    # Send file data
                     reply = struct.pack(">LLL", storageid, messageid, len(file))
-
                     client_socket.send(reply + file, False)
+
                 # SEND DATA CHUNKS
                 elif command[0:1] == b"\x07":
 
@@ -1354,13 +1465,13 @@ class contentserver(TCPNetworkHandler):
                     client_socket.send(reply, False)
 
                     for chunk in chunks:
-                        
+
                         # LEAVE COMMENTED OUT IN CASE WE FIND A WAY TO ALTER CHECKSUMS ON THE FLY
-                        
+
                         # uncomp_chunk = zlib.decompress(chunk)
-                        
+
                         # processed_chunk = utils.readchunk_neuter(uncomp_chunk, True)
-                        
+
                         # chunk = zlib.compress(processed_chunk, 9)
 
                         reply = struct.pack(">LLL", storageid, messageid, len(chunk))
@@ -1393,21 +1504,22 @@ class contentserver(TCPNetworkHandler):
                     self.log.info(f"{clientid}Sending storage version")
 
                     (storageid, messageid) = struct.unpack(">xLL", command)
-
-                    if os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v4.manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x04")
+                    if os.path.isfile(self.config["steam2sdkdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".blob"):
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x03")
+                    elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v4.manifest"):
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x04")
                     elif os.path.isfile(self.config["v4manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x04")
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x04")
                     elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v2.manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x02")
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x02")
                     elif os.path.isfile(self.config["v2manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x02")
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x02")
                     elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v3e.manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x03")
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x03")
                     elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v3.manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x03")
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x03")
                     elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest"):
-                            reply = struct.pack(">LLc", storageid, messageid, b"\x03")
+                        reply = struct.pack(">LLc", storageid, messageid, b"\x03")
                     elif os.path.isdir(self.config["v3manifestdir2"]):
                         if os.path.isfile(self.config["v3manifestdir2"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".manifest"):
                             reply = struct.pack(">LLc", storageid, messageid, b"\x03")
@@ -1423,13 +1535,13 @@ class contentserver(TCPNetworkHandler):
                         break
 
                     client_socket.send(reply)
-                    #server_socket.send(reply)
+                    # server_socket.send(reply)
                 # SEND INDEX FOR NEUTERING (99) UNUSED
                 elif command[0:1] == b"\x63":
                     self.log.info(f"{clientid}Sending index")
 
                     (storageid, messageid) = struct.unpack(">xLL", command)
-
+                    # FIXME add sdk depot index parsing method for this part
                     if os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v4.manifest"):
                         filename = self.config["storagedir"] + str(storages[storageid].app) + ".v4.index"
                     elif os.path.isfile(self.config["manifestdir"] + str(storages[storageid].app) + "_" + str(storages[storageid].version) + ".v2.manifest"):
@@ -1457,7 +1569,7 @@ class contentserver(TCPNetworkHandler):
                         reply = struct.pack(">LLc", connid, messageid, b"\x01")
                         client_socket.send(reply)
                         break
-                    
+
                     with open(filename, "rb") as f:
                         file = f.read()
 
@@ -1470,7 +1582,6 @@ class contentserver(TCPNetworkHandler):
                     client_socket.send(reply + file, False)
                 # INVALID COMMAND
                 else:
-
                     self.log.warning(f"{binascii.b2a_hex(command[0:1])} - Invalid Command!")
                     client_socket.send(b"\x01")
 
@@ -1480,10 +1591,9 @@ class contentserver(TCPNetworkHandler):
             self.log.info(f"{clientid}Unknown mode entered")
             client_socket.send(b"\x00")
         # LATENCY CHECK FROM CSDS
-        # TODO Deprecate or complete, figure it out ben!
         elif msg == b"\x66\x61\x23\x45":
             self.log.info(f"{clientid}Recieved a Latency Test from CSDS")
-            client_socket.send(b"\x00")
+            client_socket.send(b"\x00") # OK
         else:
             self.log.warning(f"Invalid Command: {binascii.b2a_hex(msg)}")
 
@@ -1523,7 +1633,7 @@ class contentserver(TCPNetworkHandler):
         # Parse .dat files in the SDK depot directory
         sdk_depot_dir = self.config['steam2sdkdir']
         if os.path.exists(sdk_depot_dir):
-            steam2_sdk_utils.scan_directories(sdk_depot_dir,sdk_depot_dir)
+            steam2_sdk_utils.scan_directories(sdk_depot_dir, sdk_depot_dir)
             for file_name in os.listdir(sdk_depot_dir):
                 if file_name.endswith('.dat'):
                     # Ensure the format matches <appid>_<version>.dat

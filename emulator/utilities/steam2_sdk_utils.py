@@ -184,30 +184,33 @@ def extract_checksumbin(blobname):
         blobdata = open(blobname, "rb").read()
         b = SDKBlob(blobdata)
 
+        # Determine parent version and CRC
         parentver = (id[1] - 1) & 0xffffffff
         parentcrc = "%08x" % b.get_i32(12)
 
+        # Process parent blob if applicable
         if parentver != 0xffffffff and parentcrc != "00000000":
             if len(id) == 2:
                 parentid = (id[0], parentver)
             elif len(id) == 3:
                 parentid = (id[0], parentver, parentcrc)
             else:
-                raise Exception("bad id")
+                raise Exception("Invalid ID format")
 
             if parentid not in known_blobs:
-                raise Exception("parent blob doesn't exist:", parentid)
+                raise Exception("Parent blob does not exist:", parentid)
 
             _get_checksums(known_blobs, parentid, blobcontainers, checksums)
 
+        # Parse the current blob's checksums
         _, newchecksums, _ = parse_checksums(b.get_raw(4))
 
-        for fileid in newchecksums:
-            # if fileid in checksums:
-            #    print("overwritten fileid from %s to %s: %d" % (id, parentid, fileid))
-            checksums[fileid] = newchecksums[fileid]
+        # Merge the new checksums into the aggregated list
+        for fileid, blocks in newchecksums.items():
+            checksums[fileid] = blocks
 
-        if len(checksums) > 0:
+        # Build checksum binary data for the current blob
+        if checksums:
             last_id = max(checksums.keys())
         else:
             last_id = -1
@@ -218,7 +221,7 @@ def extract_checksumbin(blobname):
         indexcount = last_id + 1
         checksumoffset = 0
 
-        for fileid in range(last_id + 1):
+        for fileid in range(indexcount):
             if fileid not in checksums:
                 indextable += struct.pack("<II", 0, 0)
             else:
@@ -228,16 +231,23 @@ def extract_checksumbin(blobname):
                 for _, checksum in checksums[fileid]:
                     checksumtable += checksum
 
-        checksumdata = b"\x21\x37\x89\x14" + struct.pack("<III", 1, indexcount, checksumoffset) + indextable + checksumtable
+        checksumdata = (
+            b"\x21\x37\x89\x14"
+            + struct.pack("<III", 1, indexcount, checksumoffset)
+            + indextable
+            + checksumtable
+        )
 
         signature = b.get_raw(9)
 
-        blobcontainers[id] = {'checksumbin':checksumdata + signature}
+        blobcontainers[id] = {
+            "checksumbin": checksumdata + signature,
+        }
 
-    blobdir = config_var['steam2sdkdir']
+    # Load all known blobs in the directory
+    blobdir = config_var["steam2sdkdir"]
 
     known_blobs = {}
-
     for filename in os.listdir(blobdir):
         if filename.lower().endswith(".blob"):
             id = gen_id_from_filename(filename)
@@ -245,18 +255,163 @@ def extract_checksumbin(blobname):
                 raise Exception("Duplicate blob ID?", id)
             known_blobs[id] = os.path.join(blobdir, filename)
 
+    # Start checksum aggregation with the branch blob
     branch_id = gen_id_from_filename(blobname)
-    appid, appver = branch_id[0:2]
+    appid, appver = branch_id[:2]
 
     blobcontainers = {}
     checksums = {}
 
     _get_checksums(known_blobs, branch_id, blobcontainers, checksums)
 
-    if config_var['cache_sdk_depot_checksums'].lower() == "true":
-        checksumfilename = os.path.join("files/cache/", "%d.checksums" % appid)
-
+    # Cache the checksums if the configuration allows
+    if config_var["cache_sdk_depot"].lower() == "true":
+        checksumfilename = os.path.join("files/cache/", f"{appid}.checksums")
         with open(checksumfilename, "wb") as of:
-            of.write(blobcontainers[branch_id]['checksumbin'])
+            of.write(blobcontainers[branch_id]["checksumbin"])
 
-    return bytes(blobcontainers[branch_id]['checksumbin'])
+    # Return the aggregated checksum binary data
+    return bytes(blobcontainers[branch_id]["checksumbin"])
+
+
+# FIXME this needs to reuse the checksum function above, instead of rewriting the method inside itself
+def generate_index_bytes(blobname, dat_directory, output_directory="files/cache/"):
+    """
+    Generates the index file from blob data and returns its content as bytes.
+
+    Args:
+        blobname (str): Path to the blob file for the specific version.
+        dat_directory (str): Path to the directory containing .dat files.
+        output_directory (str): Directory where temporary index and data files are stored.
+
+    Returns:
+        bytes: The content of the generated index file.
+    """
+    # Step 1: Scan directories for known blobs and dat files
+    scan_directories(config_var["steam2sdkdir"], dat_directory)
+
+    # Step 2: Extract blob information
+    branch_id = gen_id_from_filename(blobname)
+    appid, appver = branch_id[:2]
+
+    # Step 3: Build blob containers and checksum data
+    blobcontainers = {}
+    checksums = {}
+
+    def _get_checksums(known_blobs, id):
+        blobname = known_blobs[id]
+        blobdata = open(blobname, "rb").read()
+        b = SDKBlob(blobdata)
+
+        # Determine parent version and CRC
+        parentver = (id[1] - 1) & 0xffffffff
+        parentcrc = "%08x" % b.get_i32(12)
+
+        # Process parent blob if applicable
+        if parentver != 0xffffffff and parentcrc != "00000000":
+            if len(id) == 2:
+                parentid = (id[0], parentver)
+            elif len(id) == 3:
+                parentid = (id[0], parentver, parentcrc)
+            else:
+                raise Exception("Invalid ID format")
+
+            if parentid not in globalvars.known_blobs:
+                raise Exception("Parent blob does not exist:", parentid)
+
+            _get_checksums(globalvars.known_blobs, parentid)
+
+        # Parse the current blob's checksums
+        _, newchecksums, _ = parse_checksums(b.get_raw(4))
+
+        # Merge the new checksums into the aggregated list
+        for fileid, blocks in newchecksums.items():
+            checksums[fileid] = blocks
+
+        # Build checksum binary data for the current blob
+        if checksums:
+            last_id = max(checksums.keys())
+        else:
+            last_id = -1
+
+        indextable = bytearray()
+        checksumtable = bytearray()
+
+        indexcount = last_id + 1
+        checksumoffset = 0
+
+        for fileid in range(indexcount):
+            if fileid not in checksums:
+                indextable += struct.pack("<II", 0, 0)
+            else:
+                numchecksums = len(checksums[fileid])
+                indextable += struct.pack("<II", numchecksums, checksumoffset)
+                checksumoffset += numchecksums
+                for _, checksum in checksums[fileid]:
+                    checksumtable += checksum
+
+        checksumdata = (
+            b"\x21\x37\x89\x14"
+            + struct.pack("<III", 1, indexcount, checksumoffset)
+            + indextable
+            + checksumtable
+        )
+
+        signature = b.get_raw(9)
+
+        blobcontainers[id] = {
+            "checksumbin": checksumdata + signature,
+        }
+
+    _get_checksums(globalvars.known_blobs, branch_id)
+
+    # Step 4: Write and read index file
+    indexdata = bytearray()
+    datptr = 0
+    current_f = None
+
+    datafilename = os.path.join(output_directory, f"{appid}.data")
+    with open(datafilename, "wb") as of:
+        for fileid in sorted(checksums):
+            id, filedata, checksum_blocks = checksums[fileid]
+
+            if len(id) == 2:
+                datid = id
+            elif len(id) == 3:
+                datid = (id[0], id[1], blobcontainers[id]["datachecksum"])
+            else:
+                raise Exception("Bad ID")
+
+            if datid != current_f:
+                if current_f is not None:
+                    f.close()
+                f = open(globalvars.known_dats[datid], "rb")
+                current_f = datid
+
+            filesize, offset, filemode = filedata
+            f.seek(offset)
+
+            indexdata += struct.pack(">QQQ", fileid, len(checksum_blocks) * 16, filemode)
+
+            for compr_size, checksum in checksum_blocks:
+                block = f.read(compr_size)
+                if len(block) != compr_size:
+                    raise Exception("Bad block read!")
+
+                if datptr != of.tell():
+                    raise Exception("Bad output data position!")
+
+                indexdata += struct.pack(">QQ", datptr, compr_size)
+                of.write(block)
+                datptr += compr_size
+
+        if current_f is not None:
+            f.close()
+
+    indexfilename = os.path.join(output_directory, f"{appid}.index")
+
+    if config_var["cache_sdk_depot"].lower() == "true":
+        with open(indexfilename, "wb") as of:
+            of.write(indexdata)
+
+    return bytes(indexdata)

@@ -22,8 +22,8 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-import steammessages_base_pb2 as steammessages__base__pb2
-import steammessages_unified_base_pb2 as steammessages__unified__base__pb2
+from steam3.protobufs import steammessages_base_pb2 as steammessages__base__pb2
+from steam3.protobufs import steammessages_unified_base_pb2 as steammessages__unified__base__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n steammessages_unified_test.proto\x1a\x18steammessages_base.proto\x1a steammessages_unified_base.proto\"G\n CMsgTest_MessageToClient_Request\x12#\n\tsome_text\x18\x01 \x01(\tB\x10\x82\xb5\x18\x0cSome string.\"H\n!CMsgTest_MessageToClient_Response\x12#\n\tsome_text\x18\x01 \x01(\tB\x10\x82\xb5\x18\x0cSome string.\"I\n\"CMsgTest_NotifyClient_Notification\x12#\n\tsome_text\x18\x01 \x01(\tB\x10\x82\xb5\x18\x0cSome string.\"G\n CMsgTest_MessageToServer_Request\x12#\n\tsome_text\x18\x01 \x01(\tB\x10\x82\xb5\x18\x0cSome string.\"H\n!CMsgTest_MessageToServer_Response\x12#\n\tsome_text\x18\x01 \x01(\tB\x10\x82\xb5\x18\x0cSome string.\"I\n\"CMsgTest_NotifyServer_Notification\x12#\n\tsome_text\x18\x01 \x01(\tB\x10\x82\xb5\x18\x0cSome string.2\x83\x02\n\x0fTestSteamClient\x12\x81\x01\n\x0fMessageToClient\x12!.CMsgTest_MessageToClient_Request\x1a\".CMsgTest_MessageToClient_Response\"\'\x82\xb5\x18#Some description - MessageToClient.\x12\x66\n\x0cNotifyClient\x12#.CMsgTest_NotifyClient_Notification\x1a\x0b.NoResponse\"$\x82\xb5\x18 Some description - NotifyClient.\x1a\x04\xc0\xb5\x18\x02\x32\x82\x02\n\x14TestServerFromClient\x12\x81\x01\n\x0fMessageToServer\x12!.CMsgTest_MessageToServer_Request\x1a\".CMsgTest_MessageToServer_Response\"\'\x82\xb5\x18#Some description - MessageToServer.\x12\x66\n\x0cNotifyServer\x12#.CMsgTest_NotifyServer_Notification\x1a\x0b.NoResponse\"$\x82\xb5\x18 Some description - NotifyServer.B\x03\x90\x01\x01')

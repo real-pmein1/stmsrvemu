@@ -6,46 +6,31 @@ from steam3.Types.community_types import PlayerState
 from steam3.Types.keyvalue_class import KeyValueClass
 from steam3.cm_packet_utils import CMPacket
 from steam3.messages.MsgClientConnectionStats import MsgClientConnectionStats
+from steam3.messages.MsgClientGamesPlayedWithDataBlob import MsgClientGamesPlayed_WithDataBlob
+from steam3.messages.MsgClientNoUDPConnectivity import MsgClientNoUDPConnectivity
 from steam3.utilities import reverse_bytes
 from steam3.Responses.general_responses import build_GeneralAck
 
-
-#packetid: 710: ClientConnectionStats
-#b'\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00\x80\x02\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x000\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd6\xf5\x00\x00Y\xf1\x00\x00\x11\xfa\x00\x00\x01\x00\x00\x00'
 
 def handle_ConnectionStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Connection Stats Request")
     data = request.data
-    #fmt_StatsLogon = 'IIII'
-    fmt_StatsLogon = 'IIIIIII'  # 7 DWORDs
-    #fmt_StatsUDP = 'QQQQQQ'  # 6 ULONGLONGs
-    #fmt_StatsVConn = 'II{}QQQQQQQQQQQQQQQQIIII'.format(fmt_StatsUDP)  # 2 DWORDs, followed by StatsUDP, then several ULONGLONGs and DWORDs
-
-    # Full structure format, including both StatsLogon and StatsVConn
-    #fmt_body = '{}{}'.format(fmt_StatsLogon, fmt_StatsVConn)
-
-    # Calculate size for reference
-    #size_StatsLogon = struct.calcsize(fmt_StatsLogon)
-    #size_StatsUDP = calcsize(fmt_StatsUDP)
-    #size_StatsVConn = calcsize(fmt_StatsVConn)
-    #size_body = calcsize(fmt_body)
 
     # TODO store stats somewhere, add check for newer versions with more information
     try:
-        stats = MsgClientConnectionStats()
-        stats.deserialize(data)
+        stats = MsgClientConnectionStats(data)
         print(stats)
     except:
         try:
-            attempts, successes, failures, dropped = struct.unpack_from(fmt_StatsLogon, data, 0)
+            attempts, successes, failures, dropped = struct.unpack_from('IIIIIII', data, 0)
             cmserver_obj.log.debug(f"Attempts: {attempts}, Successes: {successes}, Failures: {failures}, Dropped: {dropped}")
         except Exception as e:
             cmserver_obj.log.error(f"connection stats: {e}")
             pass
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
     return -1
 
@@ -77,7 +62,7 @@ def handle_GamesPlayedStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     else:
         client_obj.exit_app(cmserver_obj)
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
     return -1
 
@@ -96,7 +81,7 @@ def handle_GamesPlayedStats_deprecated(cmserver_obj, packet: CMPacket, client_ob
         # TODO figure out the unknowns!
         print(f"number of apps: {appNB}, appId: {appID}, unknown1: {unknown1}, unknown2: {unknown2}")
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
     return -1
 
@@ -123,7 +108,7 @@ def handle_GamesPlayedStats2(cmserver_obj, packet: CMPacket, client_obj: Client)
     else:
         client_obj.exit_app()
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
     return -1
 #packetid: 738
@@ -157,7 +142,7 @@ def handle_GamesPlayedStats3(cmserver_obj, packet: CMPacket, client_obj: Client)
     else:
         client_obj.exit_app(cmserver_obj)
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     return -1
 
 
@@ -165,29 +150,30 @@ def handle_AppUsageEvent(cmserver_obj, packet: CMPacket, client_obj):
     client_address = client_obj.ip_port
     # Unpack the first 8 bytes of eMsgID.data to get type and app
     request = packet.CMRequest
-    type, app = struct.unpack_from('<II', request.data, 0)
+    usage_type, app = struct.unpack_from('<II', request.data, 0)
     message = request.data[13:].decode('latin-1')  # Assuming message encoding is Latin-1
-    b = f"type:{type} app:{app} message:{message}\n"
-    if type == 1:
+    b = f"type:{usage_type} app:{app} message:{message}\n"
+    if usage_type == 1:
         cmserver_obj.log.info(f"{b}User is launching app")
-        client_obj.update_status_info(cmserver_obj,PlayerState.online, app)
-    elif type == 2:
+        client_obj.update_status_info(cmserver_obj, PlayerState.online, app)
+    elif usage_type == 2:
         cmserver_obj.log.info(f"{b}User is launching trial or tool app") # FIXME this also triggers for 'tools' like dedicated servers
-    elif type == 3:
+    elif usage_type == 3:
         cmserver_obj.log.info(f"{b}User is playing media")
-    elif type == 4:
+    elif usage_type == 4:
         cmserver_obj.log.info(f"{b}User is starting preload")
-    elif type == 5:
+    elif usage_type == 5:
         cmserver_obj.log.info(f"{b}User finished preload")
-    elif type == 6:
+    elif usage_type == 6:
         cmserver_obj.log.info(f"{b}User seen marketing message (advertisement/news)")
-    elif type == 7:
+    elif usage_type == 7:
         cmserver_obj.log.info(f"{b}User seen in-game advertisement")
-    elif type == 8:
+    elif usage_type == 8:
         cmserver_obj.log.info(f"{b}User launched free weekend application")
     else:
         cmserver_obj.log.info(f"{b}Unknown user action")
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     return -1
 
 # packetid: 842
@@ -226,7 +212,7 @@ def handle_ClientSteamUsageEvent(cmserver_obj, packet: CMPacket, client_obj: Cli
             cmserver_obj.log.info(f"Parsed Data: {kv_parser.data}")
 
             # Acknowledge the packet (assuming build_GeneralAck is defined)
-            build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+            build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
         else:
             cmserver_obj.log.error("Data buffer is smaller than expected event length.")
     else:
@@ -239,69 +225,10 @@ def handle_GamesPlayedWithDataBlob(cmserver_obj, packet: CMPacket, client_obj: C
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Games Played (with blob) info")
     request = packet.CMRequest
     data = request.data
-
-    # There can be more than 1 entry of the following
     try:
-        offset = 0
-        game_count, = struct.unpack_from('<I', data, offset)
-        offset += 4
-        iter_count = 0
-        while iter_count <= game_count:
-            # Unpack Steam ID (64-bit unsigned int)
-            GS_steam_id, = struct.unpack_from('<Q', data, offset)
-            offset += 8
-
-            # Unpack Game ID (64-bit unsigned int)
-            game_id, = struct.unpack_from('<Q', data, offset)
-            offset += 8
-
-            # Unpack Server IP (32-bit int)
-            server_ip, = struct.unpack_from('<I', data, offset)
-            offset += 4
-
-            # Unpack Server Port (16-bit int) and Secure (16-bit int)
-            server_port, secure = struct.unpack_from('<HH', data, offset)
-            offset += 4
-
-            # Unpack Process ID (32-bit unsigned int)
-            process_id, = struct.unpack_from('<I', data, offset)
-            offset += 4
-
-            # Unpack Token Size (32-bit int)
-            token_size, = struct.unpack_from('<I', data, offset)
-            offset += 4
-
-            # Unpack Token Data (variable-length)
-            token_data = data[offset:offset + token_size]
-            offset += token_size
-
-            # FIXME i believe this is determined using gameid
-            if 0:
-                mod_name_length, = struct.unpack_from('<I', data, offset)  # Example if length is prefixed
-                offset += 4
-                mod_name = data[offset:offset + mod_name_length].decode('latin-1')
-                offset += mod_name_length
-            else:
-                game_extra_info_length, = struct.unpack_from('<I', data, offset)  # Example if length is prefixed
-                offset += 4
-                game_extra_info = data[offset:offset + game_extra_info_length].decode('latin-1')
-                offset += game_extra_info_length
-
-            gamedatablob_size, = struct.unpack_from('<I', data, offset)
-            offset += 4
-
-            if gamedatablob_size > 0:
-                gamedatablob = data[offset:]  # technically should be until gamedatablob_size, but there shouldnt be anything after it
-            iter_count += 1
-
-        cmserver_obj.log.debug(f"Steam ID: {GS_steam_id}, Game ID: {game_id}, Server IP: {server_ip}, Server Port: {server_port}, Secure: {secure}")
-        cmserver_obj.log.debug(f"Process ID: {process_id}, Token Size: {token_size}, Token Data: {token_data}")
-        if 'mod_name' in locals():
-            cmserver_obj.log.debug(f"Mod Name: {mod_name}")
-        if 'game_extra_info' in locals():
-            cmserver_obj.log.debug(f"Game Extra Info: {game_extra_info}")
-        if gamedatablob_size > 0:
-            cmserver_obj.log.debug(f"Game datablob: {gamedatablob}")
+        # TODO DO SOMETHING WITH THIS INFORMATION!
+        deserializer = MsgClientGamesPlayed_WithDataBlob(data)
+        print(deserializer)
     except Exception as e:
         cmserver_obj.log.error(f"games played with game blob: {e}")
         pass
@@ -310,7 +237,7 @@ def handle_GamesPlayedWithDataBlob(cmserver_obj, packet: CMPacket, client_obj: C
 
 def handle_GetUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved User Stats info")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved User Stats Info")
     request = packet.CMRequest
 
     # TODO This is supposed to have a key/value type of packet info
@@ -322,6 +249,20 @@ def handle_GetUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
         cmserver_obj.log.error(f"get user status: {e}")
         pass
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
+    return -1
+
+
+def handle_NoUDPConnectivity(cmserver_obj, packet, client_obj):
+    client_address = client_obj.ip_port
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved No UDP Connectivity Info")
+    request = packet.CMRequest
+
+    # FIXME store this information somewhere!
+    message = MsgClientNoUDPConnectivity(request.data)
+    print(message)
+
+    """We do nothing, this is just the client telling us that NO UDP connectivity was possible..?"""
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     return -1

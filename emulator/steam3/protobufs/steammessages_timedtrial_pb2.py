@@ -22,8 +22,8 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-import steammessages_base_pb2 as steammessages__base__pb2
-import steammessages_unified_base_pb2 as steammessages__unified__base__pb2
+from steam3.protobufs import steammessages_base_pb2 as steammessages__base__pb2
+from steam3.protobufs import steammessages_unified_base_pb2 as steammessages__unified__base__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1esteammessages_timedtrial.proto\x1a\x18steammessages_base.proto\x1a steammessages_unified_base.proto\"5\n$CTimedTrial_GetTimeRemaining_Request\x12\r\n\x05\x61ppid\x18\x01 \x01(\r\"\x84\x01\n%CTimedTrial_GetTimeRemaining_Response\x12\x16\n\x0eseconds_played\x18\x01 \x01(\r\x12\x17\n\x0fseconds_allowed\x18\x02 \x01(\r\x12\x11\n\tpackageid\x18\x03 \x01(\r\x12\x17\n\x0fmastersub_appid\x18\x04 \x01(\r\"K\n\"CTimedTrial_RecordPlaytime_Request\x12\r\n\x05\x61ppid\x18\x01 \x01(\r\x12\x16\n\x0eseconds_played\x18\x02 \x01(\r\"V\n#CTimedTrial_RecordPlaytime_Response\x12\x16\n\x0eseconds_played\x18\x01 \x01(\r\x12\x17\n\x0fseconds_allowed\x18\x02 \x01(\r\"2\n!CTimedTrial_ResetPlaytime_Request\x12\r\n\x05\x61ppid\x18\x01 \x01(\r\"U\n\"CTimedTrial_ResetPlaytime_Response\x12\x16\n\x0eseconds_played\x18\x01 \x01(\r\x12\x17\n\x0fseconds_allowed\x18\x02 \x01(\r2\x9b\x04\n\nTimedTrial\x12\xad\x01\n\x10GetTimeRemaining\x12%.CTimedTrial_GetTimeRemaining_Request\x1a&.CTimedTrial_GetTimeRemaining_Response\"J\x82\xb5\x18\x46Returns the amount of time a user has left on a timed trial for an app\x12\x94\x01\n\x0eRecordPlaytime\x12#.CTimedTrial_RecordPlaytime_Request\x1a$.CTimedTrial_RecordPlaytime_Response\"7\x82\xb5\x18\x33Updates the user\'s remaining playtime while in game\x12\x92\x01\n\rResetPlaytime\x12\".CTimedTrial_ResetPlaytime_Request\x1a#.CTimedTrial_ResetPlaytime_Response\"8\x82\xb5\x18\x34Reset the user\'s remaining playtime (developer only)\x1a\x31\x82\xb5\x18-A service to get user timed trial informationB\x03\x90\x01\x01')

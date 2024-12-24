@@ -1,11 +1,12 @@
 import logging
 import struct
 import io
+import os
+import importlib
 import zlib
+import observable
 from types import GeneratorType as _GeneratorType
 from typing import Union
-
-import observable
 from google.protobuf.message import Message as _ProtoMessageType
 from google.protobuf import message as _message
 
@@ -13,6 +14,8 @@ import globalvars
 from steam3 import Types, thread_local_data
 from steam3.Types.emsg import EMsg
 from steam3.Types.steamid import SteamID
+from steam3.protobufs.steammessages_base_pb2 import CMsgProtoBufHeader  # Adjust as needed
+from steam3.Types import get_enum_name
 from steam3.protobufs import steammessages_base_pb2
 from steam3.protobufs import gc_pb2
 
@@ -20,6 +23,9 @@ log = logging.getLogger(f"CMPKT")
 
 # Utility functions and constants
 protobuf_mask = 0x80000000
+_list_types = (list, range, map, filter, _GeneratorType)
+# Pre-load Protobuf classes at module import
+proto_map = {}
 
 def is_proto(emsg):
     return (int(emsg) & protobuf_mask) > 0
@@ -29,8 +35,6 @@ def set_proto_bit(emsg):
 
 def clear_proto_bit(emsg):
     return int(emsg) & ~protobuf_mask
-
-_list_types = (list, range, map, filter, _GeneratorType)
 
 def proto_to_dict(message):
     if not isinstance(message, _ProtoMessageType):
@@ -88,8 +92,44 @@ def proto_fill_from_dict(message, data, clear=True):
                 list_ref.extend(val)
             else:
                 setattr(message, key, val)
-
+        print(f"Message Type: {message}")
+        #print(f"Parsed Proto: {proto}")
     return message
+
+
+def _load_protobuf_classes():
+    """
+    Dynamically load all Protobuf message classes from the `protobufs` directory.
+    """
+    proto_map = {}
+    proto_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "protobufs"))
+
+    if not os.path.exists(proto_dir):
+        raise FileNotFoundError(f"Protobuf directory not found: {proto_dir}")
+
+    log.info(f"Loading Protobuf classes from: {proto_dir}")
+
+    for filename in os.listdir(proto_dir):
+        if filename.endswith("_pb2.py"):
+            module_name = f"steam3.protobufs.{filename[:-3]}"
+            try:
+                # Dynamically import the Protobuf module
+                module = importlib.import_module(module_name)
+                # log.info(f"Loaded module: {module_name}")
+
+                for name in dir(module):
+                    if name.startswith("CMsg"):
+                        cls = getattr(module, name)
+                        if hasattr(cls, "DESCRIPTOR") and cls.DESCRIPTOR.name:
+                            proto_map[name] = cls
+                            # log.debug(f"Mapped Protobuf class: {name} -> {cls}")
+            except Exception as e:
+                log.error(f"Error loading Protobuf module {module_name}: {e}")
+
+    return proto_map
+
+# Load Protobuf classes once during module import
+PROTO_MAP = _load_protobuf_classes()
 
 # Deprecated Message header is from client to server
 class MsgHdr_deprecated:
@@ -232,26 +272,168 @@ class ExtendedMsgHdr:
                           ])
 
 class MsgHdrProtoBuf:
-    _size = _fullsize = struct.calcsize("<II")
-    msg = EMsg.Invalid
+    _size = struct.calcsize("<II")
+    proto_map = PROTO_MAP  # Use the preloaded map
 
-    def __init__(self, data=None):
-        self.proto = steammessages_base_pb2.CMsgProtoBufHeader()
+    def __init__(self, data = None, client_obj = None):
+        self.eMsgID = EMsg.Invalid
+        self.headerSize = MsgHdrProtoBuf._size
+        self.headerVersion = 2  # Default header version
+        self.targetJobID = 0
+        self.sourceJobID = 0
+        self.headerCanary = 239  # Example value, adjust as necessary
+        self.accountID = 0
+        self.clientId2 = 0
+        self.sessionID = 0
+        self.data = b''
+        self.proto = CMsgProtoBufHeader()
+
+        if client_obj:
+            self.accountID = client_obj.steamID * 2
+            self.clientId2 = client_obj.clientID2
+            self.sessionID = client_obj.sessionID
 
         if data:
             self.load(data)
 
     def serialize(self):
         proto_data = self.proto.SerializeToString()
-        return struct.pack("<II", set_proto_bit(self.msg), len(proto_data)) + proto_data
+        return struct.pack("<II", set_proto_bit(self.eMsgID), len(proto_data)) + proto_data
 
     def load(self, data):
+        # Parse header
         msg, proto_length = struct.unpack_from("<II", data)
-
-        self.msg = EMsg(clear_proto_bit(msg))
+        self.eMsgID = EMsg(clear_proto_bit(msg))
         size = MsgHdrProtoBuf._size
-        self._fullsize = size + proto_length
-        self.proto.ParseFromString(data[size:self._fullsize])
+        full_size = size + proto_length
+        header_data = data[size:full_size]
+
+        # Parse the Protobuf header
+        self.proto.ParseFromString(header_data)
+        self._parse_protobuf_header(self.proto)
+
+        # Remaining data is the message payload
+        self.data = data[full_size:]
+        print(f"Parsed Protobuf header for EMsg {self.eMsgID}: {self.proto}")
+        #print(f"Message payload size: {len(self.data)} bytes")
+
+    def _parse_protobuf_header(self, proto):
+        """
+        Parse the CMsgProtoBufHeader fields into class attributes.
+        """
+        self.steamid = proto.steamid if proto.HasField("steamid") else None
+        self.sessionID = proto.client_sessionid if proto.HasField("client_sessionid") else None
+        self.targetJobID = proto.jobid_target if proto.HasField("jobid_target") else None
+        self.sourceJobID = proto.jobid_source if proto.HasField("jobid_source") else None
+        self.eResult = proto.eresult if proto.HasField("eresult") else None
+        self.errorMessage = proto.error_message if proto.HasField("error_message") else None
+        self.accountID = self.steamid & 0xFFFFFFFF  # Lower 32 bits
+        self.clientId2 = (self.steamid >> 32) & 0xFFFFFFFF  # Higher 32 bits
+        print(f"Parsed header fields: steamid={self.steamid}\nsessionID={self.sessionID}\n"
+              f"targetJobID={self.targetJobID}\nsourceJobID={self.sourceJobID}\neResult={self.eResult}\nerrorMessage={self.errorMessage}")
+
+    def _resolve_protobuf_class(self, emsg):
+        """
+        Resolve the Protobuf class for the given EMsg using dynamic mapping or derived name.
+        """
+        # Attempt to resolve the class using the proto_map
+        if emsg in MsgHdrProtoBuf.proto_map:
+            #print(f"EMsg {emsg} found directly in proto_map")
+            return MsgHdrProtoBuf.proto_map[emsg]
+
+        # Dynamically derive the Protobuf class name
+        emsg_name = get_enum_name(EMsg, emsg)
+        if emsg_name:
+            cmsg_name = f"CMsg{emsg_name}"  # Prepend 'CMsg' to the enum name
+            #print(f"Derived Protobuf class name for EMsg {emsg}: {cmsg_name}")
+        else:
+            log.error(f"Could not derive Protobuf class name for EMsg {emsg}")
+            return None
+
+        # Look for the derived class in the proto_map
+        for proto_cls_name, proto_cls in MsgHdrProtoBuf.proto_map.items():
+            if proto_cls_name.lower() == cmsg_name.lower():
+                #print(f"Resolved Protobuf class {cmsg_name} to {proto_cls.__name__}")
+                return proto_cls
+
+        log.error(f"Protobuf class {cmsg_name} not found in proto_map")
+        return None
+
+class CMProtoResponse:
+    def __init__(self, eMsgID=0, client_obj=None):
+        """
+        Initialize a Protobuf-based response message.
+        :param eMsgID: The EMsg ID for the response.
+        :param client_obj: The client object associated with the response.
+        """
+        try:
+            if client_obj.is_newPacketType is True:
+                # Dynamically change the class to MsgHdrProtoBuf
+                #self.__class__ = MsgHdrProtoBuf
+                MsgHdrProtoBuf.__init__(self, client_obj=client_obj)
+                self.eMsgID = eMsgID
+                self.proto = CMsgProtoBufHeader()
+                self.data = b''
+                # Ensure thread_local_data.extended_msg is valid
+                if not hasattr(thread_local_data, 'extended_msg') or not thread_local_data.extended_msg:
+                    raise ValueError("thread_local_data.extended_msg is not properly set.")
+
+                # Set header fields using thread_local_data.extended_msg
+                extended_msg = thread_local_data.extended_msg
+                if isinstance(extended_msg, MsgHdrProtoBuf):
+                    self.proto.steamid = extended_msg.proto.steamid if extended_msg.proto.HasField("steamid") else 0
+                    self.proto.client_sessionid = extended_msg.proto.client_sessionid if extended_msg.proto.HasField("client_sessionid") else 0
+                    self.proto.routing_appid = extended_msg.proto.routing_appid if extended_msg.proto.HasField("routing_appid") else 0
+                    self.proto.jobid_target = extended_msg.proto.jobid_source if extended_msg.proto.HasField("jobid_source") else 18446744073709551615
+                    self.proto.jobid_source = extended_msg.proto.jobid_target if extended_msg.proto.HasField("jobid_target") else 18446744073709551615
+                    #self.proto.target_job_name = extended_msg.proto.target_job_name if extended_msg.proto.HasField("target_job_name") else ""
+                    #self.proto.header_size = extended_msg.header_Size
+                    #self.proto.header_version = extended_msg.header_Version
+                else:
+                    raise TypeError("thread_local_data.extended_msg must be an instance of MsgHdrProtoBuf.")
+
+                # Set AccountID and ClientID
+                # self.proto.steamid = client_obj.steamID * 2 + client_obj.clientID2 # Ensure steamID is processed
+                self.proto.client_sessionid = client_obj.sessionID
+
+                # Protobuf response message payload
+                self.response_message = None  # This will hold the payload message (e.g., CMsgClientLogonResponse)
+            else:
+                raise NotImplementedError("Only Protobuf responses are supported in this implementation.")
+        except Exception as e:
+            log.error(f"Error initializing CMProtoResponse: {e}")
+
+    def set_response_message(self, message):
+        """
+        Set the Protobuf message payload.
+        :param message: Protobuf message instance (e.g., CMsgClientLogonResponse).
+        """
+        self.response_message = message
+
+    def serialize(self):
+        """
+        Serialize the response into bytes in the correct order:
+        1. 8-byte header (eMsgID and header size)
+        2. CMsgProtoBufHeader
+        3. Protobuf response payload (if set)
+        """
+        try:
+            # Serialize the CMsgProtoBufHeader
+            proto_data = self.proto.SerializeToString()
+            proto_size = len(proto_data)
+
+            # Serialize the response message (if available)
+            if self.response_message:
+                response_data = self.response_message.SerializeToString()
+            else:
+                response_data = b''
+            self.data = struct.pack("<II", set_proto_bit(self.eMsgID), proto_size) + proto_data + response_data
+
+            # Combine all parts: header, CMsgProtoBufHeader, and message payload
+            return self.data
+        except Exception as e:
+            log.error(f"Error serializing CMProtoResponse: {e}")
+            return None
 
 class GCMsgHdr:
     _size = struct.calcsize("<Hqq")
@@ -293,7 +475,7 @@ class GCMsgHdrProto:
     headerLength = 0
 
     def __init__(self, msg, data=None):
-        self.proto = gc_pb2.CMsgProtoBufHeader()
+        self.proto = steammessages_base_pb2.CMsgProtoBufHeader()
         self.msg = clear_proto_bit(msg)
 
         if data:
@@ -316,7 +498,7 @@ class GCMsgHdrProto:
         self.msg = clear_proto_bit(msg)
 
         if self.headerLength:
-            x = GCMsgHdrProto._size
+            x = self._size
             self.proto.ParseFromString(data[x:x + self.headerLength])
         self.data = data[self._size + self.headerLength:]
 
@@ -356,23 +538,28 @@ class deprecated_responsehdr:
                 f"sessionID={getattr(self, 'sessionID', None)})")
 
 
-MSG_LARGE_MESSAGE_LIMIT = 1000  # As in the C++ code
 
-class MsgMulti():
+    def __repr__(self):
+        return (f"deprecated_responsehdr(eMsgID={self.eMsgID}, length={self.length}, data={self.data}, "
+                f"accountID={getattr(self, 'accountID', None)}, "
+                f"clientID2={getattr(self, 'clientID2', None)}, "
+                f"sessionID={getattr(self, 'sessionID', None)})")
+
+class MsgMulti:
     def __init__(self):
         self.compressed = True
         self.jobIDTarget = -1
         self.jobIDSource = -1
         self.body = {
-                'decompressedSize': 0,
-                'messages': [],
-                'unknownMessages': []
+            'decompressedSize': 0,
+            'messages': [],
+            'unknownMessages': []
         }
         self.data = b''
 
     def deserialize(self, in_stream):
-        self.jobIDTarget = struct.unpack('<Q', in_stream.read(4))[0]
-        self.jobIDSource = struct.unpack('<Q', in_stream.read(4))[0]
+        self.jobIDTarget = struct.unpack('<Q', in_stream.read(8))[0]
+        self.jobIDSource = struct.unpack('<Q', in_stream.read(8))[0]
         self.body['decompressedSize'] = struct.unpack('<I', in_stream.read(4))[0]
         self.compressed = self.body['decompressedSize'] != 0
 
@@ -388,9 +575,10 @@ class MsgMulti():
         # Create a byte buffer instead of using out_stream
         data_out = io.BytesIO()
 
-        # Write the job IDs to the buffer
-        data_out.write(struct.pack('<Q', self.jobIDTarget))
-        data_out.write(struct.pack('<Q', self.jobIDSource))
+        # Write the msg ID and job IDs to the buffer
+        data_out.write(struct.pack('<I',1))
+        data_out.write(struct.pack('<q', self.jobIDTarget))
+        data_out.write(struct.pack('<q', self.jobIDSource))
 
         # Create a temporary buffer to hold the message data
         message_out = io.BytesIO()
@@ -398,7 +586,7 @@ class MsgMulti():
         data_bytes = message_out.getvalue()
 
         # Handle compression if necessary
-        if not self.compressed or len(data_bytes) < MSG_LARGE_MESSAGE_LIMIT:
+        if not self.compressed or len(data_bytes) < 1000:
             data_out.write(struct.pack('<I', 0))  # No compression
             data_out.write(data_bytes)
         else:
@@ -449,16 +637,24 @@ class MsgMulti():
             out_stream.write(unknown_data)
 
     def add(self, message):
-        self.body['messages'].append(message)
+        """
+        Adds a message to the MsgMulti object.
+        If the message is an ExtendedMsgHdr instance, it serializes the message and adds it to the body.
+        """
+        if isinstance(message, ExtendedMsgHdr):
+            self.body['messages'].append(message)
+        else:
+            raise TypeError("Only ExtendedMsgHdr instances can be added as messages.")
+
 
 # CM Response is from server to client
 class CMResponse:
-    def __init__(self, eMsgID=0, client_obj=None):
-        if client_obj.is_newPacketType is True:
+    def __init__(self, eMsgID=0, client_obj=None, is_tcp=False):
+        if client_obj.is_newPacketType:
             self.__class__ = ExtendedMsgHdr
             ExtendedMsgHdr.__init__(self, eMsgID, client_obj)
-            self.headerSize = thread_local_data.extended_msg.headerSize
-            self.headerVersion = thread_local_data.extended_msg.headerVersion
+            """self.headerSize = thread_local_data.extended_msg.headerSize
+            self.headerVersion = thread_local_data.extended_msg.headerVersion"""
             self.targetJobID = thread_local_data.extended_msg.sourceJobID
             self.sourceJobID = thread_local_data.extended_msg.targetJobID
             self.headerCanary = thread_local_data.extended_msg.headerCanary
@@ -485,7 +681,7 @@ class ChatMessage:
         return cls(from_=from_, to=to, clientid2=clientId2, type_=type_, message=message)
 
 class CMPacket:
-    def __init__(self, header=0, size=0, packetid=0, priority_level=0, destination_id=0, source_id=0, sequence_num=0, last_recv_seq=0, split_pkt_cnt=0, seq_of_first_pkt=0, data_len=0, data=b''):
+    def __init__(self, header=0, size=0, packetid=0, priority_level=0, destination_id=0, source_id=0, sequence_num=0, last_recv_seq=0, split_pkt_cnt=0, seq_of_first_pkt=0, data_len=0, data=b'', is_tcp=False):
         self.magic = header
 
         self.size = size
@@ -500,138 +696,49 @@ class CMPacket:
 
         self.data_len = data_len
         self.data = data
-        self.is_tcp = False
+        self.is_tcp = is_tcp
+        self.is_proto = False
         self.CMRequest = None
 
-    def parse(self, datagram):
-        packet = CMPacket()
-        pos = 0
-
-        format_str = 'I H c c I I I I I I I'
-        fields = struct.unpack_from(format_str, datagram)
-        packet.magic, packet.size, packet.packetid, packet.priority_level, packet.destination_id, packet.source_id, packet.sequence_num, packet.last_recv_seq, packet.split_pkt_cnt, packet.seq_of_first_pkt, packet.data_len = fields
-
-        packet.data = datagram[36:] if packet.size > 0 else 0
-
-        return packet
-
-    def serialize(self):
-        if isinstance(self.packetid, int):
-            self.packetid = self.packetid.to_bytes(1, "little")
-        if isinstance(self.priority_level, int):
-            self.priority_level = self.priority_level.to_bytes(1, "little")
-        format_str = 'I H c c I I I I I I I'
-        packed_data = struct.pack(format_str, self.magic, self.size, self.packetid, self.priority_level, self.destination_id, self.source_id, self.sequence_num, self.last_recv_seq, self.split_pkt_cnt, self.seq_of_first_pkt, self.data_len)
-        packed_data += self.data if self.size > 0 else b''
-        return packed_data
-
-    def parse_CMRequest(self):
-        if self.data == 0 or len(self.data) < 4:
-            log.error("Data too short to contain an EMsg!")
-            return None
-
-        if len(self.data) >= 16:
+    def parse(self, recvd_packet, is_tcp = False):
+        packet = CMPacket(is_tcp=is_tcp)
+        if packet.is_tcp:
+            format_str = '<I4s'
             try:
-                self.CMRequest = ExtendedMsgHdr()
-                self.CMRequest.load(self.data)
-                self.CMRequest.data = self.data[36:]
-
-                return self.CMRequest
-            except Exception:
-                format_str = 'I I I I'
-                self.CMRequest = MsgHdr_deprecated()
-
-                if self.data == 0:
-                    return 0
-                else:
-                    try:
-                        self.CMRequest.eMsgID, self.CMRequest.accountID, self.CMRequest.clientId2, self.CMRequest.sessionID = struct.unpack_from(format_str, self.data)
-                        self.CMRequest.data = self.data[16:]
-                    except struct.error as e:
-                        log.error(f"Error unpacking packet data: {e}")
-                return self.CMRequest
+                packet.size, packet.magic = struct.unpack_from(format_str, recvd_packet)
+            except:
+                packet.size = 0
+                packet.magic = b""
+            packet.data = recvd_packet[8:] if packet.size > 0 else 0
         else:
-            log.error("Could not determine Packet Type from Header!")
-            self.CMRequest = None
-            return None
-        return self.CMRequest
-
-    def __str__(self):
-        return (
-                f"CMPacket(\n"
-                f"  header={self.magic},\n"
-                f"  size={self.size},\n"
-                f"  packetid={self.packetid},\n"
-                f"  priority_level={self.priority_level},\n"
-                f"  destination_id={self.destination_id},\n"
-                f"  source_id={self.source_id},\n"
-                f"  sequence_num={self.sequence_num},\n"
-                f"  last_recv_seq={self.last_recv_seq},\n"
-                f"  split_pkt_cnt={self.split_pkt_cnt},\n"
-                f"  seq_of_first_pkt={self.seq_of_first_pkt},\n"
-                f"  data_len={self.data_len},\n"
-                f"  data={self.data},\n"
-                f"  CMRequest={self.CMRequest}\n"
-                f")"
-        )
-
-    def __repr__(self):
-        return (
-                f"CMPacket(\n"
-                f"  header={self.magic},\n"
-                f"  size={self.size},\n"
-                f"  packetid={self.packetid},\n"
-                f"  priority_level={self.priority_level},\n"
-                f"  destination_id={self.destination_id},\n"
-                f"  source_id={self.source_id},\n"
-                f"  sequence_num={self.sequence_num},\n"
-                f"  last_recv_seq={self.last_recv_seq},\n"
-                f"  split_pkt_cnt={self.split_pkt_cnt},\n"
-                f"  seq_of_first_pkt={self.seq_of_first_pkt},\n"
-                f"  data_len={self.data_len},\n"
-                f"  data={self.data!r},\n"
-                f"  CMRequest={self.CMRequest!r}\n"
-                f")"
-        )
-
-"""class CMPacket:
-    def __init__(self, header=0, size=0, packetid=0, priority_level=0, destination_id=0, source_id=0, sequence_num=0, last_recv_seq=0, split_pkt_cnt=0, seq_of_first_pkt=0, data_len=0, data=b''):
-        self.magic = header
-
-        self.size = size
-        self.packetid = packetid
-        self.priority_level = priority_level
-        self.destination_id = destination_id
-        self.source_id = source_id
-        self.sequence_num = sequence_num
-        self.last_recv_seq = last_recv_seq
-        self.split_pkt_cnt = split_pkt_cnt
-        self.seq_of_first_pkt = seq_of_first_pkt
-
-        self.data_len = data_len
-        self.data = data
-        self.is_tcp = False
-        self.CMRequest = None
-
-    def parse(self, datagram):
-        packet = CMPacket()
-        pos = 0
-
-        format_str = 'I H c c I I I I I I I'
-        fields = struct.unpack_from(format_str, datagram)
-        packet.magic, packet.size, packet.packetid, packet.priority_level, packet.destination_id, packet.source_id, packet.sequence_num, packet.last_recv_seq, packet.split_pkt_cnt, packet.seq_of_first_pkt, packet.data_len = fields
-
-        packet.data = datagram[36:] if packet.size > 0 else 0
-
+            format_str = 'I h c c I I I I I I i'
+            fields = struct.unpack_from(format_str, recvd_packet)
+            packet.magic, packet.size, packet.packetid, packet.priority_level, packet.destination_id, packet.source_id, packet.sequence_num, packet.last_recv_seq, packet.split_pkt_cnt, packet.seq_of_first_pkt, packet.data_len = fields
+            packet.data = recvd_packet[36:] if packet.size > 0 else 0
         return packet
 
     def serialize(self):
-        if isinstance(self.packetid, int):
-            self.packetid = self.packetid.to_bytes(1, "little")
-        if isinstance(self.priority_level, int):
-            self.priority_level = self.priority_level.to_bytes(1, "little")
-        format_str = 'I H c c I I I I I I I'
-        packed_data = struct.pack(format_str, self.magic, self.size, self.packetid, self.priority_level, self.destination_id, self.source_id, self.sequence_num, self.last_recv_seq, self.split_pkt_cnt, self.seq_of_first_pkt, self.data_len)
+        import sys
+        import traceback
+        if self.is_tcp:
+            self.magic = b"VT01"
+            self.size = len(self.data)
+            packed_data = struct.pack('<I4s', self.size, self.magic)
+        else:
+            if isinstance(self.packetid, int):
+                self.packetid = self.packetid.to_bytes(1, "little")
+            if isinstance(self.priority_level, int):
+                self.priority_level = self.priority_level.to_bytes(1, "little")
+            format_str = 'I H c c I I I I I I I'
+            try:
+                packed_data = struct.pack(format_str, self.magic, self.size, self.packetid, self.priority_level, self.destination_id, self.source_id, self.sequence_num, self.last_recv_seq, self.split_pkt_cnt, self.seq_of_first_pkt, self.data_len)
+            except Exception as e:
+                tb = sys.exc_info()[2]  # Get the original traceback
+                log.error(f"CMPacket serialize error: {e}")
+                log.warning(f"size: {self.size}, packetid: {self.packetid}, priority_level: {self.priority_level}, destination_id: {self.destination_id}, source_id: {self.source_id}, sequence_num: {self.sequence_num}, last_recv_seq: {self.last_recv_seq}, split_pkt_cnt: {self.split_pkt_cnt}, seq_of_first_pkt: {self.seq_of_first_pkt}, data_len: {self.data_len}")
+                log.error(''.join(traceback.format_tb(tb)))  # Logs traceback up to this point
+                raise e.with_traceback(tb)  # Re-raise with the original traceback
+
         packed_data += self.data if self.size > 0 else b''
         return packed_data
 
@@ -639,185 +746,50 @@ class CMPacket:
         if self.data == 0 or len(self.data) < 4:
             log.error("Data too short to contain an EMsg!")
             return None
-
         # Read the first 4 bytes to get the EMsg
         emsg_value, = struct.unpack_from("<I", self.data)
         emsg = EMsg(clear_proto_bit(emsg_value))
-        proto = is_proto(emsg_value)
+        self.is_proto = is_proto(emsg_value)
 
         # Determine if it's a GC message
         gc_msg = emsg in (EMsg.ClientToGC, EMsg.ClientFromGC)
 
-        print(f"packet: {Types.get_enum_name(EMsg, emsg)}\nis protobuf: {proto}  is gc: {gc_msg}")
-        # Parse the header and body accordingly
-        if gc_msg:
-            # Handle GC messages
-            if proto:
+        print(f"packet: {Types.get_enum_name(EMsg, emsg)}\nis protobuf: {self.is_proto}\nis gc: {gc_msg}")
+        if self.is_proto:
+            if gc_msg:
                 self.CMRequest = GCMsgHdrProto(emsg)
                 self.CMRequest.load(self.data)
             else:
+                self.CMRequest = MsgHdrProtoBuf(self.data)
+                # self.CMRequest.load()
+        else:
+            if gc_msg:
                 self.CMRequest = GCMsgHdr(emsg)
                 self.CMRequest.load(self.data[4:])  # Skip the EMsg
-        else:
-            # Handle regular messages
-            if proto:
-                self.CMRequest = MsgHdrProtoBuf()
-                self.CMRequest.load(self.data)
+            elif len(self.data) >= 16:
+                try:
+                    self.CMRequest = ExtendedMsgHdr()
+                    self.CMRequest.load(self.data)
+                    self.CMRequest.data = self.data[36:]
+
+                    return self.CMRequest
+                except Exception:
+                    format_str = 'I I I I'
+                    self.CMRequest = MsgHdr_deprecated()
+
+                    if self.data == 0:
+                        return 0
+                    else:
+                        try:
+                            self.CMRequest.eMsgID, self.CMRequest.accountID, self.CMRequest.clientId2, self.CMRequest.sessionID = struct.unpack_from(format_str, self.data)
+                            self.CMRequest.data = self.data[16:]
+                        except struct.error as e:
+                            log.error(f"Error unpacking packet data: {e}")
+                    return self.CMRequest
             else:
-                # Determine if it's an extended header or deprecated header
-                if len(self.data) >= 16:
-                    try:
-                        self.CMRequest = ExtendedMsgHdr()
-                        self.CMRequest.load(self.data)
-                        self.CMRequest.data = self.data[36:]
-
-                        return self.CMRequest
-                    except Exception:
-                        format_str = 'I I I I'
-                        self.CMRequest = MsgHdr_deprecated()
-
-                        if self.data == 0:
-                            return 0
-                        else:
-                            try:
-                                self.CMRequest.eMsgID, self.CMRequest.accountID, self.CMRequest.clientId2, self.CMRequest.sessionID = struct.unpack_from(format_str, self.data)
-                                self.CMRequest.data = self.data[16:]
-                            except struct.error as e:
-                                log.error(f"Error unpacking packet data: {e}")
-                        return self.CMRequest
-                else:
-                    log.error("Could not determine Packet Type from Header!")
-                    self.CMRequest = None
-                    return None
-
-        # Set the data attribute in CMRequest to the remaining data
-        #self.CMRequest.data = self.data[self.CMRequest._size:]
-        return self.CMRequest
-
-    def __str__(self):
-        return (
-            f"CMPacket(\n"
-            f"  header={self.magic},\n"
-            f"  size={self.size},\n"
-            f"  packetid={self.packetid},\n"
-            f"  priority_level={self.priority_level},\n"
-            f"  destination_id={self.destination_id},\n"
-            f"  source_id={self.source_id},\n"
-            f"  sequence_num={self.sequence_num},\n"
-            f"  last_recv_seq={self.last_recv_seq},\n"
-            f"  split_pkt_cnt={self.split_pkt_cnt},\n"
-            f"  seq_of_first_pkt={self.seq_of_first_pkt},\n"
-            f"  data_len={self.data_len},\n"
-            f"  data={self.data},\n"
-            f"  CMRequest={self.CMRequest}\n"
-            f")"
-        )
-
-    def __repr__(self):
-        return self.__str__()"""
-
-
-"""class CMPacket:
-    # UDP packets have the 'larger' header
-    # TCP only contains a 4 byte size followed by the 4 byte vt01
-    def __init__(self, magic=0, size=0, packetid=0, priority_level=0, destination_id=0, source_id=0, sequence_num=0, last_recv_seq=0, split_pkt_cnt=0, seq_of_first_pkt=0, data_len=0, data=b'', clientobj = None):
-
-        self.magic = magic
-        self.size = size
-        self.packetid = packetid
-        self.priority_level = priority_level
-        self.destination_id = destination_id
-        self.source_id = source_id
-        self.sequence_num = sequence_num
-        self.last_recv_seq = last_recv_seq
-        self.split_pkt_cnt = split_pkt_cnt
-        self.seq_of_first_pkt = seq_of_first_pkt
-        self.data_len = data_len
-        self.data = data
-        self.is_tcp = False
-        self.clientobj = clientobj
-
-        if self.is_tcp:
-            self._format_str = 'I I I'
-            self.header_size = 8
-        else:  # UDP
-            self._format_str = 'I H c c I I I I I I I'
-            self.header_size = 36
-
-        self.CMRequest: Union[MsgHdr_deprecated, ExtendedMsgHdr, GCMsgHdr, MsgHdrProtoBuf, GCMsgHdrProto] = None
-
-    def parse(self, raw_packet):
-        packet = CMPacket()
-
-        fields = struct.unpack_from(self._format_str, raw_packet)
-        if self.is_tcp:
-            packet.size, packet.magic, packet.packetid = fields
-        else:
-            packet.magic, packet.size, packet.packetid, packet.priority_level, packet.destination_id, packet.source_id, packet.sequence_num, packet.last_recv_seq, packet.split_pkt_cnt, packet.seq_of_first_pkt, packet.data_len = fields
-
-        packet.data = raw_packet[self.header_size:] if packet.size > 0 else 0
-
-        return packet
-
-    def serialize(self):
-        if isinstance(self.packetid, int):
-            self.packetid = self.packetid.to_bytes(1, "little")
-        if isinstance(self.priority_level, int):
-            self.priority_level = self.priority_level.to_bytes(1, "little")
-        if self.is_tcp:
-            data = self.size, self.magic
-        else:
-            data = self.magic, self.size, self.packetid, self.priority_level, self.destination_id, self.source_id, self.sequence_num, self.last_recv_seq, self.split_pkt_cnt, self.seq_of_first_pkt, self.data_len
-        packed_data = struct.pack(self._format_str, *data)
-        packed_data += self.data if self.size > 0 else b''
-        return packed_data
-
-    # Added: Method to handle MasterMsg logic
-    def parse_master_msg(self):
-        if len(self.data) < self.header_size + 4:
-            log.error("Data too short to contain an EMsg!")
-
-        emsg, = struct.unpack_from("<I", self.data)
-        msg = EMsg(clear_proto_bit(emsg))
-        proto = is_proto(emsg)
-
-        # Determine if it's a GC message
-        gc_msg = msg in (EMsg.ClientToGC, EMsg.ClientFromGC)
-
-        # Parse the header and body accordingly
-        if gc_msg:
-            # Handle GC messages
-            if proto:
-                self.CMRequest = GCMsgHdrProto(emsg, self.data)
-            else:
-                self.CMRequest = GCMsgHdr(emsg, self.data[4:])  # Skip the EMsg
-        else:
-            # Handle regular messages
-            if proto:
-                self.CMRequest = MsgHdrProtoBuf(self.data)
-            else:
-                # Determine if it's an extended header by trying to deserialize as ExtendedMsgHdr
-                if len(self.data[self.header_size:]) >= MsgHdr_deprecated._size:
-                    try:
-                        # First try extended message type, if that raises an exception, then try the deprecated
-                        # message type
-                        self.CMRequest = ExtendedMsgHdr()
-                        return self.CMRequest.load(self.data)
-                    except:
-                        # Extended message type raised an exception, try deprecated message type
-                        self.CMRequest = MsgHdr_deprecated()
-                        return self.CMRequest.load(self.data)
-                        '''if globalvars.steamui_ver >= 479:
-                            pass
-                        else:
-                            # we either have an issue or something else is not right in the code
-                            log.error(f"Could not determine Packet Type from Header!")
-                            self.CMRequest = None'''
-                else:
-                    # we either have an issue or something else is not right in the code
-                    log.error(f"Could not determine Packet Type from Header!")
-                    self.CMRequest = None
-                    return 0
+                log.error("Could not determine Packet Type from Header!")
+                self.CMRequest = None
+                return None
         return self.CMRequest
 
     def __str__(self):
@@ -840,87 +812,4 @@ class CMPacket:
         )
 
     def __repr__(self):
-        return (
-                f"CMPacket(\n"
-                f"  header={self.magic},\n"
-                f"  size={self.size},\n"
-                f"  packetid={self.packetid},\n"
-                f"  priority_level={self.priority_level},\n"
-                f"  destination_id={self.destination_id},\n"
-                f"  source_id={self.source_id},\n"
-                f"  sequence_num={self.sequence_num},\n"
-                f"  last_recv_seq={self.last_recv_seq},\n"
-                f"  split_pkt_cnt={self.split_pkt_cnt},\n"
-                f"  seq_of_first_pkt={self.seq_of_first_pkt},\n"
-                f"  data_len={self.data_len},\n"
-                f"  data={self.data!r},\n"
-                f"  CMRequest={self.CMRequest!r}\n"
-                f")"
-        )"""
-
-# MasterMsg class that determines the message type and handles it accordingly
-class MasterMsg:
-    def __init__(self, data):
-        self.data = data
-        self.msg = None  # The EMsg
-        self.header = None
-        self.body = None
-        self.proto = False  # Whether it's a protobuf message
-        self.gc = False     # Whether it's a GC message
-
-        self.parse_message()
-
-    def parse_message(self):
-        # First, try to read the EMsg
-        if len(self.data) < 4:
-            raise ValueError("Data too short to contain an EMsg")
-        emsg, = struct.unpack_from("<I", self.data)
-        self.msg = EMsg(clear_proto_bit(emsg))
-        self.proto = is_proto(emsg)
-
-        # Determine if it's a GC message
-        if self.msg in (EMsg.ClientToGC, EMsg.ClientFromGC):
-            self.gc = True
-
-        # Now parse the header and body accordingly
-        if self.gc:
-            # Handle GC messages
-            if self.proto:
-                self.header = GCMsgHdrProto(emsg, self.data)
-                self.body = self.header.data
-            else:
-                self.header = GCMsgHdr(emsg, self.data[4:])  # Skip the EMsg
-                self.body = self.header.data
-        else:
-            # Handle regular messages
-            if self.proto:
-                self.header = MsgHdrProtoBuf(self.data)
-                self.body = self.data[self.header._fullsize:]
-            else:
-                # Determine if it's an extended header
-                if len(self.data) >= ExtendedMsgHdr._size:
-                    # Try to parse as ExtendedMsgHdr
-                    try:
-                        self.header = ExtendedMsgHdr(data=self.data)
-                        self.body = self.header.data
-                    except Exception:
-                        # Fallback to MsgHdr
-                        self.header = MsgHdr(self.data)
-                        self.body = self.header.data
-                else:
-                    self.header = MsgHdr(self.data)
-                    self.body = self.header.data
-
-    def __str__(self):
-        return (
-                f"MasterMsg(\n"
-                f"  msg={self.msg},\n"
-                f"  proto={self.proto},\n"
-                f"  gc={self.gc},\n"
-                f"  header={self.header},\n"
-                f"  body={self.body}\n"
-                f")"
-        )
-
-    def __repr__(self):
-        return self.__str__()
+        return (self.str())

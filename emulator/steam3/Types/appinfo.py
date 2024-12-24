@@ -184,6 +184,7 @@ class AppInfoParser:
 
         # Add to applications list
         self.applications.append(app_data)
+
     def parse_single_app_data_cache_v2(self, reader, magic = None):
         unknown1_bytes = reader.read(4)
         if len(unknown1_bytes) < 4:

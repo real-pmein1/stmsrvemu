@@ -150,18 +150,30 @@ def add_subscription():
                 print()
                 print("Invalid subscription ID(s) entered. Please enter only numbers separated by commas.")
 
-        # Loop through each subscription ID and add a new record for each
+        # Loop through each subscription ID and add records
         for subscription_id in subscription_ids:
+            # Add to AccountSubscriptionsRecord
             new_subscription = AccountSubscriptionsRecord(
                 SubscriptionID=subscription_id,
                 UserRegistry_UniqueID=user.UniqueID
             )
             session.add(new_subscription)
 
-        # Commit all new subscriptions at once
+            # Add to AccountSubscriptionsBillingInfoRecord
+            new_billing_info = AccountSubscriptionsBillingInfoRecord(
+                SubscriptionID=subscription_id,
+                UserRegistry_UniqueID=user.UniqueID,
+                AccountPaymentType=7,  # Default or placeholder value; modify as needed
+                AccountPrepurchasedInfoRecord_UniqueID=None,  # Placeholder; update if necessary
+                AccountExternalBillingInfoRecord_UniqueID=None,  # Placeholder; update if necessary
+                AccountPaymentCardReceiptRecord_UniqueID=None  # Placeholder; update if necessary
+            )
+            session.add(new_billing_info)
+
+        # Commit all new records at once
         session.commit()
         print()
-        print("Subscriptions added successfully.")
+        print("Subscriptions and billing information added successfully.")
         print()
         print()
 
@@ -201,11 +213,11 @@ def ban_user():
 
 def remove_subscription_from_user():
     session = Session()
-    
+
     while True:  # Loop for user input
         username = input("Enter the username: ")
         print()
-        user = session.query(UserRegistry).filter_by(UniqueUserName=username).first()
+        user = session.query(UserRegistry).filter_by(UniqueUserName = username).first()
 
         if not user:
             print("User not found.")
@@ -228,13 +240,36 @@ def remove_subscription_from_user():
 
         # Iterate over each subscription ID to remove
         for sub_id in sub_ids:
+            # Remove from AccountSubscriptionsRecord
             subscription = session.query(AccountSubscriptionsRecord).filter_by(
-                UserRegistry_UniqueID=user.UniqueID, SubscriptionID=sub_id).first()
+                    UserRegistry_UniqueID = user.UniqueID, SubscriptionID = sub_id).first()
             if subscription:
                 session.delete(subscription)
             else:
                 not_found_ids.append(sub_id)
 
+            # Remove from AccountSubscriptionsBillingInfoRecord and handle dependencies
+            billing_info = session.query(AccountSubscriptionsBillingInfoRecord).filter_by(
+                    UserRegistry_UniqueID = user.UniqueID, SubscriptionID = sub_id).first()
+            if billing_info:
+                if billing_info.AccountPaymentType == 6:
+                    # Remove related entry from AccountPrepurchasedInfoRecord
+                    prepurchased_record = session.query(AccountPrepurchasedInfoRecord).filter_by(
+                            UniqueID = billing_info.AccountPrepurchasedInfoRecord_UniqueID).first()
+                    if prepurchased_record:
+                        session.delete(prepurchased_record)
+
+                elif billing_info.AccountPaymentType == 5:
+                    # Remove related entry from AccountPaymentCardInfoRecord
+                    payment_card_record = session.query(AccountPaymentCardInfoRecord).filter_by(
+                            UniqueID = billing_info.AccountPaymentCardReceiptRecord_UniqueID).first()
+                    if payment_card_record:
+                        session.delete(payment_card_record)
+
+                # Remove the billing info record
+                session.delete(billing_info)
+
+        # Commit all deletions at once
         session.commit()
 
         # Print results
@@ -242,7 +277,7 @@ def remove_subscription_from_user():
             print()
             print(f"Some subscriptions were not found for user {username}: {', '.join(map(str, not_found_ids))}")
         print()
-        print("Selected subscriptions removed successfully.")
+        print("Selected subscriptions and associated billing info removed successfully.")
         print()
         print()
 

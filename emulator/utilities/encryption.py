@@ -220,6 +220,20 @@ def rsa_sign_message(rsakey, message):
     return signature
 
 
+def generate_dll_signature(data_to_sign: bytes) -> bytes:
+    """Generate a 128-byte RSA signature for the data using SHA-1."""
+    global network_key
+
+    # Hash the data using SHA-1
+    hashed_data = SHA1.new(data_to_sign)
+
+    # Sign the hash using the provided network_key
+    signature = pkcs1_15.new(network_key).sign(hashed_data)
+
+    # Return the first 128 bytes of the signature
+    return signature[:128]
+
+
 def get_mainkey_reply():
     signature = rsa_sign_message(main_key, BERstring)
 

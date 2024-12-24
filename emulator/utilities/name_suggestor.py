@@ -9,8 +9,8 @@ config = read_config()
 
 def load_modifiers_from_files():
     file_paths = {
-        config['configsdir'] + '/' + "suggestion_prepend.txt": [],
-        config['configsdir'] + '/' + "suggestion_append.txt": []
+            config['configsdir'] + '/' + "suggestion_prepend.txt":[],
+            config['configsdir'] + '/' + "suggestion_append.txt": []
     }
 
     for file_path, modifiers_list in file_paths.items():
@@ -31,19 +31,20 @@ def load_modifiers_from_files():
                 "nasty", "ultra", "mega", "super", "hyper", "dark", "chaos", "lucky",
                 "quick", "sneaky", "crazy", "furious", "silent", "rapid", "chronic",
                 "stormy", "wild", "ancient", "legendary", "ghost", "frosty", "the_phallic_",
-                "hard", "crunchy", "ugly", "crunchy", "re", "slow", "chronic_", "creamy",
-                "dubious_", "hide_the_kids_", "geriatric", "sleezy_", "pedo", "easy_"
-            ]
+                "hard", "crunchy", "ugly", "sloppy_", "re", "slow", "chronic_", "creamy",
+                "dubious_", "hide_the_kids_", "geriatric", "sleezy_", "pedo", "easy_",
+                "crossdressing_", "manic", "fat_", "cystic"
+        ]
         globalvars.appended_modifiers += [
                 "erific", "dream", "_the_womanizer", "transvestinator",
                 "_the_unlikable", "_the_terrible", "orama", "ler", "ing",
-                "son",  "_jr",  "iffer", "ny", "y", "ji", "man", "zilla",
+                "son", "_jr", "iffer", "ny", "y", "ji", "man", "zilla",
                 "inator", "osaures", "ton", "ious", "zen", "wick", "core",
                 "leigh", "wood", "smith", "max", "dex", "ley", "nator",
                 "able", "stein", "knight", "_the_cog", "s_boner", "_the_pipelayer",
                 "erbator", "_the_diddler", "s_johnson", "_is_a_nazi", "8--D",
-                "phile"
-            ]
+                "phile", "_is_pregnant"
+        ]
 
     globalvars.prepended_modifiers += list(file_paths.keys())[0]
     globalvars.appended_modifiers += list(file_paths.keys())[1]
@@ -75,8 +76,7 @@ def similar_username_generator(base_username, number_of_usernames, database):
         if new_username == base_username:
             new_username = randomize_username(random.choice(prepend_modifiers) + new_username)
 
-
-        while (database.check_username_exists(new_username)):
+        while database.check_username_exists(new_username):
             new_username = randomize_username(new_username) + rand_appendmodified
 
         suggestions.add(new_username)

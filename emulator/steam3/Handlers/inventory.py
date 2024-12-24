@@ -20,6 +20,37 @@ def handle_ClientDropItem(unknown):
     pass
 
 def handle_ClientLoadItems(unknown):
+    """EItemRequestResult __cdecl MapItemResult(EResult eGenericResult)
+   {
+     EItemRequestResult v2; // [esp+4h] [ebp-4h]
+
+     switch ( eGenericResult )
+     {
+       case EResult::k_EResultOK:
+         v2 = EItemRequestResult::k_EItemRequestResultOK;
+         break;
+       case EResult::k_EResultInvalidParam:
+         v2 = EItemRequestResult::k_EItemRequestResultInvalid;
+         break;
+       case EResult::k_EResultAccessDenied:
+         v2 = EItemRequestResult::k_EItemRequestResultDenied;
+         break;
+       case EResult::k_EResultTimeout:
+         v2 = EItemRequestResult::k_EItemRequestResultTimeout;
+         break;
+       case EResult::k_EResultServiceUnavailable:
+         v2 = EItemRequestResult::k_EItemRequestResultServerError;
+         break;
+       case EResult::k_EResultNoMatch:
+         v2 = EItemRequestResult::k_EItemRequestResultNoMatch;
+         break;
+       default:
+         v2 = EItemRequestResult::k_EItemRequestResultUnknownError;
+         break;
+     }
+     return v2;
+   }"""
+    # response is k_EMsgClientLoadItemsResponse
     pass
 
 

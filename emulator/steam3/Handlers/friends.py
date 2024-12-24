@@ -2,7 +2,7 @@ import struct
 
 from steam3 import config
 from steam3.ClientManager.client import Client
-from steam3.Responses.friends_responses import build_AcceptFriendResponse, build_AddFriendResponse, build_InviteFriendResponse, build_SetIgnoreFriendResponse, build_contactlist_user_info, build_friendslist_response, build_persona_message
+from steam3.Responses.friends_responses import build_AcceptFriendResponse, build_AddFriendResponse, build_InviteFriendResponse, build_SetIgnoreFriendResponse, build_friendslist_response, build_persona_message
 from steam3.Types.community_types import PersonaStateFlags
 from steam3.Types.steamid import SteamID
 from steam3.cm_packet_utils import CMPacket
@@ -137,13 +137,13 @@ def handle_GetFriendsUserInfo(cmserver_obj, packet: CMPacket, client_obj: Client
     # Extract the number of asked contacts from eMsgID data
     nbAsked = struct.unpack_from('<I', request.data, 0)[0]
     # print(f"nbAsked: {nbAsked}")
-    asked = []
+    requested_friendids = []
     for ind in range(nbAsked):
         # Extract each asked accountId
         accountId = struct.unpack_from('<I', request.data, 4 + 8 * ind)[0]
-        asked.append(accountId)
-    return build_contactlist_user_info(client_obj, asked)
-    #return build_persona_message(client_obj, PersonaStateFlags.playerName, asked)
+        requested_friendids.append(accountId)
+    #return build_contactlist_user_info(client_obj, requested_friendids)
+    return build_persona_message(client_obj, 0x02, requested_friendids)
 
 def handle_SetIgnoreFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     """data: b'\x02\x00\x00\x00\x01\x00\x10\x01\x0c\x00\x00\x00\x01\x00\x10\x01\x01'"""

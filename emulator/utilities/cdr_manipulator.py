@@ -117,10 +117,11 @@ def cache_cdr(islan):
                         break
             with open("files/secondblob.bin", "rb") as g:
                 blob = g.read()
-            if blob.startswith(b"\x01\x43"):
-                blob = zlib.decompress(blob[20:])
-            blob2 = blobs.blob_unserialize(blob)
-            file = "blob = " + pprint.saferepr(blob2)
+            try:
+                blob2 = blobs.blob_unserialize(blob)
+                file = "blob = " + pprint.saferepr(blob2)
+            except Exception as e:
+                print(f"{e}")
 
     file = blobs.blob_replace(file, globalvars.replace_string_cdr(islan))
     execdict = {}

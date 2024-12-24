@@ -82,7 +82,6 @@ class contentlistserver(TCPNetworkHandler):
         server_socket.close()
         self.log.info(f"{clientid}Disconnected from Content Server Directory Server")
 
-
     def get_general_server_list(self, clientid, islan, msg, client_address):
         # Unpack the parameters from the message stream (msg)
         (for_specific_content, appid, appversion, nb_max_addresses, cell_id, unknown1) = struct.unpack(">HIIHII", msg[:20])
@@ -96,16 +95,19 @@ class contentlistserver(TCPNetworkHandler):
         if for_specific_content == 1:
             # Read unknown2 from the message if for_specific_content is 1
             unknown2 = struct.unpack(">I", msg[20:24])[0]
-            #print(f"unknown 2: {unknown2}")
+            # print(f"unknown 2: {unknown2}")
         elif for_specific_content not in [0, 1]:
             self.log.error(f"{clientid} Unknown 'forSpecificContent' value: {for_specific_content}")
             return b'\x00'
 
+        # Extract client IP (without port)
+        client_ip = client_address[0]
+
         # Get the server list based on the content flag
         if for_specific_content:
-            servers, server_count = manager.get_content_server_groups_list(cell_id, appid, appversion, islan)
+            servers, server_count = manager.get_content_server_groups_list(cell_id, appid, appversion, islan, client_address[0])
         else:
-            servers, server_count = manager.get_content_server_groups_list(cell_id, islan = islan)
+            servers, server_count = manager.get_content_server_groups_list(cell_id, islan = islan, client_address = client_address[0])
 
         # Prepare the response stream
         if server_count > 0:
@@ -121,8 +123,6 @@ class contentlistserver(TCPNetworkHandler):
 
         # If more than one content server is returned, use latency aggregator to select the best one
         if server_count > 1:
-            # Extract client IP (without port)
-            client_ip = client_address[0]
 
             # Extract content server IPs (without ports)
             content_server_ips = []
@@ -130,11 +130,15 @@ class contentlistserver(TCPNetworkHandler):
                 if content_server:
                     content_server_ips.append(content_server[0])
 
-            # Initialize latency aggregator with content server IPs
-            latency_aggregator_instance = latencyaggregater(content_server_ips)
+            # Check if any server IP matches the client's IP
+            if client_ip in content_server_ips:
+                best_server_ip = client_ip  # Skip latency aggregator and set best server IP
+            else:
+                # Initialize latency aggregator with content server IPs
+                latency_aggregator_instance = latencyaggregater(content_server_ips)
 
-            # Send client IP to latency aggregator to get the best server IP
-            best_server_ip = latency_aggregator_instance.send_client_ip(client_ip)
+                # Send client IP to latency aggregator to get the best server IP
+                best_server_ip = latency_aggregator_instance.send_client_ip(client_ip)
 
             if best_server_ip:
                 # Find the server in servers that has content_server[0] == best_server_ip
@@ -175,7 +179,15 @@ class contentlistserver(TCPNetworkHandler):
                     if islan:
                         content_server = (globalvars.server_ip, self.config['content_server_port'])
                     else:
-                        content_server = (globalvars.public_ip, self.config['content_server_port'])
+                        # Check if client IP matches an IP in the content server list
+                        matching_server = next(
+                                (entry for entry in manager.contentserver_list if entry[0] == client_ip),
+                                None
+                        )
+                        if matching_server:
+                            content_server = (matching_server[1], self.config['content_server_port'])  # Use LAN IP
+                        else:
+                            content_server = (globalvars.public_ip, self.config['content_server_port'])
 
                 self.log.info(f"{clientid} Sending content server cell ID {cellid1}: {client_update_server[0]}:{client_update_server[1]} / {content_server[0]}:{content_server[1]}")
 
@@ -192,7 +204,7 @@ class contentlistserver(TCPNetworkHandler):
         if count == 2 and len(response) > 12: # FIXME do this properly!
             response = response[:12] # trim reply to expected clupd server length
             count = 1
-        packet = struct.pack(">HI", count, cellid1)  # Group ID
+        packet = struct.pack(">HI", count, cellid1)  # Cell ID
         packet += response
         self.log.info(f"{clientid} Finished processing get content server group list request")
 
@@ -286,16 +298,42 @@ class contentlistserver(TCPNetworkHandler):
         key1_length = len(key_1024_data).to_bytes(4, 'big')
         key2_length = len(key_512_data).to_bytes(4, 'big')
 
-        handshake_payload = message_length + message + key1_length + key_1024_data + key2_length + key_512_data
+        # Read the second blob from file
+        try:
+            with open('files/cache/secondblob_wan.bin', 'rb') as f:
+                second_blob_data = f.read()
+        except FileNotFoundError:
+            self.log.error("Second blob file not found.")
+            self.send_error(server_socket, client_address, "Second blob file not found.")
+            return
 
-        # Encrypt the handshake payload
-        handshake_message = peer_encrypt_message(key, handshake_payload)
+        second_blob_length = len(second_blob_data).to_bytes(4, 'big')
 
-        # TODO send the current WAN cddb? that way the peer/slave cs can validate its custom blob and add them before sending the custom blobs to the csds.
+        # Prepare and encrypt the payload
+        handshake_payload = (
+                message_length + message +
+                key1_length + key_1024_data +
+                key2_length + key_512_data +
+                second_blob_length + second_blob_data
+        )
 
-        # Send the handshake response to the client
-        server_socket.sendto(salt + handshake_message, client_address)
-        self.log.debug(f"Handshake successful with {client_address}. Sent: {salt + handshake_message}")
+        encrypted_payload = peer_encrypt_message(key, handshake_payload)
+
+        # Split the encrypted payload into chunks
+        CHUNK_SIZE = 4096  # Match the client's recv buffer size
+        chunks = [
+                encrypted_payload[i:i + CHUNK_SIZE]
+                for i in range(0, len(encrypted_payload), CHUNK_SIZE)
+        ]
+
+        # Send each chunk to the client
+        for chunk in chunks:
+            server_socket.sendto(salt + chunk, client_address)
+
+        # Send the END_OF_BLOB marker unencrypted
+        server_socket.sendto(b"END_OF_BLOB", client_address)
+
+        self.log.debug(f"Handshake successful with {client_address}. Sent payload in chunks and END_OF_BLOB marker.")
 
         # Store the key in client_info to be used later for decryption
         manager.client_info[client_address] = {'key':key}
@@ -309,8 +347,11 @@ class contentlistserver(TCPNetworkHandler):
 
         # Parse command byte (5th byte)
         command_byte = data[4:5]
+
+        self.log.debug(f"Received command byte: {command_byte} from {client_address}")
         packet = data[5:]  # Remove the first 5 bytes
         #print(f"\ncommand byte: {command_byte}\n")
+
         if command_byte == b"\x04":
             if client_address in manager.client_info:
                 del manager.client_info[client_address]
@@ -324,6 +365,11 @@ class contentlistserver(TCPNetworkHandler):
             server_socket.close()
             return
 
+            key = manager.client_info[client_address]['key']
+            self.log.debug(f"Received second blob request from {client_address}")
+            self.send_second_blob(server_socket, client_address, key)
+            return
+
         # If the client is not already connected or needs to handshake again
         if command_byte == b'\x01' or client_address not in manager.client_info or self.check_client_heartbeat(client_address):
             if command_byte == b'\x01':  # Handshake command
@@ -332,6 +378,7 @@ class contentlistserver(TCPNetworkHandler):
             else:
                 self.send_error(server_socket, client_address, "Client needs to handshake first.")
                 return
+
         while True:  # Loop to keep listening for heartbeats
             try:
                 msg = server_socket.recv(512)

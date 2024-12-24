@@ -64,11 +64,11 @@ class Checksum:
 
 
 class Checksum2: # v3 storage
-    def __init__(self, arg, ver, islan):
+    def __init__(self, arg, ver, islan, is_extra):
         if type(arg) == int:
             appId = arg
             verId = ver
-            with open(self.filename(appId, verId, islan), "rb") as f:
+            with open(self.filename(appId, verId, islan, is_extra), "rb") as f:
                 self.checksumdata = f.read()
         else:
             self.checksumdata = arg
@@ -106,26 +106,30 @@ class Checksum2: # v3 storage
             return True
 
     @classmethod
-    def filename(cls, appId, verId, islan):
+    def filename(cls, appId, verId, islan, is_extra):
         if islan:
             suffix = "_wan"
         else:
             suffix = "_lan"
         if os.path.isfile("files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + "_" + str(verId) + suffix + ".checksums"):
+            log.debug("Sending files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + "_" + str(verId) + suffix + ".checksums")
             return os.path.join("files/cache/" + str(appId) + "_" + str(verId) + "/", str(appId) + "_" + str(verId) + suffix + ".checksums")
         elif os.path.isfile("files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + ".checksums"):
+            log.debug("Sending files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + ".checksums")
             return os.path.join("files/cache/" + str(appId) + "_" + str(verId) + "/", "%i.checksums" % (appId))
-        elif os.path.isfile(os.path.join(config["storagedir"], "%i.v3.checksums" % (appId))):
+            
+        elif os.path.isfile(os.path.join(config["storagedir"], "%i.v3.checksums" % (appId))) and not is_extra:
+            log.debug("Sending " + config["storagedir"] + "%i.v3.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["storagedir"], "%i.v3.checksums" % (appId))
-        elif os.path.isfile(os.path.join(config["storagedir"], "%i.v3e.checksums" % (appId))):
+        elif os.path.isfile(os.path.join(config["storagedir"], "%i.v3e.checksums" % (appId))) and is_extra:
+            log.debug("Sending " + config["storagedir"] + "%i.v3e.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["storagedir"], "%i.v3e.checksums" % (appId))
-        elif os.path.isfile(os.path.join(config["storagedir"], "%i.checksums" % (appId))):
+        elif os.path.isfile(os.path.join(config["storagedir"], "%i.checksums" % (appId))) and not is_extra:
+            log.debug("Sending " + config["storagedir"] + "%i.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["storagedir"], "%i.checksums" % (appId))
-        elif os.path.isdir(config["v3manifestdir2"]):
-            if os.path.isfile(os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))):
-                return os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))
-            else:
-                log.error("Checksums not found for %s %s " % (appId, verId))
+        elif os.path.isfile(os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))) and is_extra:
+            log.debug("Sending " + config["v3storagedir2"] + "%i.checksums" % (appId) + " for version " + str(verId))
+            return os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))
         else:
             log.error("Checksums not found for %s %s " % (appId, verId))
 
@@ -174,8 +178,10 @@ class Checksum3: # v2 storage
     @classmethod
     def filename(cls, appId):
         if os.path.isfile(os.path.join(config["storagedir"], "%i.v2.checksums" % (appId))):
+            log.debug("Sending " + config["storagedir"] + "%i.v2.checksums" % (appId))
             return os.path.join(config["storagedir"], "%i.v2.checksums" % (appId))
         else:
+            log.debug("Sending " + config["v2storagedir"] + "%i.checksums" % (appId))
             return os.path.join(config["v2storagedir"], "%i.checksums" % (appId))
 
 
@@ -223,8 +229,10 @@ class Checksum4: #v4 storage
     @classmethod
     def filename(cls, appId):
         if os.path.isfile(os.path.join(config["storagedir"], "%i.v4.checksums" % (appId))):
+            log.debug("Sending " + config["storagedir"] + "%i.v4.checksums" % (appId))
             return os.path.join(config["storagedir"], "%i.v4.checksums" % (appId))
         else:
+            log.debug("Sending " + config["v4storagedir"] + "%i.checksums" % (appId))
             return os.path.join(config["v4storagedir"], "%i.checksums" % (appId))
 
 class SDKChecksum:

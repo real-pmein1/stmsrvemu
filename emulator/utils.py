@@ -402,7 +402,7 @@ def check_secondblob_changed():
     globalvars.ini_changed_by_server = False
     from utilities.time import steamtime_to_datetime
     globalvars.current_blob_datetime = steamtime_to_datetime(execdict["blob"][b"\x03\x00\x00\x00"])
-
+    globalvars.CDDB_datetime = steamtime_to_datetime(globalvars.CDR_DICTIONARY[b"\x03\x00\x00\x00"])
     # replace_installer_exes_thread()  # Function to call the installer steam.exe replacer for the website download
 
 def launch_neuter_application(disable_converter):
@@ -420,6 +420,21 @@ def launch_neuter_application(disable_converter):
             neuter1.wait()
         else:
             rename_temp_blobs()
+    else:
+        rename_temp_blobs()
+
+def launch_neuter_application_standalone():
+    if os.path.isfile(globalvars.neuter_path) and globalvars.record_ver > 1:
+        with open('files/configs/.isneutering', 'w') as fp:
+            pass
+        if globalvars.current_os == 'Windows':
+            if config["from_source"].lower() == "true":
+                neuter1 = subprocess.Popen(f"start python {globalvars.neuter_path} load app ,8", shell = True)
+            else:
+                neuter1 = subprocess.Popen(f"start {globalvars.neuter_path} load app ,8", shell = True)
+        elif globalvars.current_os == 'Linux':
+            neuter1 = subprocess.Popen(f'python3 {globalvars.neuter_path} load app ,8 &', shell = True)
+        neuter1.wait()
     else:
         rename_temp_blobs()
 

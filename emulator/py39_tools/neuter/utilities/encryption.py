@@ -93,6 +93,7 @@ def import_rsa_keys():
 
     return main_key, network_key
 
+
 # Import the keys from binary
 main_key = None
 network_key = None
@@ -119,3 +120,17 @@ def get_mainkey_reply():
 
     # signature = utils.rsa_sign_message(steam.network_key_sign, BERstring)
     return struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+
+
+def generate_dll_signature(data_to_sign: bytes) -> bytes:
+    """Generate a 128-byte RSA signature for the data using SHA-1."""
+    global network_key
+
+    # Hash the data using SHA-1
+    hashed_data = SHA1.new(data_to_sign)
+
+    # Sign the hash using the provided network_key
+    signature = pkcs1_15.new(network_key).sign(hashed_data)
+
+    # Return the first 128 bytes of the signature
+    return signature[:128]

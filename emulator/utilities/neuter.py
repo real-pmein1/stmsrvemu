@@ -4,6 +4,7 @@ import os
 import globalvars
 from config import get_config as read_config
 from utilities import binary_patcher
+from utilities.filesig_neuter import FileSignatureModifier
 from utilities.packages import Package
 
 
@@ -165,19 +166,16 @@ def replace_dirip_in_file(file, filename, search, server_ip, server_port, dirgro
 
 def get_filenames():
     if config["enable_steam3_servers"] == "true":
-        return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res", b"GameOverlayRenderer.dll", b"GameOverlayUI.exe", b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll",  b"caserver.exe", b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll", b"steamclient.dll", b"steamclient64.dll", b"friendsUI.dll", b"bin\p2pcore.dll", b"bin\steamservice.dll", b"bin\steamservice.exe")
+        return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res",
+        b"GameOverlayRenderer.dll", b"GameOverlayUI.exe", b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll",
+        b"bin\ServerBrowser.dll", b"caserver.exe", b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll", b"steamclient.dll", b"steamclient64.dll",
+        b"friendsUI.dll", b"bin\\friendsUI.dll", b"bin\p2pcore.dll", b"bin\steamservice.dll", b"bin\steamservice.exe", b"bin\FuleSystem_Steam.dll",
+        b"bin\gameoverlayui.dll", b"bin\\x64launcher.exe", b"bin\\vgui.dll", b"bin\\nattypeprobe.dll", b"crashhandler.dll", b"CSERHelper.dll", b"GameOverlayRenderer64.dll",
+        b"steamerrorreporter.exe", b"tier0_s.dll", b"tier0_s64.dll", b"vstdlib_s.dll", b"vstdlib_s64.dll")
     else:
-        return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res", b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll", b" valvesoftware\privacy.htm", b"caserver.exe", b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll")
-    #b"steam\SteamUIConfig.vdf", b"Public\ssa_english.htm"
-    #b"Public\SubPanelWelcomeCreateNewAccount.res", b"Public\SubPanelWelcomeCreateNewAccountEmailAlreadyUsed.res",
-    #b"Public\SubPanelWelcomeCreateNewAccountEmail.res", b"Public\UseOfflineMode.res", b"Public\VACBanDialog.res",
-    #b"Public\ConnectionIssuesDialog.res", b"Public\steamui_english.txt", b"Public\steamui_french.txt",
-    #b"Public\steamui_german.txt", b"Public\steamui_italian.txt", b"Public\steamui_japanese.txt",
-    #b"Public\steamui_korean.txt", b"Public\steamui_koreana.txt", b"Public\steamui_portuguese.txt",
-    #b"Public\steamui_russian.txt", b"Public\steamui_schinese.txt", b"Public\steamui_tchinese.txt",
-    #b"Public\steamui_spanish.txt", b"Public\steamui_thai.txt",b"Public\Account.html",
-    #else:
-    #return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll", b"Public\Account.html", b"caserver.exe", b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll")  # b"steamclient.dll", b"GameOverlayUI.exe", b"serverbrowser.dll", b"gamoverlayui.dll", b"steamclient64.dll", b"AppOverlay.dll", b"AppOverlay64.dll", b"SteamService.exe", b"friendsUI.dll", b"SteamService.dll")
+        return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res",
+        b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll", b" valvesoftware\privacy.htm", b"caserver.exe",
+        b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll")
 
 
 def create_steam_config_file():
@@ -234,7 +232,9 @@ def neuter(pkg_in, pkg_out, server_ip, server_port, islan):
         steamui_signature = "83 c4 ?? 84 c0 75 08 83 c6 01"
         # replacement bytes for to replace the rsa function call with "mov eax, 1"
         replacement = "B8 01 00 00 00"
-        num_nops = 0  # adjust based on how many nops need to be filled in to completely replace an instruction
+        num_nops = 0  # adjust based on how many nops are needed to completely replace an instruction
+        browserfriends_bytes = "83 C4 04 85 C0 74 02 B3"
+        browserfriends_replacement = "BA 01 00 00 00"
     else:
         pass
 
@@ -256,14 +256,11 @@ def neuter(pkg_in, pkg_out, server_ip, server_port, islan):
         elif filename in specified_filenames:
             file = pkg.get_file(filename)
             # we patch steamui.dll to enable steamclient/steamclient64 dll neutering
-            if b'SteamUI.dll' in filename and int(version_id) > 270:
-                # FIXME deepcopy() doesnt seem to work either this still shows steamui.dll as not modified...
-                #file_compare = copy.deepcopy(file)
-                #log.debug("Found steamui.dll")
-                file = binary_patcher.find_and_replace_pattern(file, filename, steamui_signature, replacement, -5, False)
-                #if file == file_compare:
-                #    log.error("SteamUI.dll not modified!!!")
+            # or b"bin\\friendsUI.dll" in filename or b"bin\\serverbrowser.dll" in filename
             file = neuter_file(file, server_ip, server_port, filename, islan)
+            if filename.lower().endswith((b'.dll', b'.exe')):
+                modifier = FileSignatureModifier(file)
+                file = modifier.modify_file()
             pkg.put_file(filename, file)
 
     if len(pkgadd_filelist) > 0:
@@ -371,7 +368,7 @@ def mod_pkg(base_path, pkg, version_id, folder_type):
                 if os.path.exists(version_specific_path):
                     corrected_path = version_specific_path
 
-        # If the file was found, add it to the package
+        # If a file was found, add it to the package
         if corrected_path:
             try:
                 with open(corrected_path, "rb") as file2:
@@ -381,7 +378,6 @@ def mod_pkg(base_path, pkg, version_id, folder_type):
                 log.error(f"Failed to add file {relative_path} from {corrected_path}: {e}")
         else:
             log.error(f"File not found in global, range, or version-specific directories: {relative_path}")
-
 
 
 def recursive_pkg(dir_in, path_to_remove):

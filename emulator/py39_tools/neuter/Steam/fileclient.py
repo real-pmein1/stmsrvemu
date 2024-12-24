@@ -23,7 +23,7 @@ class fileclient :
         self.retry_count = 0
 
         while self.retry_count < self.retries :
-            try :        
+            try :
                 self.connect_and_open()
                 break
             except socket.error :
@@ -34,7 +34,7 @@ class fileclient :
 
         if self.connected == False :
             raise ConnectionError
-                
+
     def connect_and_open(self) :
         self.connect()
         self.setmode_storage()
@@ -215,10 +215,10 @@ class fileclient :
                     self.connected = False
                     print("connection reset by peer, retrying")
                     self.retry_count += 1
-                    
+
             if self.connected == False :
                 raise ConnectionError
-                
+
             if filemode == 0xff :
                 filemode = newfilemode
 

@@ -41,6 +41,8 @@ class Client:
         self.avatarID = b'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb'  # Default ? avatar
         self.session_token = None
         self.onetimepass = None
+        self.login_key = ''
+        self.login_key_uniqueID = None
         self.is_newPacketType = False
         self.last_recvd_heartbeat = None
         self.protocol_version = 0
@@ -48,6 +50,7 @@ class Client:
         self.friends_relationships = []
         self.groups_list = []
         self.jobID_list =[]
+        self.socket = None
 
         self.update_status_callback = None
         self.process_heartbeat_callback = None
@@ -84,6 +87,7 @@ class Client:
         self.get_joined_groups_list()
         # self.get_friends_relationships_from_db()  # Not needed, already called in get_friends_list_from_db()
         self.get_avatarID()
+        database.update_user_session_key(self.steamID, self.symmetric_key.rstrip(b'\x00').hex())
         if result:
             return self.get_vacbans()
 
@@ -107,6 +111,18 @@ class Client:
         self.update_status_info(cmserver_obj, PlayerState.offline, appID = 0, ipaddr = 0, port = 0xffff, gameserver_id = 0)
         database.set_last_logoff(self.steamID)
         self.remove_client_callback(self)
+
+    def set_new_loginkey(self, key_uniqueID, loginkey):
+        self.login_key = loginkey
+        self.login_key_uniqueID = key_uniqueID
+        database.update_user_login_key(self.steamID, loginkey)
+
+    def set_symmetric_key(self, symmetric_key):
+        self.symmetric_key = symmetric_key
+
+    def set_new_sessionkey(self, sessionkey):
+        self.session_token = sessionkey
+        database.update_user_login_key(self.steamID, self.session_token.rstrip(b'\x00').hex())
 
     def disconnect_Game(self, cmserver_obj):
         self.exit_app(cmserver_obj)
@@ -154,6 +170,21 @@ class Client:
     def get_vacbans(self):
         return database.get_vacban_by_userid(self.steamID)
 
+    def is_appid_vacbanned(self, appid):
+        """
+        Check if a given appid is within any range in the appid_range_list.
+
+        :param appid: The integer app ID to check.
+        :return: True if the appid is within any range, False otherwise.
+        """
+        appid_range_list = database.get_vacban_by_userid(self.steamID)
+        if appid_range_list is not None:
+            for firstappid, lastappid in appid_range_list:
+                if firstappid <= appid <= lastappid:
+                    return True
+
+        return False
+
     def get_friends_list_from_db(self):
         """Grabs the list of friends entries from the database
         Sets the friends_list to those entries
@@ -181,6 +212,9 @@ class Client:
         """Directly fetches a friend's entry from the database by accountID."""
         # self.get_friends_relationships_from_db()
         nickname = database.get_user_nickname(accountID)
+        if nickname is None:
+            print(f"Account {accountID}\'s nickname is None")
+            return '[unknown]'
         return nickname
 
     def get_joined_groups_list(self):
@@ -370,3 +404,6 @@ class Client:
 
     def get_accountflags(self):
         return database.compute_accountflags(self.steamID)
+
+    def generate_verification_code(self):
+        return database.generate_verification_code(self.steamID)

@@ -16,8 +16,8 @@ def read_config():
 
     myDefaults = {
             # IP Binding and other Network Related Configurations
-            'auto_public_ip':                      "True",
-            'auto_server_ip':                      "True",
+            'auto_public_ip':                      "true",
+            'auto_server_ip':                      "true",
             'public_ip':                           "0.0.0.0",
             'server_ip':                           "0.0.0.0",
             'server_sm':                           "255.255.255.0",
@@ -114,7 +114,7 @@ def read_config():
             'override_ip_country_region':          "false",  # Formerly server_region and prior to that: cs_region
             'enable_custom_banner':                "false",
             'custom_banner_url':                   "",
-            'cache_sdk_depot_checksums':           "false", # TODO REMOVE OR DO THE WORK! - BEN 10/31/2024
+            'cache_sdk_depot':                     "false",
 
             # RSA Key Configurations
             'main_key_n':                          "0x86724794f8a0fcb0c129b979e7af2e1e309303a7042503d835708873b1df8a9e307c228b9c0862f8f5dbe6f81579233db8a4fe6ba14551679ad72c01973b5ee4ecf8ca2c21524b125bb06cfa0047e2d202c2a70b7f71ad7d1c3665e557a7387bbc43fe52244e58d91a14c660a84b6ae6fdc857b3f595376a8e484cb6b90cc992f5c57cccb1a1197ee90814186b046968f872b84297dad46ed4119ae0f402803108ad95777615c827de8372487a22902cb288bcbad7bc4a842e03a33bd26e052386cbc088c3932bdd1ec4fee1f734fe5eeec55d51c91e1d9e5eae46cf7aac15b2654af8e6c9443b41e92568cce79c08ab6fa61601e4eed791f0436fdc296bb373",

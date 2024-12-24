@@ -51,6 +51,11 @@ class ImpSocket(object):
         self.thread = ImpSocketThread(self)
         self.use_whitelist = config["enable_whitelist"].lower() == "true"
         self.use_blacklist = config["enable_blacklist"].lower() == "true"
+        # Existing initialization code...
+
+        self.warning_log_limit = 3  # Max warnings to log for an IP within the timeframe
+        self.warning_timeframe = 4  # Timeframe in seconds to track repeated issues
+        self.block_threshold = 5  # Threshold for blocking IPs within the timeframe
 
         self.whitelist = self.load_ips_from_file(config['configsdir'] + '/' + config['ip_whitelist']) if self.use_whitelist else set()
         self.blacklist = self.load_ips_from_file(config['configsdir'] + '/' + config['ip_blacklist']) if self.use_blacklist else set()
@@ -61,7 +66,9 @@ class ImpSocket(object):
         self.select_timeout = 0.1  # Adjust the timeout as needed for responsiveness
 
         self.conn_warnings = defaultdict(deque)
-
+        self.conn_errors = defaultdict(deque)  # Tracks errors per IP
+        self.error_log_limit = 3  # Max allowed errors before banning
+        self.error_timeframe = 5  # Timeframe in seconds to track errors
         # Add server's ip address to whitelist to prevent infinite error scrolling
         self.server_ip = config['server_ip']
         if self.server_ip not in self.whitelist:
@@ -96,7 +103,7 @@ class ImpSocket(object):
     def block_ip(self):
         client_ip = self.getclientip()
 
-        log.warning(f"IP {self.getclientip()} is blocked due to malicious activity!")
+        log.warning(f"IP {client_ip} is blocked due to malicious activity!")
 
         # Load existing IPs from the file into the set
         with open(config['configsdir'] + '/' + config['ip_blacklist'], 'r') as f:
@@ -108,6 +115,7 @@ class ImpSocket(object):
             self.s.close()  # Close the client socket
             with open(config['configsdir'] + '/' + config['ip_blacklist'], 'a') as f:
                 f.write(client_ip + '\n')
+
 
     def is_ip_allowed(self, ip_address):
         if self.use_whitelist and ip_address not in self.whitelist:
@@ -125,20 +133,49 @@ class ImpSocket(object):
         hex_str = binascii.hexlify(ip_bytes).decode('ascii').upper()
         return hex_str
 
-    def track_broken_connection(self, ip):
-        """Track occurrences of broken connections and ban IPs exceeding limits."""
+    def track_and_handle_errors(self, ip):
+        """
+        Tracks errors for the given IP and handles banning if the limit is exceeded.
+        """
         now = time.time()
-        self.conn_warnings[ip].append(now)
+        errors = self.conn_errors[ip]
 
-        # Remove old entries
-        while self.conn_warnings[ip] and now - self.conn_warnings[ip][0] > 5:
-            self.conn_warnings[ip].popleft()
+        # Add the current error timestamp
+        errors.append(now)
 
-        # Check for ban condition
-        if len(self.conn_warnings[ip]) > 5:
-            log.warning(f"Banning IP due to frequent broken connections: {ip}")
+        # Remove old errors outside the tracking timeframe
+        while errors and now - errors[0] > self.error_timeframe:
+            errors.popleft()
+
+        # Check if the error limit is exceeded
+        """if len(errors) > self.error_log_limit:
+            if self.is_ip_allowed(ip):  # Check if the IP is not blacklisted
+                self.block_ip()  # Block the IP if it isn't already
+                log.warning(f"IP {ip} banned due to exceeding error limit ({self.error_log_limit} errors in {self.error_timeframe} seconds).")
+            return False  # Suppress further logging for this IP"""
+        return True
+
+    def track_broken_connection(self, ip):
+        """Track occurrences of broken connections and limit warnings."""
+        now = time.time()
+        warnings = self.conn_warnings[ip]
+
+        # Add the current time to the deque
+        warnings.append(now)
+
+        # Remove old entries outside the timeframe
+        while warnings and now - warnings[0] > self.warning_timeframe:
+            warnings.popleft()
+
+        # Log only if warnings are below the log limit
+        if len(warnings) <= self.warning_log_limit:
+            log.warning(f"Connection issue detected from IP: {ip}. Warning #{len(warnings)}")
+
+        # Block IP if it exceeds the block threshold
+        if len(warnings) > self.block_threshold:
+            log.warning(f"Banning IP {ip} due to repeated issues ({len(warnings)} times in {self.warning_timeframe}s).")
             self.block_ip()
-            log.warning(f"IP {self.getclientip()} is blocked due to suspicious activity!")
+
 
     def accept(self):
         if isinstance(self.s, real_socket.socket):
@@ -186,22 +223,30 @@ class ImpSocket(object):
     def settimeout(self, timeout_time):
         self.s.settimeout(timeout_time)
 
-    def send(self, data, to_log = True):
-        if not self.is_ip_allowed(self.address[0]):
-            return 0
-        sentbytes = self.s.send(data)
-        self.bytes_sent += sentbytes
-        self.bytes_sent_total += sentbytes
-        #elapsed_time = int(time.time()) - self.start_time
-        #if elapsed_time > 0 and self.bytes_sent > 0:
-        #    outgoing_kbps = old_div(old_div(int(self.bytes_sent), int(elapsed_time)), 1024)
-        #else:
-        #    outgoing_kbps = 0
-        if to_log:
-            log.debug(f"{str(self.address)}: Sent data - {binascii.b2a_hex(data).decode()}")
-        if sentbytes != len(data):
-            log.warning(f"NOTICE!!! Number of bytes sent doesn\'t match what we tried to send {str(sentbytes)} {str(len(data))}")
-        return sentbytes
+    def send(self, data, to_log=True):
+        """
+        Sends data over the socket and tracks connection errors.
+        """
+        ip = self.getclientip()  # Get the IP of the client
+        if ip in self.blacklist:
+            return 0  # Suppress further operations for blocked IPs
+        if not self.s:
+            return 0  # fuck this shiat
+        try:
+            sentbytes = self.s.send(data)
+            self.bytes_sent += sentbytes
+            self.bytes_sent_total += sentbytes
+            if to_log:
+                log.debug(f"{str(self.address)}: Sent data - {data}")
+            if sentbytes != len(data):
+                log.warning(f"NOTICE! Sent bytes ({sentbytes}) do not match data length ({len(data)}).")
+            return sentbytes
+        except Exception as e:
+            log.error(f"Error sending data to {ip}: {e}")
+            # Track and handle errors
+            if not self.track_and_handle_errors(ip):
+                return 0  # Suppress logging after ban
+            raise
 
     def sendto(self, data, address, to_log = True):
         if not self.is_ip_allowed(self.address[0]):
@@ -209,13 +254,13 @@ class ImpSocket(object):
         sentbytes = self.s.sendto(data, address)
         self.bytes_sent += sentbytes
         self.bytes_sent_total += sentbytes
-        #elapsed_time = int(time.time()) - self.start_time
-        #if elapsed_time > 0 and self.bytes_sent > 0:
+        # elapsed_time = int(time.time()) - self.start_time
+        # if elapsed_time > 0 and self.bytes_sent > 0:
         #    outgoing_kbps = old_div(old_div(int(self.bytes_sent), int(elapsed_time)), 1024)
-        #else:
+        # else:
         #    outgoing_kbps = 0
         if to_log:
-            log.debug(f"{str(address)}: sendto Sent data - {binascii.b2a_hex(data).decode()}")
+            log.debug(f"{str(address)}: sendto Sent data - {data}")
         if sentbytes != len(data):
             log.warning(f"NOTICE!!! Number of bytes sent doesn\'t match what we tried to send {str(sentbytes)} {str(len(data))}")
         return sentbytes
@@ -223,7 +268,7 @@ class ImpSocket(object):
     def send_withlen_short(self, data, to_log = True):
         lengthstr = struct.pack(">H", len(data))
         if to_log:
-            log.debug(f"{str(self.address)}: Sent data with length - {binascii.b2a_hex(lengthstr).decode()} {binascii.b2a_hex(data).decode()}")
+            log.debug(f"{str(self.address)}: Sent data with length - {binascii.b2a_hex(lengthstr).decode()} {data}")
         self.send(lengthstr + data, False)
         sentbytes = lengthstr + data
         return sentbytes
@@ -231,7 +276,7 @@ class ImpSocket(object):
     def send_withlen(self, data, to_log = True):
         lengthstr = struct.pack(">L", len(data))
         if to_log:
-            log.debug(f"{str(self.address)}: Sent data with length - {binascii.b2a_hex(lengthstr).decode()} {binascii.b2a_hex(data).decode()}")
+            log.debug(f"{str(self.address)}: Sent data with length - {binascii.b2a_hex(lengthstr).decode()} {data}")
         totaldata = lengthstr + data
         totalsent = 0
         while totalsent < len(totaldata):
@@ -274,7 +319,7 @@ class ImpSocket(object):
         #else:
         #    incoming_kbps = 0
         if to_log:
-            log.debug(f"{str(self.address)}: Received data - {binascii.b2a_hex(data).decode()}")
+            log.debug(f"{str(self.address)}: Received data - {data}")
         return data
 
     def recvfrom(self, length, to_log = True):
@@ -296,7 +341,7 @@ class ImpSocket(object):
         #else:
         #    incoming_kbps = 0
         if to_log:
-            log.debug(f"{str(address)}: recvfrom Received data - {binascii.hexlify(data).decode()}")
+            log.debug(f"{str(address)}: recvfrom Received data - {data}")
         return data, address
 
     def recv_all(self, length, to_log = True):
@@ -309,8 +354,9 @@ class ImpSocket(object):
                 log.warning(f"Socket connection broken during Recieve with {str(self.address)}")
                 self.track_broken_connection(str(self.address[0]))
             data = data + chunk
-        if to_log:
-            log.debug(f"{str(self.address)}: Received all data - {binascii.b2a_hex(data).decode()}")
+        # FIXME why is there a log message here? it is already taken care of in self.recv()
+        #if to_log:
+        #    log.debug(f"{str(self.address)}: Received all data - {data}")
         return data
 
     def recv_withlen(self, to_log = True):
@@ -323,7 +369,8 @@ class ImpSocket(object):
         else:
             length = struct.unpack(">L", lengthstr)[0]
             data = self.recv_all(length, False)
-            log.debug(f"{str(self.address)}: Received data with length  - {binascii.b2a_hex(lengthstr).decode()} {binascii.b2a_hex(data).decode()}")
+            # FIXME figure out a way to move this to self.recv or the packet  will print twice
+            log.debug(f"{str(self.address)}: Received data with length  - {binascii.b2a_hex(lengthstr).decode()} {data}")
             return data
 
     def recv_withlen_short(self, to_log = True):
@@ -337,8 +384,9 @@ class ImpSocket(object):
             length = struct.unpack(">H", lengthstr)[0]
 
             data = self.recv_all(length, False)
+            # FIXME figure out a way to move this to self.recv or the packet  will print twice
             # if not data[0] == "\x07":
-            log.debug(f"{str(self.address)}: Received data with length  - {binascii.b2a_hex(lengthstr).decode()} {binascii.b2a_hex(data).decode()}")
+            log.debug(f"{str(self.address)}: Received data with length  - {binascii.b2a_hex(lengthstr).decode()} {data}")
             return data
 
     def get_outgoing_data_rate(self):

@@ -16,37 +16,34 @@ ips_to_replace = [
 config = read_config()
 log = logging.getLogger('NEUTER')
 
-def config_replace_in_file(file, filename, replacement_strings, config_num, use_space = False):
+def config_replace_in_file(file, filename, replacement_strings, config_num, use_space=False):
     if isinstance(filename, str):
         filename = filename.encode("latin-1")
+
     for search, replace, info in replacement_strings:
         try:
             if file.find(search) != -1:
-                if search == b"StorefrontURL1" and ":2004" in config["store_url"]:
-                    file = file.replace(search, replace)
-                    log.debug(f"{globalvars.CURRENT_APPID_VERSION}{filename.decode()}: Replaced {info.decode()}")
-                    #print(filename.decode() + ": Replaced " + info.decode())
+                search_len = len(search)
+                replace_len = len(replace)
+
+                log.debug(f"Processing search: {search.decode()} (length: {search_len}), replace: {replace.decode()} (length: {replace_len})")
+
+                # Ensure replacement length is appropriate
+                if replace_len > search_len:
+                    log.warning(
+                        f"{globalvars.CURRENT_APPID_VERSION}{filename.decode()}: Replacement text '{replace.decode()}' (length: {replace_len}) is longer than allowed (max: {search_len})."
+                    )
                 else:
-                    missing_length = len(search) - len(replace)
-                    if missing_length < 0:
-                        log.warning(f"{globalvars.CURRENT_APPID_VERSION}Replacement text {replace.decode()} is too long!")
-                        #print("Replacement text " + replace.decode() + " is too long!")
-                        pass
-                    elif missing_length == 0:
-                        file = file.replace(search, replace)
-                        log.debug(f"{globalvars.CURRENT_APPID_VERSION}{filename.decode()}: Replaced {info.decode()}")
-                        #print(filename.decode() + ": Replaced " + info.decode())
-                    else:
-                        padding = b'\x00' if use_space is False else b'\x20'
-                        replace_padded = replace + (padding * missing_length)
-                        file = file.replace(search, replace_padded)
-                        log.debug(f"{globalvars.CURRENT_APPID_VERSION}{filename.decode()}: Replaced {info.decode()}")
-                        #print(filename.decode() + ": Replaced " + info.decode())
+                    padding = b'\x00' if not use_space else b'\x20'
+                    replace_padded = replace + (padding * (search_len - replace_len))
+                    file = file.replace(search, replace_padded)
+                    log.debug(f"{globalvars.CURRENT_APPID_VERSION}{filename.decode()}: Replaced {info.decode()} with padded version.")
         except Exception as e:
-            # logging.error(f"Config {config_num} line not found: {e} {filename.decode()}")
-            print("Config " + str(config_num) + " line not found: " + filename.decode())
+            log.error(f"Config {config_num}: Error processing file {filename.decode()}: {e}")
 
     return file
+
+
 
 
 def readchunk_neuter(chunk, islan, is2003gcf):

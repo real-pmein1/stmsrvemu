@@ -382,7 +382,7 @@ def handle_CancelPurchase(cmserver_obj, packet: CMPacket, client_obj: Client):
 
 def handle_GetPurchaseReceipts(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-
+    # get purchase receipt 2006 packet: b'\xe0\x02\x00\x00\x02\x00\x00\x00\x01\x00\x10\x01\x00\x00\x00\x00\x01'
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Get Purchase Receipts [partial implementation]")
     request = packet.CMRequest
     unAcknowledgedOnly = struct.unpack("B", request.data)[0]

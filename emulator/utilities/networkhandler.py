@@ -121,6 +121,7 @@ class NetworkHandler(threading.Thread):
 class TCPNetworkHandler(NetworkHandler):
     def __init__(self, in_config, port, server_type = ""):
         self.serversocket_tcp = emu_socket.ImpSocket()
+        self.serversocket_tcp.socket_type == "tcp"
         NetworkHandler.__init__(self, self.serversocket_tcp, in_config, port, server_type)
         self.port = port
         self.config = in_config
@@ -181,9 +182,11 @@ class UDPNetworkHandlerCM(NetworkHandler):
                 server_thread = threading.Thread(target = self.process_packet, args = (data, address))
                 server_thread.start()
 
-    def process_packet(self, data, address):
+    def process_packet(self, data: bytes, address):
         from steam3.cm_packet_utils import CMPacket
         #self.serversocket.connect(address)
+        if data.startswith(b'\xff\xff\xff\xff'):
+            return # FIXME deal with the matchmaking packets!
         packet = CMPacket().parse(data)
         if packet.split_pkt_cnt > 1:
             self.handle_split_packet(packet, address)
@@ -227,41 +230,45 @@ class UDPNetworkHandlerCM(NetworkHandler):
 class TCPNetworkHandlerCM(NetworkHandler):
     def __init__(self, in_config, port, server_type = ""):
         # Initialize TCP socket instead of UDP
-        self.serversocket = emu_socket.ImpSocket("tcp")
-        NetworkHandler.__init__(self, self.serversocket, in_config, port, server_type)
+        self.serversocket_tcp = emu_socket.ImpSocket()
+        self.serversocket = self.serversocket_tcp
+        NetworkHandler.__init__(self, self.serversocket_tcp, in_config, port, server_type)
         self.port = port
         self.config = in_config
+        self.address = None
         self.packet_buffer = {}
 
     def run(self):
         # Bind and start listening for TCP connections
-        self.serversocket.bind((self.config['server_ip'], int(self.port)))
-        self.serversocket.listen(5)  # Listen for incoming connections
+        self.serversocket_tcp.bind((self.config['server_ip'], int(self.port)))
+        self.serversocket_tcp.listen(5)  # Listen for incoming connections
 
         while True:
             try:
-                client_socket, address = self.serversocket.accept()  # Accept incoming connection
+                client_socket, client_address = self.serversocket_tcp.accept()  # Accept incoming connection
             except Exception as e:
                 continue  # Ignore errors while accepting new connections
 
-            if address is not None:
-                server_thread = threading.Thread(target = self.handle_client_connection, args = (client_socket, address))
+            if client_address is not None:
+                server_thread = threading.Thread(target = self.handle_client_connection, args = (client_socket, client_address))
                 server_thread.start()
 
     def handle_client_connection(self, client_socket, address):
-        """ Handle incoming TCP data from a connected client. """
-        self.packet_buffer[address] = b''  # Initialize buffer for this client
+        self.packet_buffer[address] = b''
+        self.log.info(f"Accepted connection from {address}")
 
         while True:
             try:
-                data = client_socket.recv(16384)
-                if not data:
-                    break  # Connection closed by the client
-                self.process_packet(data, address, client_socket)
+                #data = client_socket.recv(16384)
+                """if not data:
+                    self.log.info(f"Connection closed by {address}")
+                    break"""
+                self.handle_client(client_socket, address)
             except Exception as e:
-                continue  # Ignore socket errors
-
+                self.log.error(f"Error receiving data from {address}: {e}")
+                break
         client_socket.close()
+        self.log.info(f"Connection to {address} closed")
 
     def process_packet(self, data, address, client_socket):
         """ Process incoming data and handle split TCP packets. """

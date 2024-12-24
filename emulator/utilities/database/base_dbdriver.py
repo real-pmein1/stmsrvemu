@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BLOB, BigInteger, Boolean, Column, DECIMAL, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text, Time, TypeDecorator, UniqueConstraint, event, update
+from sqlalchemy import BLOB, BigInteger, Boolean, Column, DECIMAL, Date, DateTime, Float, ForeignKey, Integer, SmallInteger, String, Text, Time, TypeDecorator, UniqueConstraint, event, update
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -108,6 +108,9 @@ class UserRegistry(Base):
     info_change_validation_time = Column(String(46))
     info_change_validation_code = Column(String(25))
     ipaddress = Column(String(128))
+    loginkey = Column(String(128))
+    sessionkey = Column(String(128))
+    symmetric_key = Column(String(256))
     # community = relationship("friends_registry", backref = "user", uselist = False)
 
 class AccountExternalBillingInfoRecord(Base):
@@ -721,6 +724,31 @@ class ClientInventoryItems(Base):
     original_itemID = Column(Integer)
     position = Column(Integer)
     trade_after_datetime = Column(String(100))
+
+class PersistentItem(Base):
+    __tablename__ = 'persistent_items'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    steam_id = Column(BigInteger, nullable=False)
+    app_id = Column(Integer, nullable=False)
+    item_id = Column(BigInteger, nullable=False, unique=True)
+    definition_index = Column(Integer, nullable=False)
+    item_level = Column(Integer, nullable=False)
+    quality = Column(Integer, nullable=False)
+    inventory_token = Column(Integer, nullable=False)
+    quantity = Column(Integer, nullable=False)
+
+    attributes = relationship("PersistentItemAttribute", back_populates="item", cascade="all, delete-orphan")
+
+class PersistentItemAttribute(Base):
+    __tablename__ = 'persistent_item_attributes'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(Integer, ForeignKey('persistent_items.id'), nullable=False)
+    definition_index = Column(Integer, nullable=False)
+    value = Column(Float, nullable=False)
+
+    item = relationship("PersistentItem", back_populates="attributes")
 
 ##################################
 #             Lobbies            #

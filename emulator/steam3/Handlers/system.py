@@ -1,12 +1,16 @@
 import copy
 import struct
 
+import globalvars
 from steam3.ClientManager.client import Client
-from steam3.Types.steam_types import NatTypes
+from steam3.Types.steam_types import NatTypes, EResult
 from steam3.cm_packet_utils import CMPacket
+from steam3.Responses.general_responses import build_General_response, build_ClientRequestValidationMail_Response
+from utilities import sendmail
 
 
 def handle_Heartbeat(cmserver_obj, packet, client_obj, isrequest=True):
+    from steam3.cmserver_tcp import CMServerTCP
     if isinstance(client_obj, tuple):
         client_address = client_obj
     else:
@@ -25,8 +29,10 @@ def handle_Heartbeat(cmserver_obj, packet, client_obj, isrequest=True):
     cm_packet_reply.data = struct.pack('I', 0x00000000)
 
     cmidreply = cm_packet_reply.serialize()
-    #cmserver_obj.serversocket.send(cmidreply, to_log = False)
-    cmserver_obj.serversocket.sendto(cmidreply, client_address)
+    if isinstance(cmserver_obj, CMServerTCP):
+        client_obj.socket.send(cmidreply, to_log = False)
+    else:
+        cmserver_obj.serversocket.sendto(cmidreply, client_address)
     return -1
 
 
@@ -106,5 +112,13 @@ def handle_NatTraversalStatEvent(cmserver_obj, packet: CMPacket, client_obj: Cli
     return -1
 
 
-def handle_MultiMessage(cmserver_obj, packet: CMPacket, client_obj: Client):
-    pass
+def handle_RequestValidationMail(cmserver_obj, packet: CMPacket, client_obj: Client):
+    client_address = client_obj.ip_port
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Mail Validation Request")
+
+    if globalvars.config['smtp_enabled'].lower() == 'true':
+        cmserver_obj.log.debug(f"({client_address[0]}:{client_address[1]}): Sending E-Mail Validation Email")
+        validation_dict = client_obj.generate_verification_code()
+        sendmail.send_verification_email(validation_dict['email'], validation_dict['verification_code'], client_address, client_obj.username)
+
+    return build_ClientRequestValidationMail_Response(client_obj, EResult.OK)

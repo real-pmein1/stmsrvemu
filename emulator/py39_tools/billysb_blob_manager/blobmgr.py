@@ -895,6 +895,8 @@ class BlobManager(object):
                 # Write all changes at once
                 with open(emulator_ini_path, 'w', encoding = 'latin-1') as new_file:
                     new_file.write(file_content)
+                # Print the blobs used
+                print(f"Swapping done: FirstBlob: {first_blob_filename}, SecondBlob: {second_blob}")
 
                 # Now, update the GUI to show the installed first and second blobs
                 self.matching_first_blob = copy.deepcopy(first_blob_filename)
@@ -938,38 +940,6 @@ class BlobManager(object):
                 print(f'Failed to resolve FirstBlob for: {SecondTarget}')
                 self.window['-STATEMSG-'].Update(value = self.GetLocale('label_swap_error2'))
                 return
-
-            """# Define the path for emulator.ini
-            emulator_ini_path = Path('emulator.ini')
-
-            # Flags to track if steam_date and steam_time exist
-            steam_date_exists = False
-            steam_time_exists = False
-
-            # Read the entire contents of the file into memory
-            with open(emulator_ini_path, 'r', encoding = 'latin-1') as file:
-                lines = file.readlines()
-
-            # Modify the lines in memory
-            modified_lines = []
-            for line in lines:
-                stripped_line = line.strip()
-
-                if stripped_line.startswith('steam_date') and not stripped_line.startswith(';'):
-                    # Comment out the steam_date by adding a semicolon
-                    modified_lines.append(f';{line}')
-                    steam_date_exists = True
-                elif stripped_line.startswith('steam_time') and not stripped_line.startswith(';'):
-                    # Comment out the steam_time by adding a semicolon
-                    modified_lines.append(f';{line}')
-                    steam_time_exists = True
-                else:
-                    # Keep the line as is
-                    modified_lines.append(line)
-
-            # Write the modified lines back to the original file
-            with open(emulator_ini_path, 'w', encoding = 'latin-1') as file:
-                file.writelines(modified_lines)"""
 
             try:
                 if self.PackReader is None:
@@ -1018,6 +988,10 @@ class BlobManager(object):
                     osremove(f"{self.CacheFolder}secondblob.bin")
                 except:
                     pass
+
+                # Print the blobs used
+                print(f"Swapping done: FirstBlob: {FirstTarget}, SecondBlob: {SecondTarget}")
+
                 self.window['-STATEMSG-'].Update(value = self.GetLocale('label_swap_success'))
                 self.window['-IFB-'].update(value = f"{self.GetLocale('label_installed_blob1')} {FirstTarget}")
                 self.window['-ISB-'].update(value = f"{self.GetLocale('label_installed_blob2')} {SecondTarget}")
@@ -1639,7 +1613,16 @@ while True:
         continue
     elif '-SELECTTEXT- Double' in event:
         try:
-            out = f'SecondBlob: {Manager.Rows[Manager.row][-1]}\r\nFirstBlob: {Manager.matching_first_blob}'
+            second_blob = Manager.Rows[Manager.row][-1]
+            second_blob_date = next((timestamp for timestamp, filename in Manager.SecondBlobDates if filename == second_blob), None)
+
+            if second_blob_date is not None:
+                matching_first_blob = next((filename for timestamp, filename in reversed(Manager.FirstBlobDates) if timestamp <= second_blob_date), "Unknown")
+            else:
+                matching_first_blob = "Unknown"
+
+            out = f'SecondBlob: {second_blob}\r\nFirstBlob: {matching_first_blob}'
+
             clipboardcopy(out)
             Manager.window['-STATEMSG-'].Update(value=Manager.GetLocale('label_copyclip'))
         except:

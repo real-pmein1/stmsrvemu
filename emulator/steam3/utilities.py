@@ -6,6 +6,7 @@ import secrets
 import string
 import creditcard
 import csv
+import os
 import ipaddress
 from datetime import datetime
 
@@ -380,3 +381,168 @@ def get_country_code(ip_address: str) -> str:
                     return "US"  # Default if no country code is found
 
     return "US"  # Default if no match is found
+
+
+def find_appid_files(start_date_str, appids, base_path="."):
+    # Parse the start date
+    start_date = datetime.strptime(start_date_str, "%m/%d/%Y %H:%M:%S")
+
+    # Dictionary to store the latest file path for each appid
+    appid_file_paths = {appid: None for appid in appids}
+    replacement_allowed = True  # Flag to determine if replacements are allowed
+
+    # Collect all directories and sort them by date/time
+    directories = [
+        d for d in os.listdir(base_path)
+        if os.path.isdir(os.path.join(base_path, d)) and "_" in d
+    ]
+    directories = sorted(directories, key=lambda d: datetime.strptime(d, "%m-%d-%Y_%H-%M"))
+
+    # Traverse the directories
+    for directory in directories:
+        dir_path = os.path.join(base_path, directory)
+        dir_date = datetime.strptime(directory, "%m-%d-%Y_%H-%M")
+
+
+        # Once the closest directory to the start date is reached, stop replacements
+        if dir_date >= start_date and replacement_allowed:
+            replacement_allowed = False
+
+        # Process files in the current directory
+        for file_name in os.listdir(dir_path):
+            if file_name.endswith(".vdf"):
+                parts = file_name.split("_")
+                if len(parts) < 2:
+                    continue
+                appid = parts[1].replace(".vdf", "")
+
+                # Check if the file's appid is in the list
+                if appid in appids:
+                    # Update only if replacement is allowed or current path is None
+                    if replacement_allowed or appid_file_paths[appid] is None:
+                        appid_file_paths[appid] = os.path.join(dir_path, file_name)
+    # Remove appids with None file paths
+    appid_file_paths = {appid: path for appid, path in appid_file_paths.items() if path is not None}
+
+    # Return the filtered dictionary as a list of tuples
+    return [(appid, path) for appid, path in appid_file_paths.items()]
+
+
+import os
+from datetime import datetime
+import re
+
+def find_appid_files_2009(start_date_str, base_path="files/appcache/2009_2010/"):
+    # Parse the start date
+    start_date = datetime.strptime(start_date_str, "%m/%d/%Y %H:%M:%S")
+
+    # Dictionary to store the latest file path and modification time for each appid
+    appid_file_paths = {}
+
+    # Collect all directories and sort them by date/time
+    directories = [
+        d for d in os.listdir(base_path)
+        if os.path.isdir(os.path.join(base_path, d)) and "_" in d
+    ]
+    directories = sorted(directories, key=lambda d: datetime.strptime(d, "%m-%d-%Y_%H-%M"))
+
+    # Traverse the directories
+    for directory in directories:
+        dir_path = os.path.join(base_path, directory)
+        dir_date = datetime.strptime(directory, "%m-%d-%Y_%H-%M")
+
+        # If the directory's date is after the start date, stop processing further directories
+        if dir_date > start_date:
+            break
+
+        # Process files in the current directory
+        for file_name in os.listdir(dir_path):
+            if file_name.startswith("app_") and file_name.endswith(".vdf"):
+                try:
+                    appid = int(file_name.split("_")[1].replace(".vdf", ""))
+                except ValueError:
+                    continue
+
+                file_path = os.path.join(dir_path, file_name)
+                file_mod_time = os.path.getmtime(file_path)
+
+                # Only keep the latest file for each appid
+                if appid not in appid_file_paths or file_mod_time > appid_file_paths[appid][1]:
+                    appid_file_paths[appid] = (file_path, file_mod_time)
+
+    # Remove modification times and sort by appid
+    sorted_appid_files = sorted(
+        [(appid, path_time[0]) for appid, path_time in appid_file_paths.items()],
+        key=lambda x: x[0]
+    )
+
+    return sorted_appid_files
+
+
+def find_appids_by_date(end_date_str, base_path="files/appcache/2009_2010/"):
+    """
+    Recursively finds all .vdf files in subdirectories with date and time in the format /MM-DD-YYYY_hh-mm/.
+    Parses the folders sequentially by date, ensuring no duplicate app IDs in the list.
+
+    :param end_date_str: End date in the format "%m/%d/%Y %H:%M:%S".
+    :param base_path: Base directory path to search for date-time folders.
+    :return: Sorted list of unique app IDs found in .vdf files.
+    """
+    # Parse the end date
+    end_date = datetime.strptime(end_date_str, "%m/%d/%Y %H:%M:%S")
+
+    # Regex to match directories with the date-time format
+    datetime_regex = r"\d{2}-\d{2}-\d{4}_\d{2}-\d{2}"
+    datetime_format = "%m-%d-%Y_%H-%M"  # Corrected to match directory format
+
+    # Collect all valid subdirectories and sort them by date/time
+    directories = [
+        d for d in os.listdir(base_path)
+        if os.path.isdir(os.path.join(base_path, d)) and re.match(datetime_regex, d)
+    ]
+    sorted_directories = sorted(directories, key=lambda d: datetime.strptime(d, datetime_format))
+
+    unique_appids = set()  # Set to store unique app IDs
+
+    # Traverse the directories in order
+    for directory in sorted_directories:
+        dir_path = os.path.join(base_path, directory)
+        dir_date = datetime.strptime(directory, datetime_format)
+
+        # Stop processing if the directory is beyond the end date
+        if dir_date > end_date:
+            break
+
+        # Process .vdf files in the current directory
+        for file_name in os.listdir(dir_path):
+            if file_name.endswith(".vdf") and file_name.startswith("app_"):
+                parts = file_name.split("_")
+                if len(parts) < 2:
+                    continue
+                appid = parts[1].replace(".vdf", "")
+                unique_appids.add(int(appid))  # Convert appid to integer for sorting
+
+    # Return the sorted list of unique app IDs
+    return sorted(unique_appids)
+
+"""# Example usage
+result = find_app_files_by_date("02/09/2010 14:05:00", base_path="/path/to/folders")
+for item in result:
+    print(item)
+"""
+
+def create_4byte_id_from_date(end_date):
+    """
+    Create a repeatable 4-byte ID based on the given date.
+
+    :param end_date: A datetime object representing the date.
+    :return: A 4-byte ID as a little-endian integer.
+    """
+    # Calculate total seconds since epoch (1970-01-01)
+    total_seconds = int(end_date.timestamp())
+
+    # Ensure it fits within 4 bytes (truncate if necessary)
+    id_4byte = total_seconds & 0xFFFFFFFF
+
+    # Convert to little-endian bytes
+    return struct.pack('<I', id_4byte)

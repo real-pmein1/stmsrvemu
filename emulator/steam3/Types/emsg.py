@@ -457,7 +457,8 @@ class EMsg(SteamIntEnum):
     ClientAppInfoRequest_obsolete = 840 #: removed
     ClientAppInfoResponse_obsolete = 841 #: removed
     ClientSteamUsageEvent = 842
-    #843, 844
+    ClientEmailChange = 843
+    ClientPersonalQAChange = 844
     ClientCheckPassword = 845
     ClientResetPassword = 846
     #847
@@ -465,7 +466,8 @@ class EMsg(SteamIntEnum):
     ClientResetPasswordResponse = 849
     ClientSessionToken = 850
     ClientDRMProblemReport = 851
-    #852,853
+    ClientDRMSDKDFSRef = 852
+    #853
     ClientLogonBounce = 854
     ClientSetIgnoreFriend = 855
     ClientSetIgnoreFriendResponse = 856
@@ -524,7 +526,18 @@ class EMsg(SteamIntEnum):
     AMGetUserGroupStatus = 921
     AMGetUserGroupStatusResponse = 922
     GSGetUserGroupStatusResponse = 923
-    #924-935
+    GSGrantItem = 924
+    GSGrantItemResponse = 925
+    GSDeleteTempItem = 926
+    GSDeleteTempItemResponse = 927
+    GSDeleteAllTempItems = 928
+    GSDeleteAllTempItemsResponse = 929
+    GSItemGranted = 930
+    GSUpdateItemQuantity = 931
+    GSUpdateItemQuantityResponse = 932
+    GSRestoreOwnedItems = 933
+    GSRestoreOwnedItemsResponse = 934
+    # 935
     GSGetReputation = 936
     GSGetReputationResponse = 937
     GSAssociateWithClan = 938

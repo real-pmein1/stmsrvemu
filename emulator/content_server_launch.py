@@ -1,5 +1,6 @@
 import logging
 import os
+import platform
 import time
 import sys
 
@@ -44,7 +45,7 @@ if config["uat"] != "1":
 start_watchescape_thread()
 
 from servers.contentserver import contentserver
-
+globalvars.current_os = platform.system()
 globalvars.aio_server = False
 
 # Initialize parent and print server info
@@ -60,7 +61,7 @@ csserver.daemon = False
 csserver.start()
 csserver.join()
 log.info(f"Steam2 Content Server listening on port {config['content_server_port']}")
-
+utils.launch_neuter_application(False)
 log.info("...Steam Content Server ready...")
 
 if new_password == 1:

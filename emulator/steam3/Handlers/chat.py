@@ -21,7 +21,7 @@ def handle_FriendMessage(cmserver_obj, packet, client_obj):
     msg_obj = ChatMessage(message.from_, message.to, message.sessionID, message.type, message.message)
     #cmserver_obj.pending_messages.append(msg_obj)
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     client_friend = Client_Manager.get_client_by_identifier(SteamID(message.to // 2))
     cmserver_obj.sendReply(client_friend, [build_send_friendsmsg(client_friend, msg_obj)])
     return -1

@@ -1,7 +1,9 @@
 import binascii
 import csv
+import hashlib
 import io
 import logging
+import os
 import socket
 import struct
 import time
@@ -163,66 +165,69 @@ class CSERServer(UDPNetworkHandler):
         return reply
 
     def parse_gamestats(self, address, data, clientid):
-        self.log.info(f"{clientid}Received game statistics")  # respond with lowercase L
-        reply = b"\xFF\xFF\xFF\xFFl"
+        self.log.info(f"{clientid} Received game statistics")
+        reply = b"\xFF\xFF\xFF\xFFl"  # Base reply with identifier
 
-        """	// C2M_REPORT_GAMESTATISTICS details (OLD VERSION)
-        //		u8(C2M_REPORT_GAMESTATISTICS_PROTOCOL_VERSION_1)
-        //		u32(build_number)
-        //		string( exename )
-        //		string( gamedir )
-        //		string( mapname )
-        //		u32 requested upload data length
-
-        // C2M_REPORT_GAMESTATISTICS details (current version)
-        //		u8(C2M_REPORT_GAMESTATISTICS_PROTOCOL_VERSION)
-        //		u32(appID)
-        //		u32 requested upload data length"""
-        data_bin = bytes.fromhex(data[3:].hex())
-        data_length = len(data_bin)
+        data_bin = bytes.fromhex(data.hex())  # Convert data to binary
         buffer = NetworkBuffer(data_bin)
 
+        # Read protocol version
         protover = buffer.extract_u8()
+        if protover != 2:  # Only version 2 is valid based on the updated logic
+            self.log.error(f"Invalid Game Statistics protocol version: {protover}")
+            self.serversocket.sendto(reply + b"\x00", address)  # Protocol error
+            return
 
-        if not protover in [1, 2]:
-            self.log.error(f"Client sent unknown Game Statistics protocol Version: {protover}")
-            self.serversocket.sendto(reply + b"\x00", address)
+        # Read application ID and upload size
+        appid = buffer.extract_u32()
+        uploadsize = buffer.extract_u32()
+
+        # Log statistics
+        txt_gamestats = f"Protocol 2\nApplication ID: {appid}\nReport Size: {uploadsize}\n"
+        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"clientstats/gamestats/{address}_{timestamp}.gamestats.txt"
+        with open(filename, "w") as file:
+            file.write(txt_gamestats)
+
+        # Handle game stats upload logic
+        statsUniqueId = int(hashlib.md5(filename.encode()).hexdigest(), 16)
+
+        # Build response
+        reply += b"\x01"  # Protocol OK
+        if not statsUniqueId:
+            reply += b"\x00"  # No file upload
         else:
-            if protover == 1:
-                buildnum = buffer.extract_u32()
-                exename = buffer.extract_string()
-                gamedir = buffer.extract_string()
-                mapname = buffer.extract_string()
-                uploadsize = buffer.extract_u32()
-                txt_gamestats = (f'Protocol 1\nBuild Number: {buildnum}\nExecutable Name: {exename}\nGame Directory: {gamedir}\nMap: {mapname}\nReport Size: {uploadsize}kb\n')
-            elif protover == 2:
-                appid = buffer.extract_u32()
-                uploadsize = buffer.extract_u32()
-                txt_gamestats = (f'Protocol 2\nApplication ID: {appid}\nReport Size: {uploadsize}\n')
+            # Use IP from config['harvest_ip']
+            try:
+                harvest_ip = self.config['harvest_ip']
+                ip_bytes = struct.pack(">I", int.from_bytes(socket.inet_aton(harvest_ip), "big"))
+            except KeyError:
+                self.log.error("Missing 'harvest_ip' in configuration")
+                self.serversocket.sendto(reply + b"\x00", address)  # Protocol error
+                return
+            except Exception as e:
+                self.log.error(f"Invalid 'harvest_ip': {e}")
+                self.serversocket.sendto(reply + b"\x00", address)  # Protocol error
+                return
+            harvest_port = int(self.config['harvest_server_port'])
+            port_bytes = struct.pack(">H", harvest_port)  # Use port from fileUploadServer
 
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = "clientstats/gamestats/{}.{}.gamestats.txt".format(address, timestamp)
-            with open(filename, "w") as file:
-                file.write(txt_gamestats)
+            reply += b"\x01"  # File upload requested
+            reply += ip_bytes
+            reply += port_bytes
+            reply += struct.pack(">I", statsUniqueId)  # Add statsUniqueId
 
-            """ // M2C_ACKREPORT_GAMESTATISTICS details
-                //	u8(protocol okay (bool))
-                //	u8(GS_NO_UPLOAD or GS_UPLOAD_REQESTED )
-                //  iff GS_UPLOAD_REQESTED then add:
-                //    u32(harvester ip address)
-                //	  u16(harvester port #)
-                //	  u32(upload context id)"""
-            reply += self.check_allowupload(reply, address)
-            self.serversocket.sendto(reply, address)
+        # Send the response
+        self.serversocket.sendto(reply, address)
 
     def parse_bugreport(self, address, data, clientid):
         self.log.info("Received bug report")
-
+        """b'\x01\xe5\x0f\x00\x00hl2.exe\x00tf\x00tc_hydro\x00\xff\x07\x00\x00\xb7\x0b\x00\x00GenuineIntel\x00\t\x00\x00\x00\x05\x00\x00\x00\xde\x10\x00\x00\x07%\x00\x00 (Build 9200) version 6.2\x00\xdc\xa1\x00\x00In-game Crash\x00sdf@dsdsf.com\x00[1:2]\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00tc_hydro: dfdddf\x00;\x02\x00\x00dsfsd dsfds dsffdf\n\nlevel:  tc_hydro\nbuild:  4069 (Steam)\nposition:  setpos -1904.000000 -2832.000000 288.031250; setang 7.589999 106.764076 0.000000\nDriver Name:  NVIDIA GeForce RTX 3050\nVendorId / DeviceId:  0x10de / 0x2507\nSubSystem / Rev:  0x8e991462 / 0xa1\nDXLevel:  gamemode\nVid:  1024 x 768\nFramerate:  100.970\nConvars:\n\tskill:  1\n\tnet:  rate 30000 update 20 cmd 30 latency 0 msec\n\thost_thread_mode:  0\n\tsv_alternateticks:  0\n\tai_strong_optimizations:  0\nMap version:  4384\ngamedir:  f:\\development\\steam\\emulator_v2\\client\\lan\\steamapps\\test\\team fortress 2\\tf\n\n\x00\x00\x00'"""
         """		// C2M_BUGREPORT details
         //		u8(C2M_BUGREPORT_PROTOCOL_VERSION) = 1 2 or 3
         //		u16(encryptedlength)
         //		remainder=encrypteddata"""
-        data_bin = bytes.fromhex(data[4:].hex())
+        data_bin = bytes.fromhex(data.hex())
         data_length = len(data_bin)
         buffer = NetworkBuffer(data_bin)
         reportver = buffer.extract_u8()
@@ -281,39 +286,68 @@ class CSERServer(UDPNetworkHandler):
             if reportver in [2, 3]:
                 report_type = buffer.extract_string()
                 email = buffer.extract_string()
-                accoutname = buffer.extract_string()
-                txt_bugreport += (f'Report Type: {report_type}\nEmail Address: {email}\nAccount Name: {accoutname}\n')
-                """
-                // Version 3+
-                //  {
-                //			userid( sizeof( TSteamGlobalUserID ) )
-                //  }"""
-                if reportver == 3:
-                    userid = buffer.extract_u64()
-                    txt_bugreport += (f'SteamID: {userid}\n')
-            """// --- all versions
-            //		string(title 128)
-            //		u32(.zip file size, or 0 if none available)
-            //		u32(text length > max 1024)
-            //		text(descriptive text -- capped to text length bytes)"""
-            filename = buffer.extract_string()
-            zipsize = buffer.extract_u32()
-            textlen = buffer.extract_u32()
-            description = buffer.extract_buffer(int(textlen))
+                # FIXME The username seems to not be included in steamui 1060 tf2 in-game crash reports, infact from here its a bunch of plain text information, no file info or anything
+                # accoutname = buffer.extract_string()
+                txt_bugreport += (f'Report Type: {report_type}\nEmail Address: {email}\n') # \nAccount Name: {accoutname}
 
-            with open(filename, "w") as file:
-                file.write(f'{txt_bugreport}Memory Dump Filename: {filename}\nZip Size: {zipsize}kb\nDescription: {description}\n')
+                # Attempt to see what's after the email
+                possible_account = buffer.extract_string()
 
-            """ // M2C_ACKBUGREPORT details
-            //	u8(protocol okay (bool))
-            //	u8(BR_NO_FILES or BR_REQEST_FILES )
-            //  iff BR_REQEST_FILES then add:
-            //    u32(harvester ip address)
-            //	  u16(harvester port #)
-            //	  u32(upload context id)
-            """
+                # Check if it matches the pattern [X:Y]
+                # Being so brain-dead, I'll even hold your hand with a simple check
+                if possible_account.startswith('[') and possible_account.endswith(']') and ':' in possible_account:
+                    # It's an account ID
+                    # Everything after this is raw data
+                    remainder = buffer.extract_buffer(buffer.remaining_length())
+                    raw_filename = f"clientstats/bugreports/{address}.{timestamp}.plain.txt"
+                    os.makedirs(os.path.dirname(raw_filename), exist_ok=True)
+                    with open(raw_filename, 'wb') as f:
+                        f.write(remainder)
+                else:
+                    # Not an account ID, so assume it's an account name
+                    accountname = possible_account
+                    txt_bugreport += f'Account Name: {accountname}\n'
+
+                    if reportver == 3:
+                        userid = buffer.extract_u64()
+                        txt_bugreport += f'SteamID: {userid}\n'
+
+                    filename = buffer.extract_string()
+                    zipsize = buffer.extract_u32()
+                    textlen = buffer.extract_u32()
+                    description = buffer.extract_buffer(int(textlen))
+
+                    if isinstance(filename, bytearray):
+                        filename = filename.decode('utf-8')
+
+                    os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+                    with open(filename, "w", encoding='ascii', errors='replace') as file:
+                        file.write(
+                            f'{txt_bugreport}Memory Dump Filename: {filename}\n'
+                            f'Zip Size: {zipsize}kb\nDescription: {description}\n'
+                        )
+            else:
+                # If reportver not in [2,3], just do whatever your lame original code did
+                # You're welcome, short and tubby.
+                filename = buffer.extract_string()
+                zipsize = buffer.extract_u32()
+                textlen = buffer.extract_u32()
+                description = buffer.extract_buffer(int(textlen))
+
+                if isinstance(filename, bytearray):
+                    filename = filename.decode('utf-8')
+
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+                with open(filename, "w", encoding='ascii', errors='replace') as file:
+                    file.write(
+                        f'{txt_bugreport}Memory Dump Filename: {filename}\n'
+                        f'Zip Size: {zipsize}kb\nDescription: {description}\n'
+                    )
+
+            # Finish with your pathetic upload check
             reply += self.check_allowupload(reply, address)
-
             self.serversocket.sendto(reply, address)
 
     def parse_crashreport(self, address, data, clientid):
@@ -394,9 +428,6 @@ class CSERServer(UDPNetworkHandler):
         #         string(fieldname 32)
         #         string(value 128)
 
-        # FIXME:
-        #  b'\x10\n\xa7\xdf\xbb3\xe6Y\xd0\x04J\xb2\x13\x12{\xc6E\x98\xb47@\xba,Y?\xd9\xfe\xc2"\x85\x96;\xbd\x83\xb1\xdd\xbdk\xb4\x1ca\xa4lmG\tO\x10\x0br\xc1K>\x06\x93Q\x02\xa8\xe1&\xe7\xf6R\x98\x02\xc77\xda\xe7^\xc43}\x91\xaf\xf8a\x95\xf4\xc2O\xad8\xdf\xce\x17\x04\x805\xf4\x9a\xed\x1d\x0b6M,\xd0\xe5\x02Y\xa2\xd0H\xb6;\xe2\xb9k\x8bEh\xe0\xc4\xe9\xb1q\xe5\xe5 0y\xf2@l\xb8\xfd\xaf\xd3v\tu\x03ZU\xd1\xa9\xa0\x0c\xcc\xcd\xf5~\xa1lP\x96n\x8a5[\x8aS\x03\xd8\xd5\x16\x8d\x1e\xff\xb1\xd9\xbb\xd9x\x96\x0b\xc8\xbf\x832~q\x05\x84h\x83\x12\xd0\xda$\x82\xdeb\x1f\xdf\x1c}j\x17\x8a+\xfd-6\x99\xe4\xd7\xb1\xb3\xb1\xd9\xbb\xd9x\x96\x0b\xc8D\x17|\xb2\xa1\xc8\x8c\xc7\x878$\n\x84\xb0\xc3}\xe0\x1d-\x8e\x1e\xf9O\x1c\xd4^\x98-\xea\xc9\xf2\xbf'
-        #  That packet is what was decrypted, obviously it is incorrect
         data_bin = bytes.fromhex(data.hex())
         data_length = len(data_bin)
         buffer = io.BytesIO(data_bin)

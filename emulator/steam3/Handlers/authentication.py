@@ -2,6 +2,7 @@ import binascii
 import hashlib
 import os
 import re
+import secrets
 import struct
 
 import globalvars
@@ -16,9 +17,12 @@ from steam3.Responses.purchase_responses import build_GetPurchaseReceiptsRespons
 from steam3.Types import get_enum_name
 from steam3.Types.Objects.AppOwnershipTicket import Steam3AppOwnershipTicket
 from steam3.Types.community_types import PersonaStateFlags, PlayerState
+from steam3.Types.emsg import EMsg
 from steam3.Types.steam_types import EInstanceFlag, EResult, EType, EUniverse
 from steam3.Types.steamid import SteamID
 from steam3.cm_packet_utils import CMPacket, CMResponse, ExtendedMsgHdr
+from steam3.messages.MsgClientAnonLogOn_Deprecated import MsgClientAnonLogOn_Deprecated
+from steam3.protobufs.steammessages_clientserver_pb2 import CMsgClientGetAppOwnershipTicket
 from steam3.messages.ClientAnonLogOn_Deprecated import ClientAnonLogOn_Deprecated
 from steam3.messages.MsgClientAnonUserLogOn_Deprecated import ClientAnonUserLogOn_Deprecated
 from steam3.messages.MsgClientCreateAccount3 import ClientCreateAccount3
@@ -27,16 +31,21 @@ from steam3.messages.MsgClientLogOnWithCredentials_Deprecated import ClientLogOn
 from steam3.Responses.vac_responses import build_vacbanstatus
 from steam3.Responses.general_responses import build_ClientEncryptPct_response, build_ClientMarketingMessageUpdate, build_GeneralAck, build_General_response, build_client_newsupdate_response, build_cmserver_list_response, build_system_message
 from steam3.Responses.friends_responses import build_friendslist_response, build_persona_message, send_statuschange_to_friends
-from steam3.Responses.auth_responses import build_ClientChangePasswordResponse, build_CreateAccountResponse, build_GameConnectTokensResponse, build_GetAppOwnershipTicketResponse, build_LicenseResponse, build_MsgClientServerList, build_MsgClientSessionToken, build_OneTimeWGAuthPassword, build_account_info_response, build_client_logoff, build_emailaddressinfo, build_login_failure, build_login_response, build_old_GameConnectToken_response
+from steam3.Responses.auth_responses import build_ClientChangePasswordResponse, build_ClientNewLoginKey, build_CreateAccountResponse, build_GameConnectTokensResponse, build_GetAppOwnershipTicketResponse, build_LicenseResponse, build_MsgClientServerList, build_MsgClientSessionToken, build_OneTimeWGAuthPassword, build_account_info_response, build_client_logoff, build_emailaddressinfo, build_login_failure, build_logon_response, build_old_GameConnectToken_response
 from steam3.Responses.guestpass_responses import build_updated_guestpast_list_request
+from steam3.messages.MsgClientLogonWithHash import ClientLogonWithHash
+from steam3.messages.MsgClientRegisterAuthTicketWithCM import MsgClientRegisterAuthTicketWithCM
 from steam3.utilities import is_valid_email, read_until_null_byte
+
+from steam3.protobufs.steammessages_clientserver_login_pb2 import CMsgClientLogon
+from utilities.ticket_utils import Steam2Ticket
 
 
 def handle_ClientLogin(cmserver_obj, packet: CMPacket, client_obj: Client, eresult = 1, machineID_info = None):
     request = packet.CMRequest
     client_address = client_obj.ip_port
 
-    cmserver_obj.sendReply(client_obj, [build_login_response(client_obj, client_address, eresult)])
+    cmserver_obj.sendReply(client_obj, [build_logon_response(client_obj, client_address, eresult, proto = packet.is_proto)])
     appid_range_list = client_obj.login_User(cmserver_obj, machineID_info)
 
     cmserver_obj.sendReply(client_obj, [build_client_newsupdate_response(client_obj)])
@@ -74,7 +83,8 @@ def handle_ClientLogin(cmserver_obj, packet: CMPacket, client_obj: Client, eresu
 
     cmserver_obj.sendReply(client_obj, [build_OneTimeWGAuthPassword(cmserver_obj, client_obj)])
 
-    # TODO send after 10/2009: ClientNewLoginKey b'W\x15\x00\x00$\x02\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xefmw\xea\x02\x01\x00\x10\x01\xfc\xdf\x8b\x00\xe7\xb8\x15\x0btkYSOakV+9QgDQIydsw\x00'
+    if globalvars.steamui_ver >= 1238:
+        cmserver_obj.sendReply(client_obj, [build_ClientNewLoginKey(cmserver_obj, client_obj)])
 
     cmserver_obj.sendReply(client_obj, [build_MsgClientSessionToken(cmserver_obj, client_obj)])
 
@@ -83,7 +93,7 @@ def handle_ClientLogin(cmserver_obj, packet: CMPacket, client_obj: Client, eresu
     cmserver_obj.sendReply(client_obj, [build_ClientEncryptPct_response(client_obj)])
 
     # TODO send this after 01/2009 ClientMarketingMessageUpdate
-    if globalvars.steamui_ver <= 689: # Figure out which SteamUI version when this packet was TRULY implemented
+    if globalvars.steamui_ver >= 689: # Figure out which SteamUI version when this packet was TRULY implemented
         cmserver_obj.sendReply(client_obj, [build_ClientMarketingMessageUpdate(client_obj)])
 
     friends_list_steamids = []
@@ -101,6 +111,50 @@ def handle_ClientLogin(cmserver_obj, packet: CMPacket, client_obj: Client, eresu
     # send 755 - set heartbeat rate
     return -1
 
+
+def handle_ClientLogin_PB(cmserver_obj, packet: CMPacket, client_obj: Client):
+    """
+    Handle a client login Protobuf message (CMsgClientLogon).
+
+    :param cmserver_obj: The CMServer instance handling the connection.
+    :param packet: The CMPacket containing the Protobuf message.
+    :param client_obj: The Client object associated with the connection.
+    """
+    # TODO merge this with the normal client logon handler function
+    # Extract client address
+    client_address = client_obj.ip_port
+    print(f"Handling client login from address: {client_address}")
+
+    # Extract the Protobuf payload
+    protobuf_payload = packet.CMRequest.data
+
+    # Parse the Protobuf message
+    client_logon_msg = CMsgClientLogon()
+    try:
+        client_logon_msg.ParseFromString(protobuf_payload)
+    except Exception as e:
+        print(f"Failed to parse CMsgClientLogon: {e}")
+        print(f"Raw Protobuf payload (hex): {protobuf_payload.hex()}")
+        return
+
+    # Print all fields in the message
+    print("Parsed CMsgClientLogon message fields:")
+    for field_desc, value in client_logon_msg.ListFields():
+        # Format bytes fields for better readability
+        if field_desc.name == "steam2_auth_ticket":
+            ticket = Steam2Ticket(value[4:])
+            client_obj.publicIP = ticket.public_ip_str
+            client_obj.privateIP = ticket.client_ip_str
+            print(f"{field_desc.name}: {ticket}")
+        else:
+            print(f"{field_desc.name}: {value}")
+
+    # Send a response or acknowledgment to the client
+    try:
+        return build_logon_response(client_obj, client_address, EResult.OK, proto = True)
+    except Exception as e:
+        print(f"Failed to build login response: {e}")
+        return
 
 def handle_New_ClientLogin(cmserver_obj, packet: CMPacket, client_obj: Client):
     # TODO not sure if this packet was ever used
@@ -157,14 +211,16 @@ def handle_AnonGameServerLogin(cmserver_obj, packet, client_obj):
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Anonymous GameServer Login")
     request = packet.CMRequest
     try:
-        message = ClientAnonLogOn_Deprecated(request.data[8:])
-        client_obj.is_in_app = True
+    # FIXME we dont do anything with the anon login information, perhaps logging it would be wise..
+        message = MsgClientAnonLogOn_Deprecated(request.data)
+        if client_obj.steamID != 0:
+            client_obj.is_in_app = True
         #print(message)
     except:
         cmserver_obj.log.info(f"Error parsing ClientAnonLogOn!")
         pass
 
-    cmserver_obj.sendReply(client_obj, [build_login_response(client_obj, client_address, EResult.OK)])
+    cmserver_obj.sendReply(client_obj, [build_logon_response(client_obj, client_address, EResult.OK, True, packet.is_proto)])
     cmserver_obj.sendReply(client_obj, [build_client_newsupdate_response(client_obj)])
     cmserver_obj.sendReply(client_obj, [build_cmserver_list_response(client_obj)])
     cmserver_obj.sendReply(client_obj, [build_ClientEncryptPct_response(client_obj)])
@@ -195,11 +251,12 @@ def handle_AnonUserLogin(cmserver_obj, packet, client_obj):
             #print(message)
 
             cmserver_obj.sendReply(client_obj, [build_client_newsupdate_response(client_obj)])
-            cmserver_obj.sendReply(client_obj, [build_login_response(client_obj, client_address, EResult.OK)])
+            cmserver_obj.sendReply(client_obj, [build_logon_response(client_obj, client_address, EResult.OK, True, packet.is_proto)])
     except Exception as e:
         cmserver_obj.log.info(f"Error parsing ClientAnonUserLogOn_Deprecated!\n Error: {e}")
 
     return -1
+
 
 def handle_RegisterAuthTIcket(cmserver_obj, packet: CMPacket, client_obj: Client):
     """data: b'\x19\x00\x01\x00\xa4\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x01\x00\x10\x01\x07
@@ -210,20 +267,22 @@ def handle_RegisterAuthTIcket(cmserver_obj, packet: CMPacket, client_obj: Client
     \xd1\x948\xb6\x1f\xb1\xd9m\xd59g\xd5\x0e\x8aZla\xd3c\xe3\xa0\xbc\x04x'"""
     client_address = client_obj.ip_port
 
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Login With Credentials")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Register Auth Ticket With CM")
     request = packet.CMRequest
-    data = request.data
-    protocol_version = struct.unpack_from('<I', data, 0)
-    ownership_ticket = Steam3AppOwnershipTicket()
-    ownership_ticket.parse_ticket(data[4:])
+    # TODO hold this in the database? or validate? what can i do even if it isnt valid, the client does not expect a response
+    message = MsgClientRegisterAuthTicketWithCM()
+    parsed_message = message.deserialize(request.data)
 
-    return [build_GeneralAck(packet, client_address, cmserver_obj.serversocket)]
+    return -1  # The client does not expect any response to this
+
+
 def handle_LogOff(cmserver_obj, packet: CMPacket, client_obj: Client):
     request = packet.CMRequest
     client_address = client_obj.ip_port
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Logoff request")
     client_obj.logoff_User(cmserver_obj)
-
+    if client_obj.socket:
+        return -1 # we do not respond to TCP versions of this packet
     return [build_client_logoff(client_obj, client_address)]
 
 
@@ -284,6 +343,49 @@ def handle_ClientLogOn_WithCredentials(cmserver_obj, packet: CMPacket, client_ob
 
     return -1
 
+def handle_ClientLogOn_WithHash(cmserver_obj, packet: CMPacket, client_obj: Client):
+    """
+    Uses Login Key to verify login
+    """
+    client_address = client_obj.ip_port
+
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Login With Hash")
+    request = packet.CMRequest
+    data = request.data
+
+    logon = ClientLogonWithHash(data)
+
+    print(logon)
+
+    client_obj.protocol_version = logon.protocol
+    #client_obj.publicIP = logon.public_ip
+    client_obj.privateIP = logon.obfuscated_ip
+    machineID_info = None
+    if logon.machine_id_available:
+        machineID_object = logon.machine_id.get_message_objects()
+
+        # Assuming each message object is a dictionary and taking the first one for example
+        # if machineID_object and isinstance(machineID_object[0], dict):
+        obj = machineID_object[0]
+        machineID_info = (obj.get('BB3', 'N/A'), obj.get('FF2', 'N/A'), obj.get('3B3', 'N/A'))
+
+    # if request.clientId2 == 0x01100001:  # if it is a normal client, do normal login. otherwise just send login response
+    #    handle_ClientLogin(cmserver_obj, packet, client_obj)
+
+    error_code = database.check_user_loginkey_information(logon.username, logon.login_key)
+
+    if error_code != 1:
+        cmserver_obj.log.warning(f"({client_address[0]}:{client_address[1]}): Failed Login, Incorrect Credentials Or User Does not Exist")
+        cmserver_obj.sendReply(client_obj, [build_login_failure(client_obj, error_code)], b"\x05")
+        cmserver_obj.serversocket.disconnect()
+        return -1
+    # Set the user object's login key if it is valid, we send a new one with out login response
+    client_obj.login_key = logon.login_key
+
+    handle_ClientLogin(cmserver_obj, packet, client_obj, error_code, machineID_info)
+
+    return -1
+
 def handle_ClientChangeStatus(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
@@ -331,13 +433,16 @@ def handle_GetAppOwnershipTicket(cmserver_obj, packet: CMPacket, client_obj: Cli
     client_address = client_obj.ip_port
     request = packet.CMRequest
     cmserver_obj.log.info(f"{client_address} App Ownership Ticket Request")
-    appID, = struct.unpack('<I', request.data)
+    is_proto = packet.is_proto
+    if is_proto:
+        # Parse using Protobuf definition
+        message = CMsgClientGetAppOwnershipTicket()
+        message.ParseFromString(request.data)
+        appID = message.app_id  # Access app_id field from Protobuf message
+    else:
+        appID, = struct.unpack('<I', request.data)
 
-    # FIXME This is a hack to prevent versions 521 and 522 from crashing during login.. not sure of the side effects of this
-    """if globalvars.steamui_ver == 521 or globalvars.steamui_ver == 522:
-        return -1
-    else:"""
-    return build_GetAppOwnershipTicketResponse(cmserver_obj, client_obj, appID)
+    return build_GetAppOwnershipTicketResponse(cmserver_obj, client_obj, appID, is_proto)
 
 
 def handle_InformOfCreateAccount(cmserver_obj, packet: CMPacket, client_obj: Client):
@@ -351,7 +456,7 @@ def handle_InformOfCreateAccount(cmserver_obj, packet: CMPacket, client_obj: Cli
 
     #cmserver_obj.log.debug(f"{parsed_message}")
 
-    build_GeneralAck(packet, client_address, cmserver_obj.serversocket)
+    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     return -1
 
 def handle_CreateAccount2(cmserver_obj, packet: CMPacket, client_obj: Client):
@@ -437,3 +542,17 @@ def handle_CreateAccount(cmserver_obj, packet: CMPacket, client_obj: Client, isV
         cmserver_obj.log.warning(f"{client_address[0]}:{client_address[1]} - Account Creation Failed Due To Error: {get_enum_name(EResult, result)}")
 
     return build_CreateAccountResponse(client_obj, result, steamID, isVersion2)
+
+
+def handle_NewLoginKeyAccepted(cmserver_obj, packet: CMPacket, client_obj: Client):
+    client_address = client_obj.ip_port
+    request = packet.CMRequest
+
+    loginkey_uniqueid = struct.unpack('<I', request.data[0:4])[0]
+
+    if loginkey_uniqueid == client_obj.login_key_uniqueID:
+        cmserver_obj.log.info(f"{client_address} Accepted The New Login Key")
+        return -1
+    else:
+        cmserver_obj.log.warning(f"{client_address} Tried To Use The Login Key Of Another User!!")
+        return -1

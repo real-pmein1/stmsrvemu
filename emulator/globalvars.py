@@ -12,7 +12,7 @@ server_threads = {}
 
 config = get_config()
 main_script_dir = os.path.dirname(os.path.abspath(__file__))  # TODO REMOVE / UNUSED
-local_ver = "0.80"
+local_ver = "0.81"
 emu_ver = "0"
 ui_ver = "0"
 mdb_ver = "0"
@@ -49,6 +49,7 @@ appended_modifiers = []
 tgt_version = "2"
 # steam1_blob_sent = 0
 record_ver = 0
+CDDB_datetime = None
 steam_ver = 0
 steamui_ver = 0
 compiling_cdr = False
@@ -179,6 +180,7 @@ ip_addresses = (
         # b"172.16.3.34",
         # b"172.16.3.39",
         # b"172.16.3.72",
+        b"103.76.126.199",
         b"193.34.50.6",
         b"194.124.229.14",
         b"207.173.176.210",
@@ -210,7 +212,10 @@ ip_addresses = (
         b"888.888.888.889",
         b"888.888.888.890",
         b"888.888.888.891",
-        b"63.251.171.132",)
+        b"63.251.171.132",
+        b"81.171.115.6",
+        b"79.141.174.10",
+        b"99.233.135.72",)
 
 extraips = (
         b"207.173.177.12:27010",
@@ -397,6 +402,18 @@ def replace_string_name_space(islan, is2003_gcf = False):
                              (b'"207.173.177.45:1200"',
                               b'"' + trk_ip + b':' + trk_port + b'"',
                               b"Tracker IP 4"),
+                             (b'"207.173.178.42:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 5"),
+                             (b'"207.173.178.43:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 6"),
+                             (b'"207.173.178.44:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 7"),
+                             (b'"207.173.178.45:1200"',
+                              b'"' + trk_ip + b':' + trk_port + b'"',
+                              b"Tracker IP 8"),
                              (b'"207.173.177.10:27010"',
                               b'"' + conn_ip + b':' + hl1master_port + b'"',
                               b"HL Master Server 3"),
@@ -482,7 +499,7 @@ def replace_string_name(islan, is2003_gcf = False):
             (b"http://steamcommunity.com/",
              b"http://" + community_ip + b"/",
              b"Community URL"),
-            (b"http:/beta.steamcommunity.com/",
+            (b"http://beta.steamcommunity.com/",
              b"http://" + community_ip + b"/",
              b"Community URL"),
             (b"http://api.steampowered.com",
@@ -566,10 +583,10 @@ def replace_string(islan):
     replace_string = (
             (b"30820120300d06092a864886f70d01010105000382010d00308201080282010100ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff020101",
              b"30820120300d06092a864886f70d01010105000382010d00308201080282010100" + main_key_n + b"020111",
-             b"Steam2 main RSA key (1024-bit) 1"),
+             b"Steam2 Maximum Value Master RSA key (1024-bit)"),
             (b"30820120300d06092a864886f70d01010105000382010d00308201080282010100d1543176ee6741270dc1a32f4b04c3a304d499ad0570777dba31483d01eb5e639a05eb284f93cf9260b1ef9e159403ae5f7d3997e789646cfc70f26815169a9b4ba4dc5700ea4480f78466eae6d2bdf5e4181da076ca2e95b32b79c016eb91b5f158e8448d2dd5a42f883976a935dcccbbc611dc2bdf0ea3b88ca72fba919501fb8c6187b4ecddbbb6623d640e819302a6be35be74460cbad9bff0ab7dff0c5b4b8f4aff8252815989ec5fffb460166c5a75b81dd99d79b05f23d97476eb3a5d44c74dcd1136e776f5d2bb52e77f530fa2a5ad75f16c1fb5d8218d71b93073bddad930b3b4217989aa58b30566f1887907ca431e02defe51d19489486caf033d020111",
              b"30820120300d06092a864886f70d01010105000382010d00308201080282010100" + main_key_n + b"020111",
-             b"Steam2 main RSA key (1024-bit)"),
+             b"Steam2 Master RSA key (1024-bit)"),
             (b"\x30\x81\x9d\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00\x03\x81\x8b\x00\x30\x81\x87\x02\x81\x81\x00\xda\xde\x57\xfe\x10\x99\xf9\x4b\x81\xb9\x0d\x00\x82\x50\x5b\xe3\x74\xca\x97\x28\xab\x9a\x88\x5b\x3b\x0e\x8e\x02\x5e\x43\xe5\xcc\xd8\x1b\x00\xcd\xbd\x05\xe2\x2a\xc2\x5c\x53\x18\xbf\x84\xc3\x40\x21\x42\xa5\xc3\x8a\xc3\xf4\x27\x1b\xab\xc3\xe5\xc0\x60\x18\xed\x26\x57\xf4\x68\xc5\xda\x55\xaa\x7e\x3b\x3b\x1a\xb2\x72\x06\x17\x4a\x85\x6e\xe2\xb6\x73\x91\x9d\xeb\x47\xbd\x49\x1d\x10\x21\x3e\x90\xdb\xd5\x6e\x25\x2c\xc6\xc9\xe9\x18\x8d\x0b\xc5\x71\x9b\x57\xed\x57\x02\xc6\x45\x5f\x27\x31\x6a\xa0\xaa\x03\x78\x2f\x06\xdf\x02\x01\x11",
              b"\x30\x81\x9d\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00\x03\x81\x8b\x00\x30\x81\x87\x02\x81\x81\x00" + int(encryption.network_key.n).to_bytes(128, 'big') + b"\x02\x01\x11",
              b"Steam Beta 1 main ASCII RSA key (512-bit)"),
@@ -630,6 +647,9 @@ def replace_string(islan):
             (b"30819d300d06092a864886f70d010101050003818b00308187028181009b932ac50dea89bd642ede0ddda5bcfbdaf91b359000ed74ca983f7926b8d23c78408f38f31c5026baacf9cc6b05bc4f1a565d40cb4397f0a58f9b7c23d28eec84c853d5d403032321776746a8e59f706eb7067882b0eb9cd92c516048ec85b600bffe86d127cf2739f3210a2fa6ef651f874a5b3a886bc85f2bd7a6569c9f81020111",
              b"30819d300d06092a864886f70d010101050003818b0030818702818100" + net_key_n + b"020111",
              b"Retail Tracker RSA Key (512-bit)"),
+            (b'30819D300D06092A864886F70D010101050003818B00308187028181009525173D72E87CBBCBDC86146587AEBAA883AD448A6F814DD259BFF97507C5E000CDC41EED27D81F476D56BD6B83A4DC186FA18002AB29717ABA2441EF483AF3970345618D4060392F63AE15D6838B2931C7951FC7E1A48D261301A88B0260336B8B54AB28554FB91B699CC1299FFE414BC9C1E86240AA9E16CAE18B950F900F020111',
+             b"30819d300d06092a864886f70d010101050003818b0030818702818100" + net_key_n + b"020111",
+             b"Steam3 Instance RSA Key (512-bit)"),  # Taken from TINServer
             (b"afakehost.example.com:27030 bfakehost.example.com:27030",
              conn_ip + b":" + dir_server_port + b" " + conn_ip + b":" + dir_server_port,
              b"DNS directory server fallback"),

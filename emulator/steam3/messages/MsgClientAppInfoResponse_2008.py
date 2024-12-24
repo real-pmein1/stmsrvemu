@@ -1,33 +1,70 @@
 import os
 import struct
+from datetime import datetime
+import globalvars
+from steam3.utilities import create_4byte_id_from_date, find_appid_files, find_appid_files_2009
 
 
 class MsgClientAppInfoResponse_2008:
-    def __init__(self, app_ids, base_directory = 'files/appcache/vdf/2008/'):
+    def __init__(self, app_ids, base_directory = 'files/appcache/2008/', start_date="01/01/2020 00:00:00"):
         self.app_ids = app_ids
         self.base_directory = base_directory
         self.packet_buffer = bytearray()
+        self.is_2009 = False if base_directory == 'files/appcache/2008/' else True
 
-    def collect_app_info(self):
-        # First, pack the number of app IDs as a 4-byte little-endian integer
-        self.packet_buffer += struct.pack('<I', len(self.app_ids))
+        self.start_date = start_date  # Example default date
 
-        for app_id in self.app_ids:
-            # Construct the file name for the current app ID
-            file_path = os.path.join(self.base_directory, f'app_{app_id}.vdf')
+    def serialize(self):
+        # Initialize a count for successfully opened files
+        successful_files = 0
 
-            if os.path.isfile(file_path):
-                print(f"Reading {file_path}...")
-                # Open the file and read the bytes
-                with open(file_path, 'rb') as f:
-                    file_data = f.read()
+        # Temporary buffer to store file data
+        temp_buffer = bytearray()
 
-                # Append the file data to the buffer
-                self.packet_buffer += file_data
-                # Append a null byte after each app info
-                #self.packet_buffer += b'\x00'
-            else:
-                print(f"File {file_path} not found!")
+        if self.is_2009:
+            current_cdr_date = datetime.strptime(globalvars.CDDB_datetime, "%m/%d/%Y %H:%M:%S")
+            current_changeid = create_4byte_id_from_date(current_cdr_date)
+            # Use the find_appid_files function
+            file_list = find_appid_files_2009(self.start_date)
+            temp_buffer = b""  # Ensure temp_buffer is initialized
+            successful_files = 0  # Counter for successful file reads
+
+            for app_id, file_path in file_list:
+                if os.path.isfile(file_path):
+                    try:
+                        print(f"Reading {file_path}...")
+                        with open(file_path, 'rb') as f:
+                            file_data = f.read()
+
+                        # The following is to remove the excess stuff that the client adds to the appinfo files, which does NOT get sent
+                        # Remove the first 8 bytes
+                        file_data = file_data[8:]
+
+                        # Remove 4 bytes starting at index 8
+                        file_data = file_data[:8] + file_data[12:]
+
+                        temp_buffer += file_data
+                        successful_files += 1
+                    except Exception as e:
+                        print(f"Error reading {file_path}: {e}")
+        else:
+            # Original way of finding files
+            for app_id in self.app_ids:
+                file_path = os.path.join(self.base_directory, f'app_{app_id}.vdf')
+                if os.path.isfile(file_path):
+                    try:
+                        print(f"Reading {file_path}...")
+                        with open(file_path, 'rb') as f:
+                            file_data = f.read()
+                        temp_buffer += file_data
+                        successful_files += 1
+                    except Exception as e:
+                        print(f"Error reading {file_path}: {e}")
+
+        # Pack the number of successful files into the packet buffer
+        self.packet_buffer += struct.pack('<I', successful_files)
+        # Add the successful file data to the packet buffer
+        self.packet_buffer += temp_buffer
 
     def get_packet(self):
         # Returns the final packet buffer
@@ -38,7 +75,7 @@ class MsgClientAppInfoResponse_2008:
 app_ids = [11420, 12345, 54321]  # Replace with actual app IDs
 
 collector = MsgClientAppInfoResponse_2008(app_ids)
-collector.collect_app_info()
+collector.serialize()
 
 # Get the final packed buffer
 packet = collector.get_packet()

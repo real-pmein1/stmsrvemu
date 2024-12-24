@@ -13,12 +13,11 @@ from steam3.Types.steamid import SteamID
 from steam3.cm_packet_utils import CMResponse
 
 
-
 def build_InviteFriendResponse(client_obj, Result = 1):
     packet = CMResponse(eMsgID = EMsg.ClientInviteFriendResponse, client_obj = client_obj)
 
     packet.data = struct.pack('I',
-                            Result)  # This is an errorcode, probably regular steam status?
+                            Result)  # This is an result code
 
     return packet
 
@@ -64,12 +63,12 @@ def build_friendslist_response(client_obj):
     return packet
 
 
-def build_contactlist_user_info(client_obj, asked):
+"""def build_contactlist_user_info(client_obj, asked):
     packet = CMResponse(eMsgID=0x02FE, client_obj=client_obj)
 
     clientId2 = 0x01100001
     # Type indicating "all contact list"
-    type = 0x02
+    state_flag = 0x02
     nbInfo = 0
 
     # Use a mutable bytearray to start
@@ -80,7 +79,7 @@ def build_contactlist_user_info(client_obj, asked):
     packed_data += b'\x00\x00'  # Placeholder for nbInfo
 
     # Pack the type
-    packed_data += struct.pack('<I', type)
+    packed_data += struct.pack('<I', state_flag)
 
     # Process each account in the asked list
     for accountId in asked:
@@ -103,7 +102,7 @@ def build_contactlist_user_info(client_obj, asked):
     # Convert the bytearray to bytes before assigning to packet.data
     packet.data = bytes(packed_data)
 
-    return packet
+    return packet"""
 
 class friend_obj_empty:
     """Empty class for making stuff...?"""
