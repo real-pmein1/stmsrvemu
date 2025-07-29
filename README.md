@@ -16,7 +16,7 @@ python.exe -m PyInstaller -F -i source-content.ico emulator.py
 + steamCooker - Help with some of the intricacies of the Steam services
 + BillySB - Website developer
 + XJR9000 - Website developer and support/tester
-+ Rossen - ValvePython protobuf and CM code
++ Rossen - ValvePython protobuf for CM encryption code and the clientmsg format
 + Da_FileServer - Original AppDataCacheToXML code
 + Tomi + anon - Java VAC server code
 + UAVXP - 2002 tracker client code
