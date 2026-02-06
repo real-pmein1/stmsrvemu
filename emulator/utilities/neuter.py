@@ -166,14 +166,14 @@ def replace_dirip_in_file(file, filename, search, server_ip, server_port, dirgro
 
 def get_filenames():
     if config["enable_steam3_servers"] == "true":
-        return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res",
+        return (b"HldsUpdateToolNew.exe", b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res",
         b"GameOverlayRenderer.dll", b"GameOverlayUI.exe", b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll",
         b"bin\ServerBrowser.dll", b"caserver.exe", b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll", b"steamclient.dll", b"steamclient64.dll",
         b"friendsUI.dll", b"bin\\friendsUI.dll", b"bin\p2pcore.dll", b"bin\steamservice.dll", b"bin\steamservice.exe", b"bin\FuleSystem_Steam.dll",
         b"bin\gameoverlayui.dll", b"bin\\x64launcher.exe", b"bin\\vgui.dll", b"bin\\nattypeprobe.dll", b"crashhandler.dll", b"CSERHelper.dll", b"GameOverlayRenderer64.dll",
         b"steamerrorreporter.exe", b"tier0_s.dll", b"tier0_s64.dll", b"vstdlib_s.dll", b"vstdlib_s64.dll")
     else:
-        return (b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res",
+        return (b"HldsUpdateToolNew.exe", b"SteamNew.exe", b"Steam.dll", b"SteamUI.dll", b"platform.dll", b"steam\SteamUIConfig.vdf", b"steam\SubPanelWelcomeCreateNewAccount.res",
         b"steam\SteamUI.dll", b"friends\servers.vdf", b"servers\MasterServers.vdf", b"servers\ServerBrowser.dll", b" valvesoftware\privacy.htm", b"caserver.exe",
         b"cacdll.dll", b"CASClient.exe", b"unicows.dll", b"GameUI.dll")
 

@@ -6,7 +6,7 @@ from threading import Thread
 from time import sleep
 import time
 import zlib
-import PySimpleGUI as psg
+import libs.PySimpleGUI as psg
 from pathlib import Path
 from os import path
 
