@@ -11,7 +11,7 @@ from builtins import range, str
 from datetime import datetime
 
 import ipcalc
-from CryptICE import IceKey
+from libs.CryptICE import IceKey
 
 import globalvars
 import utils
