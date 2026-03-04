@@ -16,12 +16,12 @@ watchdog~=3.0.0
 six~=1.16.0
 pycountry~=24.6.1
 xxhash~=3.4.1
-overload~=1.1
 asyncio~=3.4.3
 creditcard~=1.0.2
 ping3~=4.0.8
-pywin32
+pywin32; sys_platform == "win32"
 blessed~=1.20.0
+colorama~=0.4.6; platform_system == "Linux"
 pillow~=10.3.0
 Levenshtein~=0.25.1
 mariadb~=1.1.10
@@ -34,8 +34,8 @@ rsa~=4.9
 cachetools~=5.5.0
 aiohttp~=3.10.5
 pyperclip~=1.9.0
-tkcalendar~=1.6.1
-PyGetWindow~=0.0.9
+tkcalendar~=1.6.1; sys_platform == "win32"
+PyGetWindow~=0.0.9; sys_platform == "win32"
 google~=3.0.0
 observable~=1.0.3
 sqlparse
@@ -45,3 +45,5 @@ pytz~=2024.2
 maxminddb~=2.6.2
 protobuf~=5.28.2
 tzlocal
+chardet
+prompt_toolkit

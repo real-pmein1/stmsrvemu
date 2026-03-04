@@ -1,6 +1,9 @@
+dormine (RIP 1980-2026):
+- original steam server emulator proof of concept
+
 pmein1:
-- modified and expanded tane + dormine emulator
-- enhanced neutering
+- modified and expanded dormine + tane emulator
+- rewrote neutering
 - steam 2003-2010 steam2 compatibility
 - package file integrater (pkg_add)
 - custom blob implementation/integration (custom folder)
@@ -12,24 +15,25 @@ pmein1:
 - created validation server
 - integrated ymgve's beta 2 server code into emulator
 - created CDDB/CCDB database code and structure
-- enhanced ben's beta storage creator
+- enhanced ben's beta 1 (2002) storage creator
 - implemented and rewrote beta storage reading code
 - added ability to change blob and neuter the new blob while running
 - enhanced filesystem watcher to more accuratly watch specific files
 - created beta 1 storages
+- implemented blob mariadb storage and retrieval system
 
 ben:
 - Created CM server Emulator
-    - used valvepython's message library as a reference for packet parsing code
-- rewrote and refactored pmeins emulator to be more modular and easier to maintain
+- rewrote and refactored pmein1's emulator to be more modular and easier to maintain
 - upgraded code to python 3.9
 - Enhanced logger readability using colored text
-- added name suggestion code
-- moved the server from filebased to mysql based
+- implemented name suggestion code
+- moved the server from filebased sqlplus to mysql based
 - implemented database code and structure
 - completed missing CSER packets
 - implemented Harvest Server
 - Implemented VAC 1 server
+- Implemented FTP server
 - Integrated pmein1/dormine's trackerserver code into emulator
 - added ability to host multiple content servers for a single network
 - implemented ticket parsing code for each type of server
@@ -37,10 +41,11 @@ ben:
 - implemented black/white listing
 - added packet filtering and rate limiting with auto ip banning
 - rewrote the HL/HL2/RDFK Masterservers
-- integrated beta 1 server into emulator
+- integrated beta 1 (2002) server into emulator
 - created initial Manual
 - created original user management tool
 - wrote steamui.dll / binary patching code with wildcard bytes
+- implemented binary signature generation and replacement in steam client files
 - created network managing class as a backbone for each server
 - implemented thread manager
 - implemented escape watcher for shutting down gracefully
@@ -59,11 +64,18 @@ ben:
 - implemented retail 2004 tracker code
 - implemented beta 1 tracker code
 - implemented database support into blob manager
-- implemented settings configurator into blob manager
 - added steamworks contenttool neutering
 - extended FTP to use accounts for the Steamworks Content tool uploading functionality
-- implemented the original filesystem directory watcher for on-the-go gcf neutering
-- implemented XML custom blob support
+- implemented the original filesystem directory watcher (watchdog) for manual filesystem blob changes
+- implemented BillySB's XML custom blob support
+
+ymgve:
+- original beta 1 steam server code
+- original beta 2 steam server code
+- original beta 2 tracker server code
+- original gcf to storage converter
+- created original SDK storage to STMServer storage converter script
+- supplied most of the original files
 
 billy:
 - blobulator code / json custom blob code
@@ -72,6 +84,7 @@ billy:
 - created the wonderful blob manager for selecting the correctly matching blobs
 - testing the server in a linux enviroment
 - fixed linux functionality
+- created XML blob parsing code
 
 XJR9000:
 - ideas
@@ -86,7 +99,6 @@ XJR9000:
 - testing
 - contributed code and fixes to the emualtor
 - created Steam installer remakes
-- supplied most of the original files
 - fixed 2005 storefront and screenshots
 - remade missing 2004 storefront screenshots and pages
 - created 99 custom pre-2006 secondblobs
@@ -95,16 +107,6 @@ XJR9000:
 - created Neuter Appinfo.exe
 - created Update 2005 Storefront CDR.exe
 - put together the preconfigured emulator package
-
-dormine:
-- original steam server emulator code
-
-ymgve:
-- original beta 1 steam server code
-- original beta 2 steam server code
-- original beta 2 tracker server code
-- original gcf to storage converter
-- created original SDK storage to STMServer storage converter script
 
 valvepython github guy:
 - clientmsg parsing code
@@ -129,8 +131,12 @@ steamCooker:
 - Giving the team a LOT of helpful code and guidance
 
 tane:
-- modified dormine emulator
-- implemented new storage type
+- figured out storage update code
+- implemented new storage type into dormine's emulator
 
 GenoKirby
 - Provided assistance with the subscriber database
+
+ValvePython
+- Developed encryption routines which are used for CM encryption
+

@@ -1,15 +1,32 @@
 import logging
+import os
 import threading
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 import time
 
 import globalvars
-import utilities.socket as emu_socket
-from listmanagers import dirlistmanager
-from listmanagers.serverlist_utilities import send_heartbeat
+import utilities.impsocket as emu_socket
+from servers.managers import dirlistmanager
+from servers.managers.serverlist_utilities import send_heartbeat
 
 # Global variables to track incoming and outgoing data size
 incoming_data_size = 0
 outgoing_data_size = 0
+# Server types that should not be added to the directory server
+NO_DIR_ENTRY_SERVER_TYPES = {
+    "",
+    "masterdirserver",
+    "ContentServer",
+    "ClientUpdateServer",
+    "VTTServer",
+    "Beta1_AuthServer",
+    "CafeServer",
+    "CMServerUDP_27014",
+    "CMServerUDP_27017",
+    "CMServerTCP_27014",
+    "CMServerTCP_27017",
+}
 
 
 # log = logging.getLogger("NetHandler")
@@ -19,12 +36,12 @@ class NetworkHandler(threading.Thread):
 
     # global manager
     def __init__(self, in_socket, in_config, port, server_type = ""):
-
-        threading.Thread.__init__(self)
+        super().__init__()
         self.socket = in_socket
         self.config = in_config
         self._stop_event = threading.Event()  # Add an event to signal thread stopping
         self.port = port
+        self.server_type = server_type
         # Initialize the logger with server_type if provided, otherwise use a default name
         if server_type:
             self.log = logging.getLogger(server_type)
@@ -34,28 +51,9 @@ class NetworkHandler(threading.Thread):
         globalvars.servers.append(self)
         self.running = True
 
-        no_dir_entry_server_types = {
-                "",
-                "masterdirserver",
-                "ContentServer",
-                "ClientUpdateServer",
-                "VTTServer",
-                "Beta1_AuthServer",
-                "CafeServer",
-                "CMServerUDP_27014",
-                "CMServerUDP_27017",
-                "CMServerTCP_27014",
-                "CMServerTCP_27017",
-        }
-
-        if server_type in no_dir_entry_server_types:
-            pass
-        else:
-            self.server_type = server_type
-            if globalvars.public_ip == "0.0.0.0":
-                server_ip = globalvars.server_ip_b
-            else:
-                server_ip = globalvars.public_ip_b
+        if server_type not in NO_DIR_ENTRY_SERVER_TYPES:
+            # Choose which IP to advertise based on public_ip setting.
+            server_ip = globalvars.server_ip_b if globalvars.public_ip == "0.0.0.0" else globalvars.public_ip_b
             self.server_info = {
                     "wan_ip":     server_ip,
                     "lan_ip":     globalvars.server_ip_b,
@@ -71,14 +69,25 @@ class NetworkHandler(threading.Thread):
                 if addserver != -1:
                     self.log.debug("Server Added to Directory Server List: " + self.server_type)
                 else:
-                    self.log.error("Server Not added to list! Please contact support.")
+                    self.log_with_server("Server Not added to list! Please contact support.")
                     return
+
+    def _get_server_key(self):
+        for key, value in self.config.items():
+            if str(value) == str(self.port):
+                return key
+        return "unknown"
+
+    def log_with_server(self, message, level="error", **kwargs):
+        server_key = self._get_server_key()
+        log_method = getattr(self.log, level, self.log.error)
+        log_method(f"{message} [server {server_key} port {self.port}]", **kwargs)
 
     def run(self):
         try:
             super().run()  # Call the parent run method which contains the main loop
-        except Exception as e:
-            self.log.error(f"{self.__class__.__name__} Exception Occurred:", exc_info = True)
+        except Exception:
+            self.log_with_server(f"{self.__class__.__name__} Exception Occurred:", exc_info=True)
 
     def stop(self):
         """Stop the server gracefully."""
@@ -87,12 +96,11 @@ class NetworkHandler(threading.Thread):
         self.running = False
 
     def start_heartbeat_thread(self):
-        thread2 = threading.Thread(target = self.heartbeat_thread)
-        thread2.daemon = True
-        thread2.start()
+        heartbeat_thread = threading.Thread(target=self.heartbeat_thread, daemon=True)
+        heartbeat_thread.start()
 
     def heartbeat_thread(self):
-        while True:
+        while self.running:
             send_heartbeat(self.server_info)
             time.sleep(1800)  # 30 minutes
 
@@ -111,29 +119,46 @@ class NetworkHandler(threading.Thread):
 
     def cleanup(self):
         """Generic cleanup routine"""
+        self.socket.is_closed = True
         self.log.info(f"Cleaning up {self.server_type} server on port {self.port}")
         self.running = False
         if hasattr(self, 'socket'):
             self.socket.close()
         self.log.info(f"{self.server_type} server on port {self.port} cleaned up")
 
+    @staticmethod
+    def shutdown_all_pools():
+        """Shutdown all worker thread pools gracefully."""
+        # Shutdown UDP handler pool
+        if UDPNetworkHandler._worker_pool:
+            UDPNetworkHandler._worker_pool.shutdown(wait=False)
+            UDPNetworkHandler._worker_pool = None
+        # Shutdown CM UDP handler pool
+        if UDPNetworkHandlerCM._worker_pool:
+            UDPNetworkHandlerCM._worker_pool.shutdown(wait=False)
+            UDPNetworkHandlerCM._worker_pool = None
+
 
 class TCPNetworkHandler(NetworkHandler):
     def __init__(self, in_config, port, server_type = ""):
-        self.serversocket_tcp = emu_socket.ImpSocket()
-        self.serversocket_tcp.socket_type == "tcp"
-        NetworkHandler.__init__(self, self.serversocket_tcp, in_config, port, server_type)
+        disable_rate_limit_var=False
+
+        if server_type == "ContentServer":
+            disable_rate_limit_var=True
+
+        self.serversocket = emu_socket.ImpSocket(disable_rate_limit=disable_rate_limit_var)
+
+        NetworkHandler.__init__(self, self.serversocket, in_config, port, server_type)
         self.port = port
         self.config = in_config
         self.address = None
 
     def run(self):
-        self.serversocket_tcp.bind((globalvars.server_ip, int(self.port)))
-        self.serversocket_tcp.listen(5)
-
-        while True:
+        self.serversocket.bind((globalvars.server_ip, int(self.port)))
+        self.serversocket.listen(5)
+        while self.running and self.socket.is_closed is not True:
             try:
-                client_socket, client_address = self.serversocket_tcp.accept()
+                client_socket, client_address = self.serversocket.accept()
             except:
                 continue  # we ignore the attempted accept on closed socket
             if client_address is not None:
@@ -142,45 +167,99 @@ class TCPNetworkHandler(NetworkHandler):
 
 
 class UDPNetworkHandler(NetworkHandler):
+    # Class-level thread pool shared across all UDP handlers
+    _worker_pool = None
+    _pool_lock = threading.Lock()
+
+    @classmethod
+    def _get_worker_pool(cls):
+        """Get or create the shared worker thread pool."""
+        if cls._worker_pool is None:
+            with cls._pool_lock:
+                if cls._worker_pool is None:
+                    max_workers = min(16, (os.cpu_count() or 4) * 2)
+                    cls._worker_pool = ThreadPoolExecutor(
+                        max_workers=max_workers,
+                        thread_name_prefix="udp_worker"
+                    )
+        return cls._worker_pool
+
     def __init__(self, in_config, port, server_type = ""):
-        self.serversocket = emu_socket.ImpSocket("udp")
-        NetworkHandler.__init__(self, self.serversocket, in_config, port, server_type)
+        disable_rate_limit_var=False
+
+        if server_type == "ContentServer":
+            disable_rate_limit_var=True
+        self.serversocket = emu_socket.ImpSocket("udp", disable_rate_limit=disable_rate_limit_var)
+
+
+        super().__init__(self.serversocket, in_config, port, server_type)
         self.port = port
         self.config = in_config
+        self.worker_pool = self._get_worker_pool()
 
     def run(self):
         self.serversocket.bind((globalvars.server_ip, int(self.port)))
-        while True:
+        while self.running and self.socket.is_closed is not True:
             try:
                 data, address = self.serversocket.recvfrom(16384)
             except Exception as e:
+                time.sleep(0.1)
                 continue  # we ignore the 'attempted recv on closed socket
-
-            server_thread = threading.Thread(target = self.handle_client, args = (data, address))
-            server_thread.start()
+            if address is not None:
+                # Submit to thread pool instead of spawning threads
+                try:
+                    self.worker_pool.submit(self.handle_client, data, address)
+                except Exception as e:
+                    self.log.error(f"Failed to submit to worker pool: {e}")
 
     def handle_client(self, data, address):
         raise NotImplementedError("handle_client method must be implemented in derived classes")
 
 
 class UDPNetworkHandlerCM(NetworkHandler):
+    # Class-level thread pool shared across all CM UDP handlers
+    # This prevents unbounded thread spawning that causes instability with 3+ clients
+    _worker_pool = None
+    _pool_lock = threading.Lock()
+
+    @classmethod
+    def _get_worker_pool(cls):
+        """Get or create the shared worker thread pool."""
+        if cls._worker_pool is None:
+            with cls._pool_lock:
+                if cls._worker_pool is None:  # Double-check after acquiring lock
+                    # Pool size: 4x CPU cores, capped at 32 threads
+                    max_workers = min(32, (os.cpu_count() or 4) * 4)
+                    cls._worker_pool = ThreadPoolExecutor(
+                        max_workers=max_workers,
+                        thread_name_prefix="cm_udp_worker"
+                    )
+        return cls._worker_pool
+
     def __init__(self, in_config, port, server_type = ""):
         self.serversocket = emu_socket.ImpSocket("udp")
-        NetworkHandler.__init__(self, self.serversocket, in_config, port, server_type)
+        super().__init__(self.serversocket, in_config, port, server_type)
         self.port = port
         self.config = in_config
         self.packet_buffer = {}
+        # Get reference to shared worker pool
+        self.worker_pool = self._get_worker_pool()
 
     def run(self):
         self.serversocket.bind((self.config['server_ip'], int(self.port)))
-        while True:
+        while self.running:
             try:
                 data, address = self.serversocket.recvfrom(16384)
             except Exception as e:
+                time.sleep(0.1)
                 continue  # we ignore the 'attempted recv on closed socket
             if address is not None:
-                server_thread = threading.Thread(target = self.process_packet, args = (data, address))
-                server_thread.start()
+                # Submit to thread pool instead of spawning new thread
+                # This caps thread count and prevents thread explosion
+                try:
+                    self.worker_pool.submit(self.process_packet, data, address)
+                except Exception as e:
+                    self.log.error(f"Failed to submit packet to worker pool: {e}")
 
     def process_packet(self, data: bytes, address):
         from steam3.cm_packet_utils import CMPacket
@@ -228,11 +307,15 @@ class UDPNetworkHandlerCM(NetworkHandler):
 
 
 class TCPNetworkHandlerCM(NetworkHandler):
+    # Class-level dictionary to track connection attempts
+    connection_attempts = defaultdict(deque)
+    attempts_lock = threading.Lock()  # Lock for thread safety
+    blacklist_log_cache = defaultdict(float)  # Tracks last log time for each blacklisted IP
+
     def __init__(self, in_config, port, server_type = ""):
         # Initialize TCP socket instead of UDP
-        self.serversocket_tcp = emu_socket.ImpSocket()
-        self.serversocket = self.serversocket_tcp
-        NetworkHandler.__init__(self, self.serversocket_tcp, in_config, port, server_type)
+        self.serversocket = emu_socket.ImpSocket()
+        super().__init__(self.serversocket, in_config, port, server_type)
         self.port = port
         self.config = in_config
         self.address = None
@@ -240,38 +323,36 @@ class TCPNetworkHandlerCM(NetworkHandler):
 
     def run(self):
         # Bind and start listening for TCP connections
-        self.serversocket_tcp.bind((self.config['server_ip'], int(self.port)))
-        self.serversocket_tcp.listen(5)  # Listen for incoming connections
+        self.serversocket.bind((self.config['server_ip'], int(self.port)))
+        self.serversocket.listen(5)  # Listen for incoming connections
 
-        while True:
+        while self.running:
             try:
-                client_socket, client_address = self.serversocket_tcp.accept()  # Accept incoming connection
+                client_socket, client_address = self.serversocket.accept()  # Accept incoming connection
             except Exception as e:
                 continue  # Ignore errors while accepting new connections
 
             if client_address is not None:
-                server_thread = threading.Thread(target = self.handle_client_connection, args = (client_socket, client_address))
+                server_thread = threading.Thread(target=self.handle_client_connection, args=(client_socket, client_address), daemon=True)
                 server_thread.start()
 
     def handle_client_connection(self, client_socket, address):
         self.packet_buffer[address] = b''
-        self.log.info(f"Accepted connection from {address}")
 
-        while True:
-            try:
-                #data = client_socket.recv(16384)
-                """if not data:
-                    self.log.info(f"Connection closed by {address}")
-                    break"""
-                self.handle_client(client_socket, address)
-            except Exception as e:
-                self.log.error(f"Error receiving data from {address}: {e}")
-                break
+        # Wrap the accepted socket in an ImpSocket for enhanced error handling.
+        imp_sock = emu_socket.ImpSocket(client_socket)
+        imp_sock.address = address
+
+        self.log.info(f"Accepted connection from {address}")
+        # Just call once
+        self.handle_client(client_socket, address)
+        # Once handle_client returns, the connection is closed
         client_socket.close()
         self.log.info(f"Connection to {address} closed")
 
-    def process_packet(self, data, address, client_socket):
-        """ Process incoming data and handle split TCP packets. """
+
+    """def process_packet(self, data, address, client_socket):
+        
         # Add received data to buffer
         self.packet_buffer[address] += data
 
@@ -289,4 +370,4 @@ class TCPNetworkHandlerCM(NetworkHandler):
                 self.handle_client(complete_packet, address)
 
                 # Save any leftover data for future packets
-                self.packet_buffer[address] = remaining_data
+                self.packet_buffer[address] = remaining_data"""

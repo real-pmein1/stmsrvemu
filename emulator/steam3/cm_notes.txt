@@ -1,0 +1,490 @@
+2008/11/06 - license / receipt changed to include line items. 49/685?
+2009/08/15 file list response  changes steam/ui pkgs: 54/932
+
+protocol versions:
+65546 =
+65547 =
+65548 =
+65549 =
+65550 = ui_337: no username in login w/credentials | before steamui_357 (community update) !!**invites work OK**!!
+65551 = community update (357+), machineID added to logonwith_credentials packet, !!**invites stop working**!!
+65552 =
+65553 = 
+65554 = 
+65555 = no machineID, lineitems added to receipts (49/685)  2008/11/06 
+65556 =
+65557 = UFS filelist response message changes format.
+65558 = 09/2009...
+65559 =
+65560 =
+65561 = no password OR hashed password
+65562 =
+65563 =
+65564 =
+65565 = protobuf is used
+
+
+packets:
+MsgClientVACBanStatus2 - (list) contains uint - first appid, uint - last appid, uint - acknowledged (should always be 1?)
+systemIM - only contains string prior to 2006
+MsgClientServerList - contains uint server type, uint ip, uint16 (2bytes) port
+pct packet deals with sending the public key to the client (possibly, seems to only be used in 2008+ clients)( Do not have any actual captures of this packet set to anything other than \x00)
+regular logon - contains: variable len data, string, 0 uint, 0 uint, string, client version as uint
+multi messages seem to always start: \x01\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00
+when compressed: \x01\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01\x00\x00\x00
+
+machine id definitions:
+mac is FF2
+machine guid is BB3
+bios serial is BBB
+custom data is 333
+diskid is 3B3
+
+the crc field in the user game stats packets is client-generated.  it is stored on the server and sent to the client only for the client to check against.
+
+user game stat information:
+- stat bin files changed sometime between 11/2009 and 1/2010, this leads me to believe that the change happened between steamui 1045-1060
+
+
+news:
+newsupdate - contains: loops(news type < 2, 1 byte uint, variable length data)
+   - news types: 4 - steam client update news
+        - current bootstrap version
+        - current client version
+        - reload cddb/cdr
+   - 1 - steam news
+        - newsid
+        - havesubid
+        - nothavesubid
+        - haveappid
+        - nothaveappid
+        - haveappidinstalled
+        - haveplayed appid
+   - 0 - app news
+        - appid
+        - newsid
+   - > 4 = unknown news type
+   // Enum for the types of news push items you can get
+enum ENewsUpdateType
+{
+	k_EAppNews = 0,	 // news about a particular app
+	k_ESteamAds = 1, // Marketing messages // in 2005-early 2006 it contains just a string up to 255 bytes
+	k_ESteamNews = 2, // EJ's corner and the like
+	k_ECDDBUpdate = 3, // backend has a new CDDB for you to load
+	k_EClientUpdate = 4,	// new version of the steam client is available
+};
+
+vacban 1 packet:
+vac ban status - contains: first appid uint, last appid uint
+    - goldsrc ban: first appid = 10 last = appid 80
+    - src ban: first = 220, last = 320
+
+STEAMID NOTES:
+- Clans ALWAYS have an Instance of 0
+- Individuals ALWAYS have an Instance of 1 (i believe this is how many instances (different users can use) a steamid has)
+
+extended header notes:
+- between 01/10/2008 and 03/19/2008 the header was changed from the 16 byte header to the 36 byte extended header
+
+appownership ticket notes:
+- sometime between 09/06/2008 (46/649) and 07/02/2009 (54/894) the ticket jumped from v2 to v4
+- steamui 977 uses version 3 (how is this possible?)
+
+logon response notes:
+- between 02/03/2006 (14/95) and 02/07/2006 (14/111) the server realtime field was added
+- between 01/30/2007 (21/273) and 07/28/2007 (36/336) the account flags field was added, probably at or after steamui v333
+
+game connect tokens notes:
+- some time after 09/03/2008 (46/624) a 4 byte integer (maximum tokens) is added (tin sets it to 10)
+
+persona state notes:
+- sometime around 08/2008 the default persona response contained Request Persona Flag: ['status', 'playerName', 'queryPort', 'sourceId', 'presence', 'lastSeen', 'extraInfo']
+- sometime in mid 2009 (01/28/2010 for sure) the CM IP portion of the presence section was removed
+
+
+priority flags:
+enum NetDatagramPacketFlags
+{
+	NetDatagramPacketFlag_none=0,
+	NetDatagramPacketFlag_sequenceError = 1,	// NACKSubsequentPkts
+	NetDatagramPacketFlag_highPriority = 2,
+	NetDatagramPacketFlag_lowPriority = 4
+};
+
+"""//-----------------------------------------------------------------------------
+// Purpose: flags for enumerating friends list, or quickly checking a the relationship between users
+//-----------------------------------------------------------------------------
+enum EFriendFlags
+{
+	k_EFriendFlagNone			= 0x00,
+	k_EFriendFlagBlocked		= 0x01,
+	k_EFriendFlagFriendshipRequested	= 0x02,
+	k_EFriendFlagImmediate		= 0x04,			// "regular" friend
+	k_EFriendFlagClanMember		= 0x08,
+	k_EFriendFlagOnGameServer	= 0x10,
+	// k_EFriendFlagHasPlayedWith	= 0x20,	// not currently used
+	// k_EFriendFlagFriendOfFriend	= 0x40, // not currently used
+	k_EFriendFlagRequestingFriendship = 0x80,
+	k_EFriendFlagRequestingInfo = 0x100,
+	k_EFriendFlagIgnored		= 0x200,
+	k_EFriendFlagIgnoredFriend	= 0x400,
+	k_EFriendFlagSuggested = 0x800, // not used
+	k_EFriendFlagChatMember = 0x1000,
+	k_EFriendFlagAll			= 0xFFFF,
+};
+
+// maximum length of friend group name (not including terminating nul!)
+const int k_cchMaxFriendGroupName = 64;
+
+// maximum number of groups a single user is allowed
+const int k_cFriendGroupLimit = 100;
+
+// friends group identifier type
+typedef int16 FriendsGroupID_t;
+
+// invalid friends group identifier constant
+const FriendsGroupID_t k_FriendsGroupID_Invalid = -1;
+
+const int k_nMaxFriends = 250;
+const int k_nMaxPendingInvitations = 48;
+
+// maximum length of friend group name (not including terminating null!)
+const int k_cchMaxFriendsGroupName = 64;
+
+// maximum number of groups a single user is allowed
+const int k_cFriendsGroupLimit = 100;
+
+const int k_cEnumerateFollowersMax = 50;
+
+// max size on chat messages
+const uint32 k_cchFriendChatMsgMax = 0x3000;
+
+"""
+steamui v341+:
+outer-packet packetid meanings:
+ switch ( header.m_eSNetMsg )
+    {
+      case 1u:
+        if ( this->m_pSNetListenSocket )
+          CClientNetworkingAPI::OnReceiveConnectMsg(
+            this->m_pClientNetworkingAPI,
+            this->m_pSNetListenSocket,
+            &header,
+            msg,
+            from);
+        break;
+      case 2u:
+        CClientNetworkingAPI::OnReceiveChallengeMsg(this->m_pClientNetworkingAPI, &header, msg, from);
+        break;
+      case 3u:
+        if ( this->m_pSNetListenSocket )
+          CClientNetworkingAPI::OnReceiveConnectResponseMsg(
+            this->m_pClientNetworkingAPI,
+            this->m_pSNetListenSocket,
+            &header,
+            msg,
+            from);
+        break;
+      case 4u:
+        CClientNetworkingAPI::OnReceiveConnectSuccessMsg(this->m_pClientNetworkingAPI, &header, msg, from);
+        break;
+      case 5u:
+        CClientNetworkingAPI::OnReceiveDataMsg(this->m_pClientNetworkingAPI, &header, msg, from);
+        break;
+      case 6u:
+        CClientNetworkingAPI::OnReceiveDisconnectMsg(this->m_pClientNetworkingAPI, &header, msg, from);
+        break;
+      default:
+        return 1;
+    }
+
+
+    friends (each friend in list uses this struct) struct:
+    struct __cppobj ClFriend_t_0
+{
+  CSteamID m_SteamID;
+  bool m_bIsMe;
+  __attribute__((packed)) __attribute__((aligned(1))) CGameID m_nGameID;
+  CUtlString m_sGameExtraInfo;
+  uint32 m_unGameServerIP;
+  uint16 m_usGameServerPort;
+  uint16 m_usQueryPort;
+  CSteamID m_steamIDLobby;
+  bool m_bAvatarReceived;
+  int m_iChatIDHistoryStart;
+  uint32 m_nIPAddressCM;
+  CSHA m_shaAvatar;
+  int m_iAvatarImageSmall;
+  int m_iAvatarImageMedium;
+  RTime32 m_rtime32LastLogoff;
+  RTime32 m_rtime32LastLogon;
+  int m_nChangeFlags;
+  int m_cClans;
+  int m_nFriendFlags;
+  int m_nRefs;
+  CUtlVector<ClFriendChatMsg_t,CUtlMemory<ClFriendChatMsg_t> > m_vecChatMsgs;
+  CUtlBuffer m_bufSerializedHistory;
+  RTime32 m_rtime32LastPlayTime;
+  RTime32 m_rtime32LastPlayTimeEnd;
+  EPersonaState m_ePersonaState;
+  CUtlString m_sPersonaName;
+  CUtlString m_sAlias;
+  CUtlString m_sDisplayName;
+  EFriendRelationship m_eFriendRelationship;
+  CUserFriends *m_pUserFriends;
+};
+
+stunserver port 3478
+
+
+find vttcert packet
+everything is 4 byte int32 except actual key:
+  cBadCertFound = 0;
+  cCertFound = 0;
+  bFound = 0;
+  k_cubVTTCertPublicKey = 140;
+  CClientMsg<MsgClientVTTCert_t>::CClientMsg(&clientMsg, EMsg::k_EMsgClientVTTCert, (this + 44), *(this + 3), 0x40u);
+  v1 = CClientMsg<MsgClientVTTCert_t>::Body(&clientMsg);
+  v1->m_cVTTCertTotal = cCertFound;
+  v2 = CClientMsg<MsgClientVTTCert_t>::Body(&clientMsg);
+  v2->m_cVTTCertTotalBad = cBadCertFound;
+  v3 = CClientMsg<MsgClientVTTCert_t>::Body(&clientMsg);
+  v3->m_cVTTCert = bFound;
+  v4 = CClientMsg<MsgClientVTTCert_t>::Body(&clientMsg);
+  if ( bFound )
+    v5 = 140;
+  else
+    v5 = 0;
+  v4->m_cubVTTCert = v5;
+  if ( bFound )
+    CMsgBase_t<ExtendedClientMsgHdr_t>::AddVariableLenData(&clientMsg, rgubRSAPublicKey, 0x8Cu);
+  CCMInterface::SendMsgToCM(this, &clientMsg);
+  CClientMsg<MsgClientVTTCert_t>::~CClientMsg(&clientMsg);
+
+  required fields for reedemable guestpasses:
+
+    *pgidGuestPassID = CGuestPassInfo::GetGID(passInfo);
+  *pnPackageID = CGuestPassInfo::GetPackageID(passInfo);
+  *pRTime32Created = CGuestPassInfo::GetTimeCreated(passInfo);
+  *pRTime32Expiration = CGuestPassInfo::GetTimeExpiration(passInfo);
+  *pRTime32Sent = CGuestPassInfo::GetTimeSent(passInfo);
+  *pRTime32Redeemed = CGuestPassInfo::GetTimeRedeemed(passInfo);
+
+  required data for sendable guestpasses:
+
+    *pgidGuestPassID = CGuestPassInfo::GetGID(passInfo);
+  *pnPackageID = CGuestPassInfo::GetPackageID(passInfo);
+  *pRTime32Created = CGuestPassInfo::GetTimeCreated(passInfo);
+  *pRTime32Expiration = CGuestPassInfo::GetTimeExpiration(passInfo);
+  *pRTime32Sent = CGuestPassInfo::GetTimeSent(passInfo);
+  *pRTime32Redeemed = CGuestPassInfo::GetTimeRedeemed(passInfo);
+  RecipientAddress = CGuestPassInfo::GetRecipientAddress(passInfo);
+
+
+  sig patching code:
+  friendsui.dll: 77 00 00 83 C4 04 84 C0 74 -> 77 00 00 83 C4 04 84 C0 74
+  serverbrowser.dll: 4C 00 00 83 C4 04 84 C0 74 -> 4C 00 00 83 C4 04 84 C0 75
+
+
+  enum EAccountType : __int32
+  {
+    EAccountType::k_EAccountTypeInvalid = 0x0,
+    EAccountType::k_EAccountTypeIndividual = 0x1,
+    EAccountType::k_EAccountTypeMultiseat = 0x2,
+    EAccountType::k_EAccountTypeGameServer = 0x3,
+    EAccountType::k_EAccountTypeAnonGameServer = 0x4,
+    EAccountType::k_EAccountTypePending = 0x5,
+    EAccountType::k_EAccountTypeContentServer = 0x6,
+    EAccountType::k_EAccountTypeClan = 0x7,
+    EAccountType::k_EAccountTypeChat = 0x8,
+    EAccountType::k_EAccountTypeConsoleUser = 0x9,
+    EAccountType::k_EAccountTypeAnonUser = 0xA,
+    EAccountType::k_EAccountTypeMax = 0xB,
+  };
+enum EFriendFlags : __int32
+{
+  EFriendFlags::k_EFriendFlagNone = 0x0,
+  EFriendFlags::k_EFriendFlagBlocked = 0x1,
+  EFriendFlags::k_EFriendFlagFriendshipRequested = 0x2,
+  EFriendFlags::k_EFriendFlagImmediate = 0x4,
+  EFriendFlags::k_EFriendFlagClanMember = 0x8,
+  EFriendFlags::k_EFriendFlagOnGameServer = 0x10,
+  EFriendFlags::k_EFriendFlagRequestingFriendship = 0x80,
+  EFriendFlags::k_EFriendFlagRequestingInfo = 0x100,
+  EFriendFlags::k_EFriendFlagIgnored = 0x200,
+  EFriendFlags::k_EFriendFlagIgnoredFriend = 0x400,
+  EFriendFlags::k_EFriendFlagAll = 0xFFFF,
+};
+enum EChatFlags : __int32
+{
+  EChatFlags::k_EChatFlagLocked = 0x1,
+  EChatFlags::k_EChatFlagInvisibleToFriends = 0x2,
+  EChatFlags::k_EChatFlagModerated = 0x4,
+  EChatFlags::k_EChatFlagUnjoinable = 0x8,
+};
+enum CGameID::EGameIDType : __int32
+{
+  CGameID::EGameIDType::k_EGameIDTypeApp = 0x0,
+  CGameID::EGameIDType::k_EGameIDTypeGameMod = 0x1,
+  CGameID::EGameIDType::k_EGameIDTypeShortcut = 0x2,
+  CGameID::EGameIDType::k_EGameIDTypeP2P = 0x3,
+};
+enum EVACBan : __int32
+{
+  EVACBan::k_EVACBanGoldsrc = 0x0,
+  EVACBan::k_EVACBanSource = 0x1,
+  EVACBan::k_EVACBanDayOfDefeatSource = 0x2,
+};
+enum EClientPersonaStateFlag : __int32
+{
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagStatus = 0x1,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagPlayerName = 0x2,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagQueryPort = 0x4,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagSourceID = 0x8,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagPresence = 0x10,
+  EClientPersonaStateFlag::k_EClientPersonaStateChatMetadata = 0x20,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagLastSeen = 0x40,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagClanInfo = 0x80,
+  EClientPersonaStateFlag::k_EClientPersonaStateGameExtraInfo = 0x100,
+  EClientPersonaStateFlag::k_EClientPersonaStateGameDataBlob = 0x200,
+  EClientPersonaStateFlag::k_EClientPersonaStateFlagClanTag = 0x400,
+};
+enum EClanAction : __int32
+{
+  EClanAction::k_EJoined = 0x1,
+  EClanAction::k_ELeft = 0x2,
+  EClanAction::k_EPromoted = 0x3,
+  EClanAction::k_EDemoted = 0x4,
+  EClanAction::k_EKicked = 0x5,
+  EClanAction::k_ECreated = 0x6,
+  EClanAction::k_EInvited = 0x7,
+  EClanAction::k_EEventCreated = 0x8,
+  EClanAction::k_EEventUpdated = 0x9,
+  EClanAction::k_EEventDeleted = 0xA,
+  EClanAction::k_EPermissionsChanged = 0xB,
+  EClanAction::k_EAnnouncementCreated = 0xC,
+  EClanAction::k_EAnnouncementUpdated = 0xD,
+  EClanAction::k_EAnnouncementDeleted = 0xE,
+  EClanAction::k_EPOTWChanged = 0xF,
+  EClanAction::k_ELinksChanged = 0x10,
+  EClanAction::k_EDetailsChanged = 0x11,
+  EClanAction::k_ESupportResetContent = 0x12,
+  EClanAction::k_ESupportLockedGroup = 0x13,
+  EClanAction::k_ESupportUnlockedGroup = 0x14,
+  EClanAction::k_ESupportChangedOwner = 0x15,
+  EClanAction::k_EMadePublic = 0x16,
+  EClanAction::k_EMadePrivate = 0x17,
+  EClanAction::k_ESupportDisabledGroup = 0x18,
+  EClanAction::k_EKickedChat = 0x19,
+  EClanAction::k_EBannedChat = 0x1A,
+  EClanAction::k_EUnBannedChat = 0x1B,
+  EClanAction::k_EHighestValidAction = 0x1C,
+};
+enum EClanAccountType : __int32
+{
+  EClanAccountType::k_EClanAccountTypePrivate = 0x0,
+  EClanAccountType::k_EClanAccountTypePublic = 0x1,
+  EClanAccountType::k_EClanAccountTypeLocked = 0x2,
+  EClanAccountType::k_EClanAccountTypeDisabled = 0x3,
+  EClanAccountType::k_EClanAccountTypeOfficial = 0x4,
+};
+enum EAccountFlags : __int32
+{
+  EAccountFlags::m_EAccountFlagNormalUser = 0x0,
+  EAccountFlags::k_EAccountFlagPersonaNameSet = 0x1,
+  EAccountFlags::k_EAccountFlagUnbannable = 0x2,
+  EAccountFlags::k_EAccountFlagPasswordSet = 0x4,
+  EAccountFlags::k_EAccountFlagSupport = 0x8,
+  EAccountFlags::k_EAccountFlagAdmin = 0x10,
+  EAccountFlags::k_EAccountFlagSupervisor = 0x20,
+  EAccountFlags::k_EAccountFlagAppEditor = 0x40,
+  EAccountFlags::k_EAccountFlagHWIDSet = 0x80,
+  EAccountFlags::k_EAccountFlagPersonalQASet = 0x100,
+  EAccountFlags::k_EAccountFlagVacBeta = 0x200,
+  EAccountFlags::k_EAccountFlagDebug = 0x400,
+  EAccountFlags::k_EAccountFlagDisabled = 0x800,
+  EAccountFlags::k_EAccountFlagLimitedUser = 0x1000,
+  EAccountFlags::k_EAccountFlagLimitedUserForce = 0x2000,
+  EAccountFlags::k_EAccountFlagEmailValidated = 0x4000,
+  EAccountFlags::k_EAccountFlagMarketingTreatment = 0x8000,
+  EAccountFlags::k_EAccountFlagOGGInviteOptOut = 0x10000,
+  EAccountFlags::k_EAccountFlagForcePasswordChange = 0x20000,
+  EAccountFlags::k_EAccountFlagForceEmailVerification = 0x40000,
+  EAccountFlags::k_EAccountFlagLogonExtraSecurity = 0x80000,
+  EAccountFlags::k_EAccountFlagLogonExtraSecurityDisabled = 0x100000,
+};
+enum EUFSFileFlags : __int32
+{
+  EUFSFileFlags::k_EUFSFileFlagsNone = 0x0,
+  EUFSFileFlags::k_EUFSFileFlagsAppendedSHA = 0x1,
+  EUFSFileFlags::k_eUFSFileFlagsMirroredNotStriped = 0x2,
+  EUFSFileFlags::k_EUFSFileFlagsForgottenByUser = 0x4,
+  EUFSFileFlags::k_EUFSFileFlagsDeletedByUser = 0x8,
+  EUFSFileFlags::k_EUFSFileFlagsPublic = 0x10,
+  EUFSFileFlags::k_EUFSFileFlagsFeatureLeaderboard = 0x20,
+  EUFSFileFlags::k_EUFSFileFlagsFeatureUCM = 0x40,
+  EUFSFileFlags::k_EUFSFileFlagsFeatureGC = 0x80,
+  EUFSFileFlags::k_EUFSFileFlagsMaskDereferencedByUser = 0xC,
+  EUFSFileFlags::k_EUFSFileFlagsMaskReferencedByFeature = 0xE0,
+};
+enum EUserNewsEventType : __int32
+{
+  EUserNewsEventType::k_EUserNewsEventType_FriendAdded = 0x1,
+  EUserNewsEventType::k_EUserNewsEventType_AchievementUnlocked = 0x2,
+  EUserNewsEventType::k_EUserNewsEventType_ReceivedNewGame = 0x3,
+  EUserNewsEventType::k_EUserNewsEventType_JoinedGroup = 0x4,
+  EUserNewsEventType::k_EUserNewsEventType_CommentByMe = 0x5,
+  EUserNewsEventType::k_EUserNewsEventType_FriendRemoved = 0x6,
+  EUserNewsEventType::k_EUserNewsEventType_GroupCreated = 0x7,
+  EUserNewsEventType::k_EUserNewsEventType_CommentOnMe = 0x8,
+  EUserNewsEventType::k_EUserNewsEventType_AddedGameToWishlist = 0x9,
+  EUserNewsEventType::k_EUserNewsEventType_RecommendedGame = 0xA,
+  EUserNewsEventType::k_EUserNewsEventType_ScreenshotPublished = 0xB,
+  EUserNewsEventType::k_EUserNewsEventType_UnlockedGroupAchievement = 0x3E9,
+  EUserNewsEventType::k_EUserNewsEventType_PostedAnnouncement = 0x3EA,
+  EUserNewsEventType::k_EUserNewsEventType_ScheduledEvent = 0x3EB,
+  EUserNewsEventType::k_EUserNewsEventType_SelectedNewPOTW = 0x3EC,
+  EUserNewsEventType::k_EUserNewsEventType_PromotedNewAdmin = 0x3ED,
+  EUserNewsEventType::k_EUserNewsEventType_ReceivesGroupComment = 0x3EE,
+};
+enum EHardwarePromoType : __int32
+{
+  EHardwarePromoType::k_EHardwarePromoTypeNone = 0x0,
+  EHardwarePromoType::k_EHardwarePromoTypeIntelKentsfield = 0x1,
+  EHardwarePromoType::k_EHardwarePromoTypeATICard = 0x2,
+  EHardwarePromoType::k_EHardwarePromoTypeNVIDIACard = 0x3,
+  EHardwarePromoType::k_EHardwarePromoTypeNBA2K9 = 0x4,
+  EHardwarePromoType::k_EHardwarePromoTypeMLBFOM = 0x5,
+};
+enum ELobbyType : __int32
+{
+  ELobbyType::k_ELobbyTypePrivate = 0x0,
+  ELobbyType::k_ELobbyTypeFriendsOnly = 0x1,
+  ELobbyType::k_ELobbyTypePublic = 0x2,
+  ELobbyType::k_ELobbyTypeInvisible = 0x3,
+};
+enum EMarketingMessageFlags : __int32
+{
+  EMarketingMessageFlags::k_EMarketingMessageFlagsNone = 0x0,
+  EMarketingMessageFlags::k_EMarketingMessageFlagsHighPriority = 0x1,
+  EMarketingMessageFlags::k_EMarketingMessageFlagsPlatformWindows = 0x2,
+  EMarketingMessageFlags::k_EMarketingMessageFlagsPlatformMac = 0x4,
+  EMarketingMessageFlags::k_EMarketingMessageFlagsPlatformRestrictions = 0x6,
+};
+struct __attribute__((packed)) __attribute__((aligned(1))) MsgClientStoreUserStats2_Deprecated_t
+{
+  uint64 m_ulGameID;
+  uint64 m_ulSteamIDSettor;
+  uint64 m_ulSteamIDSettee;
+  CRC32_t m_crcStats;
+  bool m_bExplicitReset;
+  int32 m_cStats;
+};
+enum ENewsUpdateType : __int32
+{
+  ENewsUpdateType::k_EAppNews = 0x0,
+  ENewsUpdateType::k_ESteamAds = 0x1,
+  ENewsUpdateType::k_ESteamNews = 0x2,
+  ENewsUpdateType::k_ECDDBUpdate = 0x3,
+  ENewsUpdateType::k_EClientUpdate = 0x4,
+};

@@ -1,6 +1,5 @@
-import struct
 import socket
-from io import BytesIO
+import struct
 
 class MsgClientCMList:
     def __init__(self):
@@ -14,7 +13,8 @@ class MsgClientCMList:
         """
         if isinstance(ip, str):
             # Convert IP address string to bytes using inet_aton (convert dotted-decimal string to 4-byte format)
-            self.ip_addresses.append(socket.inet_aton(ip))
+            ip_bytes = socket.inet_aton(ip)
+            self.ip_addresses.append(ip_bytes)
         elif isinstance(ip, bytes):
             if len(ip) != 4:
                 raise ValueError("IP address bytes must be exactly 4 bytes.")
@@ -27,18 +27,40 @@ class MsgClientCMList:
         Serializes the buffer with a 4-byte server count followed by the list of IP addresses in big-endian format.
         :return: A bytes object representing the serialized buffer.
         """
-        stream = BytesIO()
+        # Create the buffer as a byte string
+        buffer = b""
 
         # Write the 4-byte server count (number of IP addresses)
         server_count = len(self.ip_addresses)
-        stream.write(struct.pack('>I', server_count))  # Big-endian 4-byte integer
+        buffer += struct.pack('<I', server_count)  # Big-endian 4-byte integer
 
-        # Write each IP address as 4 bytes in big-endian order
+        # Append each IP address as 4 bytes in big-endian order
         for ip_bytes in self.ip_addresses:
-            stream.write(ip_bytes)
+            buffer += ip_bytes
 
-        # Return the serialized buffer
-        return stream.getvalue()
+        return buffer
+
+    def deserialize(self, data: bytes):
+        """
+        Deserialize data from a byte string, reading a 4-byte server count followed by IP addresses.
+        :param data: Byte string containing serialized data.
+        """
+        offset = 0
+
+        # Read the 4-byte server count
+        server_count, = struct.unpack('<I', data[offset:offset + 4])
+        offset += 4
+
+        # Clear existing addresses
+        self.ip_addresses = []
+
+        # Read each IP address (4 bytes per address)
+        for _ in range(server_count):
+            ip_bytes = data[offset:offset + 4]
+            if len(ip_bytes) != 4:
+                raise ValueError("Invalid IP address data in buffer.")
+            self.ip_addresses.append(ip_bytes)
+            offset += 4
 
 """# Example Usage:
 msg = MsgClientCMList()

@@ -3,6 +3,10 @@ from datetime import datetime
 
 
 class GameConnectToken:
+    # Size constants for different token formats
+    SIZE = 20  # Full token: uint64 token + uint64 steamGlobalId + uint32 timestamp
+    SIZE_DEPRECATED = 16  # Deprecated format: uint64 token + uint64 steamGlobalId (no timestamp)
+
     def __init__(self, token = b'', steamGlobalId= 0, timestamp = None):
         self.token = token
         self.steamGlobalId = steamGlobalId

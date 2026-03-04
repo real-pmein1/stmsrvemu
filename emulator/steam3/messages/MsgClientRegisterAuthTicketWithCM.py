@@ -1,6 +1,9 @@
+import logging
 import struct
 
 from steam3.Types.Objects.AppOwnershipTicket import Steam3AppOwnershipTicket
+
+log = logging.getLogger("MsgRegisterAuthTicket")
 
 
 class MsgClientRegisterAuthTicketWithCM:
@@ -17,19 +20,31 @@ class MsgClientRegisterAuthTicketWithCM:
         """
         try:
             offset = 0
+            total_len = len(byte_data)
+            log.debug(f"Deserializing auth ticket message: {total_len} bytes")
 
             # 1. Header field: 5502 (4 bytes)
             self.header = struct.unpack_from("<I", byte_data, offset)[0]
             offset += 4
+            log.debug(f"Header: {self.header:#x}")
 
             # 2. Payload size (4 bytes)
             self.ticket_length = struct.unpack_from("<I", byte_data, offset)[0]
             offset += 4
+            log.debug(f"Outer ticket_length: {self.ticket_length}, remaining bytes: {total_len - offset}")
 
             # 3. Ticket data (variable size)
             if self.ticket_length > 0:
-                ticket_data = byte_data[offset:offset + self.ticket_length]
-                offset += self.ticket_length
+                available_bytes = total_len - offset
+                if self.ticket_length > available_bytes:
+                    log.warning(f"Outer ticket_length ({self.ticket_length}) exceeds available data ({available_bytes}). Using available data.")
+                    ticket_data = byte_data[offset:]
+                    offset = total_len
+                else:
+                    ticket_data = byte_data[offset:offset + self.ticket_length]
+                    offset += self.ticket_length
+
+                log.debug(f"Ticket data: {len(ticket_data)} bytes")
 
                 # Parse ticket using Steam3AppOwnershipTicket
                 self.parsed_ticket = Steam3AppOwnershipTicket()
@@ -38,8 +53,11 @@ class MsgClientRegisterAuthTicketWithCM:
             # 4. Cryptographic signature (remaining bytes)
             if offset < len(byte_data):
                 self.signature = byte_data[offset:]
+                log.debug(f"Signature: {len(self.signature)} bytes")
 
         except struct.error as e:
+            log.error(f"Struct error during deserialization: {e}")
+            log.error(f"Raw data ({len(byte_data)} bytes): {byte_data.hex()}")
             raise ValueError(f"Failed to parse byte data: {e}")
 
     def __str__(self):

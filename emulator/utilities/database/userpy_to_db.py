@@ -34,7 +34,6 @@ class UserRegistryProcessor:
         db_name = self.config['database']
         return create_engine(f'mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}')
 
-
     def process_user_registry(self, user_registry):
         session = self.Session()
         # Correct the use of autoload argument
@@ -328,7 +327,6 @@ class UserRegistryProcessor:
                     os.remove(os.path.join(root, file))
                     log.info(f"Deleted file: {os.path.join(root, file)}")
 
-
     def archive_folder(self, folder_path):
         self.delete_unwanted_files_and_folders(folder_path)
         # Create an archive of the folder
@@ -363,6 +361,7 @@ def convert_userpy():
 #if __name__ == "__main__":
 #    processor = UserRegistryProcessor()
 #    processor.process_files()
+
 def check_and_process_user_data():
     zip_path = "files/original_users.zip"
     user_dir_path = "files/users/"

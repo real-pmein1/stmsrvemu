@@ -1,11 +1,11 @@
 import struct
-import hashlib
 from typing import Optional, List, Any
 from io import BytesIO
 
 from Crypto.Signature import pkcs1_15
 from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA1
+from steam3.Types.crc32_utils import crc32_process_buffer
 
 # Constants for data types
 KVS_TYPE_KEY = 0
@@ -91,6 +91,33 @@ class RegistryKey(RegistryElement):
 
     def delete_key(self, name: str):
         self.elements = [e for e in self.elements if not (e.is_key() and e.name == name)]
+
+    def remove_value(self, name: str, first_only: bool = False) -> int:
+        """
+        Remove value(s) with the given name from this key.
+
+        Args:
+            name:        The value name to remove.
+            first_only:  If True, remove only the first matching value.
+                         If False (default), remove all matching values.
+
+        Returns:
+            The number of values removed.
+        """
+        removed = 0
+        new_elements: List[RegistryElement] = []
+        for e in self.elements:
+            if e.is_value() and e.name == name:
+                # drop it
+                if first_only and removed > 0:
+                    new_elements.append(e)  # keep subsequent duplicates if only removing first
+                else:
+                    removed += 1
+                    # do not append -> effectively removed
+            else:
+                new_elements.append(e)
+        self.elements = new_elements
+        return removed
 
     def get_value(self, name: str) -> Optional[RegistryValue]:
         elem = self.get_element(name)
@@ -195,8 +222,39 @@ class KeyValuesSystem(SteamRegistry):
     def __init__(self, case_sensitive_paths: bool = False, allow_duplicate_name: bool = False):
         super().__init__(case_sensitive_paths, allow_duplicate_name)
 
+    def get_crc32(self):
+        """Calculates the CRC32 checksum of the entire KeyValues structure."""
+        crc32 = 0xFFFFFFFF  # Initial CRC32 value
+        self._calculate_crc32(self.root, crc32)
+        return crc32 ^ 0xFFFFFFFF
+
+    def _calculate_crc32(self, current_key, crc32):
+        """Recursive helper to calculate CRC32."""
+        # Process the key name
+        crc32 = crc32_process_buffer(crc32, current_key.name.encode('utf-8'))
+        # Process each element
+        for element in current_key.get_elements():
+            if isinstance(element, RegistryKey):
+                crc32 = self._calculate_crc32(element, crc32)
+            elif isinstance(element, RegistryValue):
+                crc32 = crc32_process_buffer(crc32, element.name.encode('utf-8'))
+                if element.value_type == KVS_TYPE_STRING:
+                    crc32 = crc32_process_buffer(crc32, element.value.encode('utf-8'))
+                elif element.value_type == KVS_TYPE_INT:
+                    crc32 = crc32_process_buffer(crc32, struct.pack('<i', element.value))
+                elif element.value_type == KVS_TYPE_FLOAT:
+                    crc32 = crc32_process_buffer(crc32, struct.pack('<f', element.value))
+                # FIXME Add cases for other types as needed
+        return crc32
+
+    def verify_crc32(self, expected_crc32):
+        """Verifies the CRC32 checksum against the expected value."""
+        calculated_crc32 = self.get_crc32()
+        return calculated_crc32 == expected_crc32
+
     def serialize(self, out_stream: BytesIO):
         self.serialize_keys(out_stream, self.root)
+        return out_stream.getvalue()
 
     @staticmethod
     def serialize_keys(out_stream: BytesIO, key: RegistryKey):
@@ -254,8 +312,15 @@ class KeyValuesSystem(SteamRegistry):
             if not isinstance(value.value, int):
                 raise TypeError(f"Expected an integer for INT64 value {value.name}, got {type(value.value).__name__}")
             out_stream.write(struct.pack('<q', value.value))
+        elif value.value_type == KVS_TYPE_DWORDPREFIXED_STRING:
+            if not isinstance(value.value, str):
+                raise TypeError(f"Expected a string for DWORDPREFIXED_STRING value {value.name}, got {type(value.value).__name__}")
+            encoded_str = value.value.encode('utf-8') + b'\x00'
+            length = len(encoded_str)
+            out_stream.write(struct.pack('<I', length))
+            out_stream.write(encoded_str)
         else:
-            raise Exception(f"Unsupported data type: {value.value_type}")
+            raise Exception(f"Unsupported value type: {value.value_type}")
 
     def deserialize(self, input_stream: BytesIO):
         self.root = RegistryKey("root")
@@ -334,11 +399,35 @@ class KeyValuesSystem(SteamRegistry):
             if len(data) < 8:
                 raise EOFError("Unexpected end of data while reading INT64 value")
             return struct.unpack('<q', data)[0]
+        elif data_type == KVS_TYPE_DWORDPREFIXED_STRING:
+            # Read the length of the string (DWORD - 4 bytes)
+            length_bytes = input_stream.read(4)
+            if len(length_bytes) < 4:
+                raise EOFError("Unexpected end of data while reading DWORDPREFIXED_STRING length")
+            length = struct.unpack('<I', length_bytes)[0]
+            if length == 0:
+                return ''
+            # Read the string data based on the length
+            str_bytes = input_stream.read(length)
+            if len(str_bytes) < length:
+                raise EOFError("Unexpected end of data while reading DWORDPREFIXED_STRING value")
+            # Remove any trailing null bytes
+            return str_bytes.rstrip(b'\x00').decode('utf-8')
         else:
             raise Exception(f"Unsupported data type: {data_type}")
 
     def __repr__(self):
         return f"KeyValuesSystem(case_sensitive_paths={self.case_sensitive_paths}, allow_duplicate_name={self.allow_duplicate_name}, root={self.root})"
+
+def registry_key_to_dict(reg_key: RegistryKey) -> dict:
+    """Recursively convert a RegistryKey (and its elements) to a standard Python dict."""
+    result = {}
+    for element in reg_key.get_elements():
+        if element.is_key():
+            result[element.name] = registry_key_to_dict(element)
+        elif element.is_value():
+            result[element.name] = element.value
+    return result
 
 # Example usage
 """if __name__ == "__main__":
@@ -369,4 +458,11 @@ class KeyValuesSystem(SteamRegistry):
 
     # Print the internal structure
     print("Internal Structure:")
-    print(new_kvs.root)"""
+    print(new_kvs.root)
+    # Retrieve a specific key (e.g., 'TestKey')
+    test_key = new_kvs.root.get_key('MessageObject')
+    if test_key:
+        # Retrieve a specific value (e.g., 'TestValue') within that key
+        test_value = test_key.get_value('Key')
+        if test_value:
+            print("Retrieved Value:", test_value.value)"""

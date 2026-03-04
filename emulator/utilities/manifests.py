@@ -1,6 +1,8 @@
 import logging
 import os.path
 import struct
+import time
+from datetime import datetime
 
 from config import get_config as read_config
 from utilities import steam2_sdk_utils
@@ -186,25 +188,30 @@ class Manifest2(object):
 
     @classmethod
     def filename(cls, appId, appVersion):
-        if os.path.isfile("files/cache/" + str(appId) + "_" + str(appVersion) + "/" + str(appId) + "_" + str(appVersion) + ".manifest"):
-            return os.path.join("files/cache/" + str(appId) + "_" + str(appVersion) + "/", ("%i_%i.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["manifestdir"] + str(appId) + "_" + str(appVersion) + ".v4.manifest"):
-            return os.path.join(config["manifestdir"], ("%i_%i.v4.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["v4manifestdir"] + str(appId) + "_" + str(appVersion) + ".manifest"):
-            return os.path.join(config["v4manifestdir"], ("%i_%i.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["manifestdir"] + str(appId) + "_" + str(appVersion) + ".v2.manifest"):
-            return os.path.join(config["manifestdir"], ("%i_%i.v2.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["v2manifestdir"] + str(appId) + "_" + str(appVersion) + ".manifest"):
-            return os.path.join(config["v2manifestdir"], ("%i_%i.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["manifestdir"] + str(appId) + "_" + str(appVersion) + ".v3e.manifest"):
-            return os.path.join(config["manifestdir"], ("%i_%i.v3e.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["manifestdir"] + str(appId) + "_" + str(appVersion) + ".v3.manifest"):
-            return os.path.join(config["manifestdir"], ("%i_%i.v3.manifest" % (appId, appVersion)))
-        elif os.path.isfile(config["manifestdir"] + str(appId) + "_" + str(appVersion) + ".manifest"):
-            return os.path.join(config["manifestdir"], ("%i_%i.manifest" % (appId, appVersion)))
+        cache_dir = os.path.join("files", "cache", f"{appId}_{appVersion}")
+        cache_file = f"{appId}_{appVersion}.manifest"
+        year = ""
+        if appId == 261 and (datetime(2006, 10, 12) <= current < datetime(2006, 11, 6)):
+            year = "_2006"
+        if os.path.isfile(os.path.join(cache_dir, cache_file)):
+            return os.path.join(cache_dir, cache_file)
+        elif os.path.isfile(os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v4.manifest")):
+            return os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v4.manifest")
+        elif os.path.isfile(os.path.join(config["v4manifestdir"], f"{appId}_{appVersion}.manifest")):
+            return os.path.join(config["v4manifestdir"], f"{appId}_{appVersion}.manifest")
+        elif os.path.isfile(os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v2.manifest")):
+            return os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v2.manifest")
+        elif os.path.isfile(os.path.join(config["v2manifestdir"], f"{appId}_{appVersion}.manifest")):
+            return os.path.join(config["v2manifestdir"], f"{appId}_{appVersion}.manifest")
+        elif os.path.isfile(os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v3e.manifest")):
+            return os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v3e.manifest")
+        elif os.path.isfile(os.path.join(config["manifestdir"], f"{appId}_{appVersion}.v3.manifest")):
+            return os.path.join(config["manifestdir"], f"{appId}_{appVersion}{year}.v3.manifest")
+        elif os.path.isfile(os.path.join(config["manifestdir"], f"{appId}_{appVersion}.manifest")):
+            return os.path.join(config["manifestdir"], f"{appId}_{appVersion}.manifest")
         elif os.path.isdir(config["v3manifestdir2"]):
-            if os.path.isfile(config["v3manifestdir2"] + str(appId) + "_" + str(appVersion) + ".manifest"):
-                return os.path.join(config["v3manifestdir2"], ("%i_%i.manifest" % (appId, appVersion)))
+            if os.path.isfile(os.path.join(config["v3manifestdir2"], f"{appId}_{appVersion}.manifest")):
+                return os.path.join(config["v3manifestdir2"], f"{appId}_{appVersion}.manifest")
             else:
                 logging.error("Manifest not found for %s %s " % (appId, appVersion))
         else:
@@ -213,7 +220,16 @@ class Manifest2(object):
 
 class SDKManifest(object):
     def __init__(self, *args):
-        if len(args) == 2:
+        if len(args) == 3:
+            appId, appVersion, blobpath = args
+            # Use the provided blob path
+            blob_filename = blobpath
+            if not blob_filename:
+                logging.warning("Blob file not found for appId: %s, appVersion: %s" % (appId, appVersion))
+                return None
+            with open(blob_filename, "rb") as f:
+                blob_data = f.read()
+        elif len(args) == 2:
             appId, appVersion = args
             # Find the corresponding blob file
             blob_filename = steam2_sdk_utils.find_blob_file(appId, appVersion)

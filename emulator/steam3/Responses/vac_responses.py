@@ -40,7 +40,7 @@ def build_vacban_status_response(client_obj, serversocket):
 
 def build_vacban_challenge(client_obj):
     #respond with 753? or 770
-    print("Client Requested vac response")
+    print("Client Requested vac challenge response")
     packet = CMResponse(eMsgID = 0x02f1, client_obj = client_obj)
 
     num_vac_bans = 0

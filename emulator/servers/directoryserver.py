@@ -5,12 +5,17 @@ import threading
 import time
 from datetime import datetime
 
-import ipcalc
-
 import globalvars
 import utils
-from listmanagers.dirlistmanager import manager
-from listmanagers.serverlist_utilities import forward_heartbeat, send_listrequest, unpack_removal_info, unpack_server_info
+from servers.managers.dirlistmanager import manager
+import utilities.encryption as encryption
+from servers.managers.serverlist_utilities import (
+    forward_heartbeat,
+    send_listrequest,
+    send_listrequest_peer, unpack_removal_info,
+    unpack_server_info,
+    forward_packet,
+)
 from utilities.networkhandler import TCPNetworkHandler
 
 dirConnectionTotalCount = 0
@@ -59,16 +64,27 @@ class directoryserver(TCPNetworkHandler):
         # We are a slave, request serverlist
         if globalvars.dir_ismaster != "true":  # request list from 'master' directory server
             self.log.info("Connecting to Master Directory Server")
-            recieved_list = send_listrequest()  # since we are a slave, get the full current list from
-            # the master
-            index = 0
-            while index <= len(recieved_list):
-                wan_ip = recieved_list[index]
-                lan_ip = recieved_list[index + 1]
-                port = recieved_list[index + 2]
-                server_type = recieved_list[index + 3]
-                timestamp = recieved_list[index + 4]
+            recieved_list = send_listrequest()  # since we are a slave, get the full current list from the master
+            for wan_ip, lan_ip, port, server_type, _perm, _ts in recieved_list:
                 manager.add_server_info(wan_ip, lan_ip, int(port), server_type)
+
+        # Sync with any configured peer directory servers
+        self.peer_servers = []
+        peer_str = self.config.get("dir_peers", "")
+        if peer_str:
+            for peer in peer_str.split(','):
+                peer = peer.strip()
+                if not peer:
+                    continue
+                try:
+                    ip, prt = peer.split(':')
+                    self.peer_servers.append((ip, int(prt)))
+                    plist = send_listrequest_peer(ip, prt)
+                    for wan_ip, lan_ip, port, server_type, _perm, _ts in plist:
+                        manager.add_server_info(wan_ip, lan_ip, int(port), server_type)
+                    self.log.info(f"Synced server list from peer {peer}")
+                except Exception as e:
+                    self.log.warning(f"Failed to sync with peer {peer}: {e}")
 
         # datarate_thread = threading.Thread(target=self.netstats)
         # datarate_thread.daemon = True
@@ -93,7 +109,7 @@ class directoryserver(TCPNetworkHandler):
             self.log.info(f"{clientid} Connected to Slave/Peer Directory Server")
 
         # Determine if connection is local or external
-        if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)) or globalvars.public_ip == "0.0.0.0":
+        if str(client_address[0]) in globalvars.server_network or globalvars.public_ip == "0.0.0.0":
             islan = True
         else:
             islan = False
@@ -319,7 +335,7 @@ class directoryserver(TCPNetworkHandler):
 
             else:
                 self.log.info(f"{clientid}Sent unknown command: " + command.decode() + " Data: " + binascii.b2a_hex(msg).decode())
-                reply == b"\x00\x00"
+                reply = b"\x00\x00"
 
             client_socket.send_withlen(reply)
             client_socket.close()
@@ -331,14 +347,14 @@ class directoryserver(TCPNetworkHandler):
 
     def handle_slavereq(self, clientid, client_socket):
         list_size, masterlist = manager.pack_serverlist()
-        packed_length = struct.unpack('!I', list_size[:4])[0]
         self.log.info(f"{clientid} Slave DIR Server Requested Full Serverlist")
-        client_socket.send(packed_length)  # handshake confirmed
+        client_socket.send(list_size)  # handshake confirmed
 
         size_response = client_socket.recv(1)
 
         if size_response == b'\x01':
-            client_socket.send(masterlist)
+            encrypted = encryption.encrypt_bytes(masterlist, globalvars.peer_password)
+            client_socket.send(encrypted)
             slave_response = client_socket.recv(1)
 
             if slave_response == b'\x01':
@@ -383,6 +399,8 @@ class directoryserver(TCPNetworkHandler):
                     for entry in self.slavedir_list:
                         if entry[0] != wan_ip and int(entry[2]) != int(port):  # make sure we aren't sending the slave server its own heartbeat...
                             forward_heartbeat(wan_ip, port, msg)
+            for ip, prt in self.peer_servers:
+                forward_packet(ip, prt, msg)
 
         elif command == b"\x1d":  # Remove server entry from the list
             wan_ip, port, server_type = unpack_removal_info(msg)
@@ -395,11 +413,13 @@ class directoryserver(TCPNetworkHandler):
                 self.log.info(f"{clientid} Disconnected from Directory Server")
                 return
 
-            if manager.remove_entry(wan_ip, port, server_type) is True:
+            if manager.remove_entry(wan_ip, None, port, server_type) is True:
                 client_socket.send(b"\x01")
                 self.log.info(f"[{server_type}] {clientid} Removed server from Directory Server")
                 if globalvars.dir_ismaster != "true":  # relay any requests to the master server aswell
                     client_socket.sendto(msg, str(self.config["masterdir_ipport"]))
+                for ip, prt in self.peer_servers:
+                    forward_packet(ip, prt, msg)
             else:  # couldnt remove server because: doesnt exists, problem with list
                 client_socket.send(b"\x01")
                 self.log.info(f"[{server_type}] {clientid} There was an issue removing the server from Directory Server")

@@ -1,0 +1,197 @@
+Purchase Flow:
+Transaction Initialization:
+- User sends server purchase request:
+    x- request includes subscription ID, transaction type, address, if it is a gift
+    x- server retrieves ALL information about subscription from CDR or appinfo
+    x- server adds address information to Steam3TransactionAddressRecord if match not found
+    x- If purchase itself is a gift:
+        x-server creates entry in Steam3GiftTransactionRecord table,
+        tries to find matching steamid/userid based on email if no
+        accountid present otherwise uses only email
+    x- If CC transaction:
+        x- server adds CC info to class Steam3CCRecord if it doesnt exists
+    x- If paypal transaction or VIP transaction:
+        x- server adds paypal or VIP info to ExternalPurchaseInfoRecord table
+    x- If Gift/Guest Passes are included with subscription:
+        x- add dictionary/json to transaction row
+
+x- Server responds with InitPurchaseRespons; transaction ID and transaction , or paypal token
+
+x- User sends GetFinalPrice request
+    x-  request contains transaction ID
+
+ x- Server Responds with GetFinalPriceResponse
+   x- check transactionid in registry to see if it has expired
+   x- response contains final price, discounts in cents, tax in cents, shipping costs
+    and if shipping is included, it also responds with the customers name and address
+
+ x- client responds with CompletePurchase
+    x- request contains transactionID only
+
+ - Server processes CompletePurchase and transaction by doing the following:
+    x- check transactionid in registry to see if it has expired
+    - Sets DateCompleted to current date/time in Steam3Transaction table
+        - creates a license entry in Steam3LicenseRecord
+            - If purchase is a gift,
+            2. if transaction is a gift transaction, GiftUniqueID will not be 0 or empty, find the row with the uniqueid in Steam3GiftTransactionRecord using GiftUniqueID
+            2.1 create a new entry in GuestPassRegistry with the current packageid, time created should be current date and time,
+            senderaddress should be the purchasers email address, which can be found in the userregistry table
+            using the accountid from the transaction entry and sendername is the username of the user which can
+             be found using the accountid from the transaction entry
+                -example of redeemable gift/guestpass:
+                    [MessageObject]
+                    GID = (ulonglong)216318974490967480
+                    PackageID = (dword)292
+                    TimeCreated = (dword)1244475692
+                    TimeExpiration = (dword)1247067692
+                    TimeSent = (dword)1244822503
+                    TimeAcked = (dword)1244822503
+                    TimeRedeemed = (dword)0
+                    RecipientAddress =
+                    SenderAddress = golle_the_first@web.de
+                    SenderName = -ú-Á-ó-Â++ãÆãÆ+¬
+            - create guestpassregistry entry
+
+    - Server Inserts all guest/gift pass information as into guestpassregistry
+        - set senderName, accountid and address as the current purchasing user
+        - sets time created and time expires using info in json
+
+ -once client sends transaction complete/purchase complete:
+    - server sets DateCompleted in Steam3Transaction table
+    - Server Creates Steam3 license entry
+        - If gift or guest passes are present, add new entries to guestpassregistry
+        - set all relavent datetimes
+        -
+    - server gets all information and sends a receipt packet
+
+- client ack's receipt packet
+
+--done--
+
+
+database information:
+transactions:
+- transactions should timeout after 10 minutes
+
+gift/guest pass information:
+- gifted subscriptions can come with gift and guest passes if present
+
+
+NOTE ABOUT REDEEMING GIFTED SUBS:
+- remember to check for any gift/guest passes that are included with the subscription
+and create the entries in the guestpassregistry table
+- make sure to check if the recieving user owns the sub before gifting or sending guest passes, must fail
+if they do own it
+- gifts are converted to licenses that have no activation date/time set (i think)
+
+
+pass counts determined by the subscription which the pass is for using the extended info 'GrantPassesCount'
+- GrantPassesCount - found in the gifted or guest passable subscription itself, determines number of passes to grant
+- OnPurchaseGrantGuestPassPackage(#) - if found, it means that the purchase either comes with gifts or guest passes
+    - the subscription for which the grant is for should contain ATLEAST grantpasscount which tells you how many passes you have
+    if it comes with GrantExpirationDay, that is how long you have until the grant expires; InitialPeriod is how long the gift is active for the giftee
+
+
+gift vs guestpass:
+guestpasses:
+- GrantExpirationDays - guestpasses expire in this many days
+- guestpassed subscriptions typically have the 'guest pass' AKA ID 5 billing type
+- InitialPeriod - period of time the subscription is active for once activated
+- InitialTimeUnit - time unit of the initial period
+
+- some gifts come with guest passes themselves which can be sent to others
+
+gift:
+when a user buys a game, it might come with a 'guestpass' that links to a subscriptionID that has billingtype set to 'gift' aka ID 6, if this is the case, the user can use the gift themselves or send to others
+- there are subscriptions such as <Name>Left 4 Dead 2 - Four Pack (preorder)  which grants the purchasing user 1 subscription and gives them 3 gift passes
+- sometimes these require a user to own another specific subscription before it is accessible, this is only the case for DLC gifts.  if the required appid is present in the appid list for the subscription, then ignore it
+- gifts do NOT expire
+
+other interesting tidbits:
+- FreeWeekend - some subs have this key in extended info, might be good to allow these to be toggleable through a webui
+- ExpiryTime - time until the free weekend/trial ends
+
+example: sub 1987 comes with the guest pass (gift) for subid 1988; 1988 is set to 'gift' and also requires the user to own 4730 at time of purchase in order to get the gift
+
+<SubscriptionRecord SubscriptionId="1987">
+    <SubscriptionId>1987</SubscriptionId>
+    <Name>Football Manager 2010 (preorder)</Name>
+    <BillingType>BillOnceOnly</BillingType>
+
+    <ExtendedInfoRecord>
+        <Record>
+            <Key>OnPurchaseGrantGuestPassPackage</Key>
+            <Value>1988</Value>
+        </Record>
+    </ExtendedInfoRecord>
+</SubscriptionRecord>
+<SubscriptionRecord SubscriptionId="1988">
+    <SubscriptionId>1988</SubscriptionId>
+    <Name>Outrun2006 Coast 2 Coast</Name>
+    <BillingType>Gift</BillingType>
+    <CostInCents>0</CostInCents>
+    <IsSteam3Subscription>1</IsSteam3Subscription>
+    <ExtendedInfoRecord>
+        <Record>
+            <Key>GrantPassesCount</Key>
+            <Value>1</Value>
+        </Record>
+        <Record>
+            <Key>AppIDOwnedRequired</Key>
+            <Value>4730</Value>
+        </Record>
+        <Record>
+            <Key>OnGrantGuestPassMsg</Key>
+            <Value>http://cdn.store.steampowered.com/message/18166930062975633/</Value>
+        </Record>
+    </ExtendedInfoRecord>
+</SubscriptionRecord>
+
+
+guest pass subscription example:
+<SubscriptionRecord SubscriptionId="2474">
+			<SubscriptionId>2474</SubscriptionId>
+			<Name>Shattered Horizon</Name>
+			<BillingType>GuestPass</BillingType>
+			<CostInCents>0</CostInCents>
+			<SubscriptionAppIdsRecord>
+				<AppId>18110</AppId>
+				<AppId>18111</AppId>
+				<AppId>18112</AppId>
+			</SubscriptionAppIdsRecord>
+			<IsSteam3Subscription>1</IsSteam3Subscription>
+			<ExtendedInfoRecord>
+				<Record>
+					<Key>OnExpiredMsg</Key>
+					<Value>http://storefront.steampowered.com/v/?gpdata=gift,expire,2388,18110</Value>
+				</Record>
+				<Record>
+					<Key>InitialPeriod</Key>
+					<Value>3</Value>
+				</Record>
+				<Record>
+					<Key>InitialTimeUnit</Key>
+					<Value>Day</Value>
+				</Record>
+				<Record>
+					<Key>OnQuitGuestPassMsg</Key>
+					<Value>http://storefront.steampowered.com/v/?gpdata=gift,onquit,2388,18110</Value>
+				</Record>
+				<Record>
+					<Key>OnGrantGuestPassMsg</Key>
+					<Value>http://storefront.steampowered.com/v/?gpdata=gift,new,2388</Value>
+				</Record>
+				<Record>
+					<Key>OnActivateGuestPassMsg</Key>
+					<Value>http://storefront.steampowered.com/v/?gpdata=gift,activate,2388</Value>
+				</Record>
+				<Record>
+					<Key>GrantPassesCount</Key>
+					<Value>3</Value>
+				</Record>
+				<Record>
+					<Key>GrantExpirationDays</Key>
+					<Value>30</Value>
+				</Record>
+			</ExtendedInfoRecord>
+		</SubscriptionRecord>

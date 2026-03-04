@@ -17,6 +17,9 @@ import globalvars
 import utils
 from utilities.networkbuffer import NetworkBuffer
 from utilities.networkhandler import UDPNetworkHandler
+from utilities.database import statistics_db
+from servers.managers.dirlistmanager import manager as dirmanager
+from servers.managers import serverlist_utilities
 
 
 def int_wrapper(value):
@@ -45,21 +48,40 @@ class CSERServer(UDPNetworkHandler):
         super(CSERServer, self).__init__(config, int(port), self.server_type)  # Create an instance of NetworkHandler
         self.log = logging.getLogger(self.server_type)
         self.handlers = {
-                b'e': self.parse_steamstats,
-                b'c': self.parse_crashreport,
-                b'q': self.parse_encryptedbugreport,
-                b'p': self.parse_unknownp,
                 b'a': self.parse_app_install_stats,
-                b'o': self.parse_bugreport,
-                b'i': self.handle_unknown_stats,
+                b'c': self.parse_crashreport,
+                b'e': self.parse_steamstats,
+                b'g': self.parse_surveyresults,
+                b'i': self.handle_bandwidth_stats,
                 b'k': self.parse_gamestats,
                 b'm': self.parse_phonehome,
-                b'g': self.parse_surveyresults,
+                b'o': self.parse_bugreport,
+                b'q': self.parse_uploaddata,
                 b'u': self.parse_upload_gamestats
         }
 
-    def handle_client(self, data, address):
+    def int_to_datetime_bytes(self, value):
+        # Convert the byte string representing an integer to an actual integer
+        utctime = int(value.decode('ascii'))
+        # Pack it as an 8-byte buffer
+        # Convert the Unix timestamp to a datetime object
+        dt_object = datetime.utcfromtimestamp(utctime)
+        # Format the datetime object as a string
+        value = dt_object.strftime('%m/%d/%Y %H:%M:%S').encode('latin-1')
+        return value
 
+    def read_string(self, data: bytes, offset: int) -> (str, int):
+        """
+        Reads a null-terminated string from data starting at offset.
+        Returns a tuple of (string, new_offset) where new_offset is positioned after the null terminator.
+        """
+        end = data.find(b'\x00', offset)
+        if end == -1:
+            raise ValueError("Null terminator not found in string")
+        s = data[offset:end].decode("latin-1")
+        return s, end + 1
+
+    def handle_client(self, data, address):
         clientid = str(address) + ": "
         self.log.info(clientid + "Connected to CSER Server")
         self.log.debug(clientid + ("Received message: %s, from %s" % (repr(data), address)))
@@ -70,26 +92,19 @@ class CSERServer(UDPNetworkHandler):
         else:
             self.log.info("Unknown CSER command: %s" % data)
 
-    def parse_unknownp(self, address, data, clientid):
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = "clientstats//{}.{}.unknownstats.txt".format(address, timestamp)
-        with open(filename, 'w') as file:
-            file.write({data})
-
     def parse_upload_gamestats(self, address, data, clientid):
+        self.log.info(f"{clientid}Received Unknown Upload Game Stats")
         ice = IceKey(1, [54, 175, 165, 5, 76, 251, 29, 113])
         # Decrypt the remainder of the data
         decrypted = ice.Decrypt(bytes.fromhex(data[3:].hex()))
 
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = "clientstats//{}.{}.enrypted_gamestats.txt".format(address, timestamp)
-        with open(filename, 'w') as file:
-            file.write({decrypted})
+        statistics_db.log_event('upload_gamestats',
+                                {'ip': address[0], 'data': decrypted.hex()})
 
     def parse_app_install_stats(self, address, data, clientid):
         self.log.info(f"{clientid}Received Application Installation Stats")
         reply = b"\xFF\xFF\xFF\xFFb"
-        unknown1 = data[0:1]
+        protocol_version = data[0:1]
         appId = struct.unpack('<I', data[1:5])[0]
         duration = struct.unpack('<I', data[5:9])[0]
         isDownload = data[9:10]
@@ -133,522 +148,664 @@ class CSERServer(UDPNetworkHandler):
                     keys.append(key)
                     vals.append(ip_str)
 
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = "clientstats/downloadstats/{}.{}.downloadstats.txt".format(address, timestamp)
-        with open(filename, 'w') as file:
-            for key, val in zip(keys, vals):
-                file.write(f'{key}: {val}\n')  # file.write(debug)
+        statistics_db.log_event('app_install_stats',
+                                dict(zip(keys, vals)))
 
-        self.serversocket.sendto(reply + b"\x01", address)
+        # The official server does not send a reply for this packet. Our
+        # previous implementation returned a quake style header which does
+        # not exist in the C++ code.  We therefore simply swallow the
+        # message with no response so the behaviour matches the original
+        # implementation.
 
-    def handle_unknown_stats(self, address, data, clientid):
+    def handle_bandwidth_stats(self, address, data, clientid):
         """
-        CSERServer  Received message: b'i\n\x01\n\x00\x00\x00\x01\x00\x00\xdaA\xaa\x00q}\xc8B', from ('72.135.236.199', 65386)
-        CSERServer    INFO     ('72.135.236.199', 65386): Received unknown stats - INOP
-        CSERServer    DEBUG    unknown stats: b'\x01\n\x00\x00\x00\x01\x00\x00 \xdaA\xaa\x00 q}\xc8B'
+        Processes the incoming bandwidth stats buffer, saves the parsed
+        data to a log file in files/clientstats/bandwidthstats, and sends a reply.
         """
-        self.log.info(f"{clientid}Received unknown stats - INOP")
-        self.log.debug(f"unknown stats: {data}")
-        self.serversocket.sendto(b"\xFF\xFF\xFF\xFFj\x01", address)
+        self.log.info(f"{clientid}Received Client Bandwidth Stats")
+        offset = 0
 
-    def check_allowupload(self, reply, address):
-        allowupload = b"\x02" if self.config["allow_harvest_upload"].lower() == "true" else b"\x01"  # \x00 = unknown
-        reply += b"\x01" + allowupload
-        if allowupload == b"\x02":
-            # TODO BEN, GRAB FROM DIR SERVER & SEND HARVEST SERVER NEWLY GENERATED CONTEXT ID'S FOR ITS LIST IF NOT AIO SERVER
-            if str(address[0]) in ipcalc.Network(str(globalvars.server_net)):
-                bin_ip = utils.encodeIP((self.config['server_ip'], int(self.config['harvest_server_port'])))
-            else:
-                bin_ip = utils.encodeIP((self.config['harvest_ip'], int(self.config['harvest_server_port'])))
-            contextid = globalvars.session_id_manager.add_new_context_id()
-            reply += bin_ip + contextid
-        return reply
+        version = int.from_bytes(data[0:1], "little")
+        offset += 1
+
+        # Parse cellId (4 bytes, int32)
+        cellId = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+
+        # Parse number of records (1 byte, int8)
+        nbRecord = data[offset]
+        offset += 1
+
+        records = []
+        for i in range(nbRecord):
+            contentServerId = int.from_bytes(data[offset:offset+2], "little")
+            offset += 2
+            bytesCount = int.from_bytes(data[offset:offset+4], "little")
+            offset += 4
+            durationInSec = struct.unpack(">f", data[offset:offset+4])[0]
+            offset += 4
+            records.append({'server': contentServerId, 'bytes': bytesCount,
+                            'duration': durationInSec})
+
+        statistics_db.log_event('bandwidth_stats',
+                                {'ip': address[0], 'version': version,
+                                 'cellId': cellId, 'records': records})
+
+        # The C++ implementation simply logs these statistics and does not
+        # acknowledge the datagram.  Remove the custom ack so the behaviour is
+        # compatible with the original server.
+
+    def build_upload_reply(self, message_type, require_upload: bool = False, unique_id: int = 0) -> bytes:
+        """
+        Reply format the client expects (little-endian reads):
+          byte 0: 'd'
+          byte 1: 0x01  (protocol ok; client requires == 1)
+          byte 2: 0x01  (no upload) OR 0x02 (upload)
+          if byte2 == 0x02:
+              u32 ip        (little-endian)
+              u16 port      (little-endian)
+              u32 unique_id (little-endian)
+        """
+        reply = bytearray()
+        reply.extend(message_type)     # message type
+        reply.append(0x01)         # protocol OK (must be 1)
+
+        if not require_upload:
+            reply.append(0x01)     # REPORTING_SERVER_PROTOCOL_NO_FILE_UPLOAD
+            return bytes(reply)
+
+        # pick harvest server
+        if globalvars.aio_server:
+            server = dirmanager.get_server_list("Harvest", False, single=1)
+        else:
+            server = serverlist_utilities.request_server_list("Harvest", single=1)
+
+        if not server:
+            reply.append(0x01)     # fallback: no upload server available
+            return bytes(reply)
+
+        harvest_ip, harvest_port = server[0]
+
+        reply.append(0x02)  # REPORTING_SERVER_PROTOCOL_FILE_UPLOAD
+
+        # Client reads IP with sub_42DF90: u32 little-endian.
+        # Convert dotted IP -> 4 bytes network order -> interpret as little-endian u32 for packing.
+        ip_u32_le = int.from_bytes(socket.inet_aton(harvest_ip), "little")
+        reply.extend(struct.pack("<I", ip_u32_le))
+
+        # Client reads port with parseIP: u16 little-endian.
+        reply.extend(struct.pack("<H", int(harvest_port) & 0xFFFF))
+
+        # Client reads unique id with sub_42DF90: u32 little-endian.
+        reply.extend(struct.pack("<I", unique_id & 0xFFFFFFFF))
+
+        return bytes(reply)
 
     def parse_gamestats(self, address, data, clientid):
-        self.log.info(f"{clientid} Received game statistics")
-        reply = b"\xFF\xFF\xFF\xFFl"  # Base reply with identifier
+        """
+        // On the wire from the client (Win32UploadGameStatsBlocking):
+        //   [0] = C2M_REPORT_GAMESTATISTICS
+        //   [1] = '\n'
+        //   [2] = protocol_version (byte)
+        //
+        //   if (old protocol, version=1):
+        //        [3..6]   = buildNumber (int32)
+        //        exeName (null-terminated string)
+        //        gameDirectory (string)
+        //        mapName (string)
+        //        [..next4] = statsBlobVersion (int32)
+        //        [..next4] = statsBlobSize (int32)
+        //        [..nextN] = stats data (N bytes)
+        //
+        //   if (new protocol, version=2):
+        //        [3..6]   = appId (int32)
+        //        [7..10]  = statsBlobSize (int32)
+        //        [..nextN] = stats data (N bytes)
+        //
+        // Then the client expects a quake-style response:
+        //   [0..3]  = 0xFF,0xFF,0xFF,0xFF
+        //   [4]     = 'l' (0x6C) => M2C_ACKREPORT_GAMESTATISTICS
+        //   [5]     = validProtocol (0 or 1)
+        //   [6]     = disposition  (0 => skip, 1 => request upload)
+        //   [7..10] = harvester IP   (uint32 little-endian)
+        //   [11..12]= harvester port (uint16 little-endian)
+        //   [13..16]= context ID     (uint32 little-endian)
+        """
 
-        data_bin = bytes.fromhex(data.hex())  # Convert data to binary
+        self.log.info(f"{clientid}: Received game statistics")
+
+        # 0x6c = 'l' = M2C_ACKREPORT_GAMESTATISTICS
+
+        # 1) Convert the raw data and skip the first 2 bytes
+        data_bin = bytes(data)
+        data_bin = data_bin[2:]
+        if len(data_bin) < 8:
+            return
+        appId, upload_len = struct.unpack_from('<II', data_bin, 0)
+        data_bin = data_bin[8:]
+        self.log.debug(f"appId {appId} upload_len {upload_len}")
+        reply = self.build_upload_reply(b'l')
+        # 2) Parse the protocol version
         buffer = NetworkBuffer(data_bin)
-
-        # Read protocol version
-        protover = buffer.extract_u8()
-        if protover != 2:  # Only version 2 is valid based on the updated logic
-            self.log.error(f"Invalid Game Statistics protocol version: {protover}")
-            self.serversocket.sendto(reply + b"\x00", address)  # Protocol error
+        if buffer.remaining_length() < 1:
+            # Not enough data to read protocol version
+            self.log.error("GameStats packet too short to read protocol version.")
+            self.serversocket.sendto(b"l\x00", address)
             return
 
-        # Read application ID and upload size
-        appid = buffer.extract_u32()
-        uploadsize = buffer.extract_u32()
+        protover = buffer.extract_u8()
+        valid_protocol = True   # assume valid for now
+        old_protocol = (protover == 1)
+        new_protocol = (protover == 2)
 
-        # Log statistics
-        txt_gamestats = f"Protocol 2\nApplication ID: {appid}\nReport Size: {uploadsize}\n"
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"clientstats/gamestats/{address}_{timestamp}.gamestats.txt"
-        with open(filename, "w") as file:
-            file.write(txt_gamestats)
+        if not (old_protocol or new_protocol):
+            self.log.error(f"Unknown GameStats protocol version: {protover}")
+            self.serversocket.sendto(b"l\x00", address)
+            return
 
-        # Handle game stats upload logic
-        statsUniqueId = int(hashlib.md5(filename.encode()).hexdigest(), 16)
+        # 3) Parse the rest depending on old vs new layout
+        build_number = None
+        exe_name = None
+        game_directory = None
+        map_name = None
+        stats_blob_version = None
+        app_id = None
+        stats_blob_size = 0
 
-        # Build response
-        reply += b"\x01"  # Protocol OK
-        if not statsUniqueId:
-            reply += b"\x00"  # No file upload
-        else:
-            # Use IP from config['harvest_ip']
-            try:
-                harvest_ip = self.config['harvest_ip']
-                ip_bytes = struct.pack(">I", int.from_bytes(socket.inet_aton(harvest_ip), "big"))
-            except KeyError:
-                self.log.error("Missing 'harvest_ip' in configuration")
-                self.serversocket.sendto(reply + b"\x00", address)  # Protocol error
-                return
-            except Exception as e:
-                self.log.error(f"Invalid 'harvest_ip': {e}")
-                self.serversocket.sendto(reply + b"\x00", address)  # Protocol error
-                return
-            harvest_port = int(self.config['harvest_server_port'])
-            port_bytes = struct.pack(">H", harvest_port)  # Use port from fileUploadServer
+        if old_protocol:
+            # buildNumber (int32)
+            build_number = buffer.extract_u32()
 
-            reply += b"\x01"  # File upload requested
-            reply += ip_bytes
-            reply += port_bytes
-            reply += struct.pack(">I", statsUniqueId)  # Add statsUniqueId
+            # read zero-terminated strings
+            exe_name = buffer.extract_string()
+            game_directory = buffer.extract_string()
+            map_name = buffer.extract_string()
 
-        # Send the response
+            # statsBlobVersion (int32)
+            stats_blob_version = buffer.extract_u32()
+
+            # statsBlobSize (int32)
+            stats_blob_size = buffer.extract_u32()
+
+        else:  # new_protocol => version == 2
+            # appId (int32)
+            app_id = buffer.extract_u32()
+            # statsBlobSize (int32)
+            stats_blob_size = buffer.extract_u32()
+
+        # 4) Extract the stats data
+        if stats_blob_size < 0 or stats_blob_size > buffer.remaining_length():
+            self.log.error(f"Stats blob size invalid: {stats_blob_size} (remaining={buffer.remaining_length()})")
+            self.serversocket.sendto(b"l\x00", address)
+            return
+
+        stats_blob = buffer.extract_buffer(stats_blob_size)
+
+        # 5) Store data in the database instead of writing to files
+        details = {
+            'protover': protover,
+            'build_number': build_number,
+            'exe_name': exe_name,
+            'game_directory': game_directory,
+            'map_name': map_name,
+            'stats_blob_version': stats_blob_version,
+            'app_id': app_id,
+            'stats_blob_size': stats_blob_size,
+            'stats_blob_hex': stats_blob.hex()
+        }
+
+        statistics_db.log_event('gamestats', details)
+
         self.serversocket.sendto(reply, address)
 
     def parse_bugreport(self, address, data, clientid):
         self.log.info("Received bug report")
-        """b'\x01\xe5\x0f\x00\x00hl2.exe\x00tf\x00tc_hydro\x00\xff\x07\x00\x00\xb7\x0b\x00\x00GenuineIntel\x00\t\x00\x00\x00\x05\x00\x00\x00\xde\x10\x00\x00\x07%\x00\x00 (Build 9200) version 6.2\x00\xdc\xa1\x00\x00In-game Crash\x00sdf@dsdsf.com\x00[1:2]\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00tc_hydro: dfdddf\x00;\x02\x00\x00dsfsd dsfds dsffdf\n\nlevel:  tc_hydro\nbuild:  4069 (Steam)\nposition:  setpos -1904.000000 -2832.000000 288.031250; setang 7.589999 106.764076 0.000000\nDriver Name:  NVIDIA GeForce RTX 3050\nVendorId / DeviceId:  0x10de / 0x2507\nSubSystem / Rev:  0x8e991462 / 0xa1\nDXLevel:  gamemode\nVid:  1024 x 768\nFramerate:  100.970\nConvars:\n\tskill:  1\n\tnet:  rate 30000 update 20 cmd 30 latency 0 msec\n\thost_thread_mode:  0\n\tsv_alternateticks:  0\n\tai_strong_optimizations:  0\nMap version:  4384\ngamedir:  f:\\development\\steam\\emulator_v2\\client\\lan\\steamapps\\test\\team fortress 2\\tf\n\n\x00\x00\x00'"""
-        """		// C2M_BUGREPORT details
-        //		u8(C2M_BUGREPORT_PROTOCOL_VERSION) = 1 2 or 3
-        //		u16(encryptedlength)
-        //		remainder=encrypteddata"""
+
+        # Convert incoming data to binary.
         data_bin = bytes.fromhex(data.hex())
-        data_length = len(data_bin)
         buffer = NetworkBuffer(data_bin)
-        reportver = buffer.extract_u8()
+
+        # Extract header: u8 (protocol version) and u16 (encrypted length).
+        protocol_version = buffer.extract_u8()
         encryptedlen = buffer.extract_u16()
-        reply = b"\xFF\xFF\xFF\xFF\x71"
-        if not reportver in [1, 2, 3]:
-            self.log.warning(f"{clientid}Sent Bug Report with invalid protocal version! Version: {reportver}")
-            self.serversocket.sendto(reply + b"\x00\x00", address)  # \x00 = bad version, 2nd \x00 = no file upload
-        else:
-            ice = IceKey(1, [200, 145, 10, 149, 195, 190, 108, 243])
-            reply += b"\x01"  # Good protocol version
-            # Decrypt the remainder of the data
-            decrypted = ice.Decrypt(buffer.get_buffer_from_cursor())
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"clientstats/bugreports/{address}.{timestamp}.bugreport.txt"
 
-            # Create a new NetworkBuffer instance for the decrypted data
-            buffer = NetworkBuffer(decrypted)
-            """// encrypted payload:
-            //		byte corruptionid = 1
-            //		u32(buildnumber)
-            //		string(exename 64)
-            //		string(gamedir 64)
-            //		string(mapname 64)
-            //		u32 RAM
-            //		u32 CPU
-            //		string(processor)
-            //		u32 DXVerHigh
-            //		u32 DXVerLow
-            //		u32	DXVendorID
-            //		u32 DXDeviceID
-            //		string(OSVer)"""
-            corruptionid = buffer.extract_u8()
-            buildnumber = buffer.extract_u32()
-            exename = buffer.extract_string()
-            gamedir = buffer.extract_string()
-            mapname = buffer.extract_string()
-            ramsize = buffer.extract_u32()
-            cpuspeed = buffer.extract_u32()
-            proccessor_type = buffer.extract_string()
-            dxverhigh = buffer.extract_u32()
-            dxverlow = buffer.extract_u32()
-            dxvendorid = buffer.extract_u32()
-            dxdeviceid = buffer.extract_u32()
-            os_name = buffer.extract_string()
-            txt_bugreport = (f'Protocol 1\nCorruption ID: {corruptionid}\nBuild Number: {buildnumber}\nExecuteable: '
-                             f'{exename}\nGame Directory: {gamedir}\nMap: {mapname}\nRam: {ramsize}\nProcessor (MHZ):{cpuspeed}\n'
-                             f'Processor: {proccessor_type}\nDirectX Version: {dxverhigh}.{dxverlow}\nDirectX VendorID: '
-                             f'{dxvendorid}\nDirectX DeviceID: {dxdeviceid}\nOperating System: {os_name}\n')
-            """"// Version 2+:
-            //	{
-            //			reporttype(char 32)
-            //			email(char 80)
-            //			accountname(char 80)
-            //	}"""
-            if reportver in [2, 3]:
-                report_type = buffer.extract_string()
-                email = buffer.extract_string()
-                # FIXME The username seems to not be included in steamui 1060 tf2 in-game crash reports, infact from here its a bunch of plain text information, no file info or anything
-                # accoutname = buffer.extract_string()
-                txt_bugreport += (f'Report Type: {report_type}\nEmail Address: {email}\n') # \nAccount Name: {accoutname}
+        if protocol_version not in [1, 2, 3]:
+            self.log.warning(f"{clientid} sent a bug report with an invalid protocol version! Version: {protocol_version}")
+            self.serversocket.sendto(b"\xff\xff\xff\xffp" + b"\x00\x00", address)
+            return
 
-                # Attempt to see what's after the email
-                possible_account = buffer.extract_string()
+        # Decrypt the remainder.
+        ice = IceKey(1, [200, 145, 10, 149, 195, 190, 108, 243])
+        decrypted = ice.Decrypt(buffer.get_buffer_from_cursor())
+        self.log.info(f"Decrypted Bug Report Packet: {decrypted}")
 
-                # Check if it matches the pattern [X:Y]
-                # Being so brain-dead, I'll even hold your hand with a simple check
-                if possible_account.startswith('[') and possible_account.endswith(']') and ':' in possible_account:
-                    # It's an account ID
-                    # Everything after this is raw data
-                    remainder = buffer.extract_buffer(buffer.remaining_length())
-                    raw_filename = f"clientstats/bugreports/{address}.{timestamp}.plain.txt"
-                    os.makedirs(os.path.dirname(raw_filename), exist_ok=True)
-                    with open(raw_filename, 'wb') as f:
-                        f.write(remainder)
-                else:
-                    # Not an account ID, so assume it's an account name
-                    accountname = possible_account
-                    txt_bugreport += f'Account Name: {accountname}\n'
+        try:
+            # Reinitialize buffer with the decrypted payload.
+            parser_obj = NetworkBuffer(decrypted)
+            report = {}
 
-                    if reportver == 3:
-                        userid = buffer.extract_u64()
-                        txt_bugreport += f'SteamID: {userid}\n'
+            # Always-present fields:
+            report['corruption_identifier'] = parser_obj.extract_u8()
+            report['build_number'] = parser_obj.extract_u32()
+            report['executable_name'] = parser_obj.extract_string()
+            report['game_directory'] = parser_obj.extract_string()
+            report['map_name'] = parser_obj.extract_string()
+            report['ram'] = parser_obj.extract_u32()
+            report['cpu'] = parser_obj.extract_u32()
+            report['processor'] = parser_obj.extract_string()
+            report['dx_version_high'] = parser_obj.extract_u32()
+            report['dx_version_low'] = parser_obj.extract_u32()
+            report['dx_vendor_id'] = parser_obj.extract_u32()
+            report['dx_device_id'] = parser_obj.extract_u32()
+            report['os_version'] = parser_obj.extract_string()
+            report['attachment_file_size'] = parser_obj.extract_u32()
 
-                    filename = buffer.extract_string()
-                    zipsize = buffer.extract_u32()
-                    textlen = buffer.extract_u32()
-                    description = buffer.extract_buffer(int(textlen))
+            # Protocol v2+ fields:
+            if protocol_version >= 2:
+                report['report_type'] = parser_obj.extract_string()
+                report['email'] = parser_obj.extract_string()
+                report['account_name'] = parser_obj.extract_string()
 
-                    if isinstance(filename, bytearray):
-                        filename = filename.decode('utf-8')
-
-                    os.makedirs(os.path.dirname(filename), exist_ok=True)
-
-                    with open(filename, "w", encoding='ascii', errors='replace') as file:
-                        file.write(
-                            f'{txt_bugreport}Memory Dump Filename: {filename}\n'
-                            f'Zip Size: {zipsize}kb\nDescription: {description}\n'
-                        )
+                # Protocol v3+ field:
+                if protocol_version >= 3:
+                    user_id_bytes = parser_obj.extract_buffer(8)
+                    report['user_id'] = int.from_bytes(user_id_bytes, byteorder='little')
             else:
-                # If reportver not in [2,3], just do whatever your lame original code did
-                # You're welcome, short and tubby.
-                filename = buffer.extract_string()
-                zipsize = buffer.extract_u32()
-                textlen = buffer.extract_u32()
-                description = buffer.extract_buffer(int(textlen))
+                report['report_type'] = ""
+                report['email'] = ""
+                report['account_name'] = ""
+                report['user_id'] = None
 
-                if isinstance(filename, bytearray):
-                    filename = filename.decode('utf-8')
+            # Always-present fields after protocol extras:
+            report['title'] = parser_obj.extract_string()
+            report['body_length'] = parser_obj.extract_u32()
+            body_bytes = parser_obj.extract_buffer(report['body_length'])
+            report['body'] = body_bytes.decode('utf-8', errors='replace')
 
-                os.makedirs(os.path.dirname(filename), exist_ok=True)
+            # Compose the bug report text.
+            bugreport_text = f"Protocol {protocol_version}\n"
+            bugreport_text += f"Corruption ID: {report['corruption_identifier']}\n"
+            bugreport_text += f"Build Number: {report['build_number']}\n"
+            bugreport_text += f"Executable: {report['executable_name']}\n"
+            bugreport_text += f"Game Directory: {report['game_directory']}\n"
+            bugreport_text += f"Map: {report['map_name']}\n"
+            bugreport_text += f"RAM: {report['ram']}\n"
+            bugreport_text += f"Processor (MHz): {report['cpu']}\n"
+            bugreport_text += f"Processor: {report['processor']}\n"
+            bugreport_text += f"DirectX Version: {report['dx_version_high']}.{report['dx_version_low']}\n"
+            bugreport_text += f"DirectX VendorID: {report['dx_vendor_id']}\n"
+            bugreport_text += f"DirectX DeviceID: {report['dx_device_id']}\n"
+            bugreport_text += f"Operating System: {report['os_version']}\n"
+            bugreport_text += f"Attachment File Size: {report['attachment_file_size']}\n"
+            if protocol_version >= 2:
+                bugreport_text += f"Report Type: {report['report_type']}\n"
+                bugreport_text += f"Email Address: {report['email']}\n"
+                bugreport_text += f"Account Name: {report['account_name']}\n"
+                if protocol_version >= 3:
+                    bugreport_text += f"SteamID: {report['user_id']}\n"
+            bugreport_text += f"Title: {report['title']}\n"
+            bugreport_text += f"Body Length: {report['body_length']}\n"
+            bugreport_text += f"Body: {report['body']}\n"
 
-                with open(filename, "w", encoding='ascii', errors='replace') as file:
-                    file.write(
-                        f'{txt_bugreport}Memory Dump Filename: {filename}\n'
-                        f'Zip Size: {zipsize}kb\nDescription: {description}\n'
-                    )
+        except Exception as e:
+            self.log.error(f"Error parsing bug report: {e}")
+            return
 
-            # Finish with your pathetic upload check
-            reply += self.check_allowupload(reply, address)
-            self.serversocket.sendto(reply, address)
+        statistics_db.log_event('bugreport', report)
+        reply = self.build_upload_reply(b"p")
+
+        self.serversocket.sendto(reply, address)
 
     def parse_crashreport(self, address, data, clientid):
         self.log.info(f"{clientid}Received client crash report")
 
-        reply = b"\xFF\xFF\xFF\xFFd"
-
         ipstr = str(address)
         ipstr1 = ipstr.split('\'')
         ipactual = ipstr1[1]
 
-        message = data[3:].hex()
-        keylist = list(range(13))
-        vallist = list(range(13))
-        keylist[0] = "Unknown1"
-        keylist[1] = "Unknown2"
-        keylist[2] = "ModuleName"
-        keylist[3] = "FileName"
-        keylist[4] = "CodeFile"
-        keylist[5] = "ThrownAt"
-        keylist[6] = "Unknown3"
-        keylist[7] = "Unknown4"
-        keylist[8] = "AssertPreCondition"
-        keylist[9] = "FileSize"
-        keylist[10] = "OsCode"
-        keylist[11] = "Unknown5"
-        keylist[12] = "Message"
+        packet = data
+        # Convert hex message to binary data and split by null terminator
+        offset = 0
+        result = {}
 
-        templist = binascii.a2b_hex(message)
-        templist2 = templist.split(b'\x00')
+        # Read fields using byte slicing.
+        # packet[0] is the crashreport request protocol (client sends 2)
+        result["ReqProto"] = packet[offset]
+        offset += 1
+        if result["ReqProto"] != 2:
+            self.log.warning(f"{clientid}Crashreport: unexpected req proto {result['ReqProto']}")
 
-        vallist[0] = str(int_wrapper(binascii.b2a_hex(templist2[0][2:4])))
-        vallist[1] = str(int_wrapper(binascii.b2a_hex(templist2[1])))
-        vallist[2] = str(templist2[2])
-        vallist[3] = str(templist2[3])
-        vallist[4] = str(templist2[4])
-        vallist[5] = str(int_wrapper(binascii.b2a_hex(templist2[5])))
-        vallist[6] = str(int_wrapper(binascii.b2a_hex(templist2[7])))
-        vallist[7] = str(int_wrapper(binascii.b2a_hex(templist2[10])))
-        vallist[8] = str(templist2[13])
-        vallist[9] = str(int_wrapper(binascii.b2a_hex(templist2[14])))
-        vallist[10] = str(int_wrapper(binascii.b2a_hex(templist2[15])))
-        vallist[11] = str(int_wrapper(binascii.b2a_hex(templist2[18])))
-        try:
-            vallist[12] = str(templist2[23])
-        except:
-            vallist[12] = ''
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"clientstats/exceptionlogs/{address}.{timestamp}.csv"
+        # readInt8: Version
+        result["Version"] = packet[offset]
+        offset += 1
 
-        f = open(filename, "w")
-        f.write("SteamExceptionsData")
-        f.write("\n")
-        f.write(keylist[0] + "," + keylist[1] + "," + keylist[2] + "," + keylist[3] + "," + keylist[4] + "," + keylist[5] + "," + keylist[6] + "," + keylist[7] + "," + keylist[8] + "," + keylist[9] + "," + keylist[10] + "," + keylist[11] + "," + keylist[12])
-        f.write("\n")
-        f.write(vallist[0] + "," + vallist[1] + "," + vallist[2] + "," + vallist[3] + "," + vallist[4] + "," + vallist[5] + "," + vallist[6] + "," + vallist[7] + "," + vallist[8] + "," + vallist[9] + "," + vallist[10] + "," + vallist[11] + "," + vallist[12])
-        f.close()
+        # readInt32: Build
+        result["Build"] = int.from_bytes(packet[offset:offset + 4], "little")
+        offset += 4
 
-        # d =  message type
-        # then 0 = invalid message protocol, 1 = upload request denied, 2 = Ok to upload to harvest server
-        # 2 = server accepts minidump, so client will send it now
-        reply += self.check_allowupload(reply, address)
+        # readString: ExeName
+        result["ModuleName"], offset = self.read_string(packet, offset)
+
+        # readString: ModuleName
+        result["FileName"], offset = self.read_string(packet, offset)
+
+        # readString: SourceFileName
+        result["SourceFileName"], offset = self.read_string(packet, offset)
+
+        # readInt32: CrashAddress
+        result["CrashAddress"] = int.from_bytes(packet[offset:offset + 4], "little")
+        offset += 4
+
+        # readInt32: ErrorCode
+        result["ErrorCode"] = int.from_bytes(packet[offset:offset + 4], "little")
+        offset += 4
+
+        # readInt32: Unknown2
+        result["Unknown2"] = int.from_bytes(packet[offset:offset + 4], "little")
+        offset += 4
+
+        # readString: Type
+        result["Type"], offset = self.read_string(packet, offset)
+
+        # readInt32: MinidumpSize
+        result["MinidumpSize"] = int.from_bytes(packet[offset:offset + 4], "little")
+        offset += 4
+
+        # readString: Os
+        result["Os"], offset = self.read_string(packet, offset)
+
+        # readInt16: Unknown3
+        result["Unknown3"] = int.from_bytes(packet[offset:offset + 2], "little")
+        offset += 2
+
+        # readInt16: Unknown4
+        result["Unknown4"] = int.from_bytes(packet[offset:offset + 2], "little")
+        offset += 2
+
+        # readInt8: Unknown5
+        result["Unknown5"] = packet[offset]
+        offset += 1
+
+        # If version == 3, read an extra Unknown6 (int32)
+        if result["Version"] == 3:
+            result["Unknown6"] = int.from_bytes(packet[offset:offset + 4], "little")
+            offset += 4
+
+        # Read reason length (DWORD) - we ignore its value
+        result["ReasonLength"] = int.from_bytes(packet[offset:offset + 4], "little")
+        offset += 4
+
+        # readString: Reason
+        result["Reason"], offset = self.read_string(packet, offset)
+
+        if result["ReasonLength"] != len(result["Reason"]):
+            self.log.debug("Crashreport: reason length mismatch (expected %d, got %d)",
+                           result["ReasonLength"], len(result["Reason"]))
+
+        statistics_db.log_event('crashreport', result)
+        require_upload = (result["MinidumpSize"] > 0)
+        reply = self.build_upload_reply(b"d")
+
         self.serversocket.sendto(reply, address)
 
-    def parse_encryptedbugreport(self, address, data, clientid):
-        self.log.info(f"{clientid}Received encrypted bug report stats")
-        # C2M_BUGREPORT details
-        #     u8(C2M_UPLOADDATA_PROTOCOL_VERSION) == 1
-        #     u16(encryptedlength)
-        #     remainder=encrypteddata
-        # encrypted payload:
-        #b'\x01\x01SteamExecutionData\x00\x18StatTimestamp\x001715563736\x00HashedSteamID\x0054bb1caa3f4d546b0ca9bab9575d712\x00LanguageID\x009\x00OSVersion\x002003  (Build 9200)\x00LogicalProcessors\x008\x00PhysicalProcessors\x008\x00CPUSpeed\x002999987552\x00TotalPhysRAM\x0034285973504\x00AvailPhysRAM\x0015219982336\x00TotalVirtual\x002147352576\x00AvailVirtual\x001769357312\x00SteamVersion\x00234\x00SteamUniverse\x001\x00SteamDuration\x0086\x00SteamUpdateDuration\x000\x00SteamUpdateStatus\x000\x00GameLaunches\x000\x00GameUpdateDuration\x000\x00GameLaunchDelay\x000\x00GameDuration\x000\x00GameCrashes\x000\x00SteamCrashes\x000\x00SteamRestartReason\x000\x00SteamDowntime\x00219\x00\x00\x00\x00\x00\x00'
-        #     byte(corruptionid)
-        #     byte(protocolid) // C2M_UPLOADDATA_DATA_VERSION == 1
-        #     string(tablename 40)
-        #     u8(numvalues)
-        #     for each value:
-        #         string(fieldname 32)
-        #         string(value 128)
+    def parse_uploaddata(self, address, data, clientid):
+        """
+        // Packet layout from client (BuildUploadDataMessage):
+        //  [0] = C2M_UPLOADDATA
+        //  [1] = '\n'
+        //  [2] = C2M_UPLOADDATA_PROTOCOL_VERSION == 1
+        //  [3..4] = encrypted_length (little-endian)
+        //  [5..end] = encrypted data
+        //
+        // Encrypted payload format:
+        //  [0] = corruption_id (0x01)
+        //  [1] = data_version (1)
+        //  [2..N] = tablename (null-terminated)
+        //           num_values (u8)
+        //           for each value => field_name, field_value (both null-terminated)
+        //           (padded to multiple of 8 bytes)
+        """
 
-        data_bin = bytes.fromhex(data.hex())
-        data_length = len(data_bin)
+        self.log.info(f"{clientid} Received encrypted bug report stats")
+
+        # 1) Convert the raw UDP data into bytes
+        data_bin = bytes(data)  # or bytes.fromhex(data.hex()), both effectively the same
+        # 2) Skip the first 2 bytes: [C2M_UPLOADDATA, '\n']
+        data_bin = data_bin[2:]
+
+        # 3) Parse protocol_version + encrypted_length
         buffer = io.BytesIO(data_bin)
-        protocol_version, = struct.unpack("B", buffer.read(1))
+
+        protocol_version = struct.unpack("B", buffer.read(1))[0]
         self.log.debug(f"protocol version: {protocol_version}")
-        encrypted_length, = struct.unpack("<H", buffer.read(2))
-        # Decrypt the remainder of the data
+
+        encrypted_length = struct.unpack("<H", buffer.read(2))[0]
         self.log.debug(f"encrypted length: {encrypted_length}")
-        # Initialize the IceKey with the specific key
-        ice = IceKey(1, [54, 175, 165, 5, 76, 251, 29, 113])
 
-        # Decrypt the data
-        decrypted = ice.Decrypt(data_bin[3:])
-        self.log.debug(f"encrypted: {data_bin}\n decrypted: {decrypted}")
-        # Process the decrypted data
+        # 4) Read the next `encrypted_length` bytes (the encrypted payload)
+        encrypted_data = buffer.read(encrypted_length)
+
+        # 5) Decrypt using the exact same key as the client
+        ice_key = IceKey(1, [54, 175, 165, 5, 76, 251, 29, 113])
+        decrypted = ice_key.Decrypt(encrypted_data)
+
+        self.log.debug(f"Encrypted raw: {encrypted_data}\nDecrypted: {decrypted}")
+
+        # 6) Parse fields from the decrypted buffer
         buffer = io.BytesIO(decrypted)
-        info = {"encrypted_length":data_length, }
 
-        # Extract information from the buffer
-        corruption_id, = struct.unpack("B", buffer.read(1))
-        protocol_id, = struct.unpack("B", buffer.read(1))
-        tablename = read_string_until_null(buffer)
-        num_values, = struct.unpack("B", buffer.read(1))
-        values = []
-        print(tablename)
-        for _ in range(num_values):
-            fieldname = read_string_until_null(buffer)
-            value = read_string_until_null(buffer)
-            if fieldname == b'StatTimestamp':
-                value = self.int_to_datetime_bytes(value)
-            values.append((fieldname, value))
+        corruption_id = struct.unpack("B", buffer.read(1))[0]
+        data_version = struct.unpack("B", buffer.read(1))[0]
 
-        # Add extracted values to the dictionary
-        info["corruption_id"] = corruption_id
-        info["protocol_id"] = protocol_id
-        info["tablename"] = tablename
-        info["num_values"] = num_values
-        info["values"] = values
+        try:
+            tablename = read_string_until_null(buffer)
+            num_values = struct.unpack("B", buffer.read(1))[0]
 
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"clientstats/bugreports/{address[0]}.{timestamp}.csv"
+            values = []
+            for _ in range(num_values):
+                fieldname = read_string_until_null(buffer)
+                value = read_string_until_null(buffer)
 
-        # Save the information to a CSV file
-        with open(filename, 'w', newline = '') as csv_file:
-            csv_writer = csv.writer(csv_file)
-            for field, val in values:
-                csv_writer.writerow([field, val])
+                # Example: if a field name is "StatTimestamp", convert int->datetime
+                if fieldname == b'StatTimestamp':
+                    value = self.int_to_datetime_bytes(value)
 
-        """//M2C_ACKUPLOADDATA details
-        u8(protocol okay (bool))"""
-        self.serversocket.sendto(b"\xFF\xFF\xFF\xFF\x72\x01", address)  # 72 = r command and the next byte is a bool, ok = 1, bad = 0
+                values.append((fieldname, value))
 
-    def int_to_datetime_bytes(self, value):
-        # Convert the byte string representing an integer to an actual integer
-        utctime = int(value.decode('ascii'))
-        # Pack it as an 8-byte buffer
-        # Convert the Unix timestamp to a datetime object
-        dt_object = datetime.utcfromtimestamp(utctime)
-        # Format the datetime object as a string
-        value = dt_object.strftime('%m/%d/%Y %H:%M:%S').encode('latin-1')
-        return value
+            decoded_values = [(f.decode('latin1'), v) for f, v in values]
+            statistics_db.log_event('uploaddata', {
+                'tablename': tablename.decode('latin1'),
+                'corruption_id': corruption_id,
+                'data_version': data_version,
+                'values': decoded_values})
+        except:
+            pass
+        finally:
+            # The reference implementation does not acknowledge this packet.
+            # Remove the custom quake-style response for compatibility.
+            pass
 
     def parse_steamstats(self, address, data, clientid):
         self.log.info(f"{clientid}Received steam stats")
+        offset = 0
 
-        ipstr = str(address)
-        ipstr1 = ipstr.split('\'')
-        ipactual = ipstr1[1]
+        # Read version (1 byte, int8)
+        version = data[offset]
+        offset += 1
 
-        message = binascii.b2a_hex(data[1:])
-        keylist = list(range(7))
-        vallist = list(range(7))
-        # keylist[0] = "LastUpload" # this was missing, shows up in ida in 2005.  havnt looked at older steam versions to see if it is also there
-        keylist[0] = "SuccessCount"
-        keylist[1] = "ShutdownFailureCount"  # this was flipped with unknownfailurecount
-        keylist[2] = "UnknownFailureCount"
-        keylist[3] = "UptimeCleanCounter"
-        keylist[4] = "UptimeCleanTotal"
-        keylist[5] = "UptimeFailureCounter"
-        keylist[6] = "UptimeFailureTotal"
-        # keylist[7] =
+        if version != 1:
+            self.log.error(f"Invalid version: {version}")
+            return
 
-        filename = binascii.a2b_hex(message[0:10]) # Steam.exe or Steam.dll
+        # Read the client string
+        client, offset = self.read_string(data, offset)
 
-        if filename in [b'Steam.exe\x00', b'Steam.dll\x00']:
-            vallist[0] = str(int(message[24:26], base = 16))
-            vallist[1] = str(int(message[26:28], base = 16))
-            vallist[2] = str(int(message[28:30], base = 16))
-            vallist[3] = str(int(message[30:32], base = 16))
-            vallist[4] = str(int(message[32:34], base = 16))
-            vallist[5] = str(int(message[34:36], base = 16))
-            vallist[6] = str(int(message[36:38], base = 16))
-            # vallist[7] = str(int(message[38:40], base=16))
+        # Read the 7 int32 values (little-endian)
+        successCount          = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+        unknownFailureCount   = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+        shutdownFailureCount  = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+        uptimeCleanCounter    = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+        uptimeCleanTotal      = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+        uptimeFailureCounter  = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
+        uptimeFailureTotal    = int.from_bytes(data[offset:offset+4], "little")
+        offset += 4
 
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"clientstats/steamstats/{ipactual}.{timestamp}.{filename}.csv"
+        # Prepare parsed stats in a dictionary.
+        parsed = {
+            "Client": client,
+            "SuccessCount": successCount,
+            "UnknownFailureCount": unknownFailureCount,
+            "ShutdownFailureCount": shutdownFailureCount,
+            "UptimeCleanCounter": uptimeCleanCounter,
+            "UptimeCleanTotal": uptimeCleanTotal,
+            "UptimeFailureCounter": uptimeFailureCounter,
+            "UptimeFailureTotal": uptimeFailureTotal
+        }
 
-            f = open(filename, "w")
-            f.write(binascii.hexlify(message[2:21]).decode('latin-1'))
-            f.write("\n")
-            f.write(keylist[0] + "," + keylist[1] + "," + keylist[2] + "," + keylist[3] + "," + keylist[4] + "," + keylist[5] + "," + keylist[6])  # + "," + keylist[7])
-            f.write("\n")
-            f.write(vallist[0] + "," + vallist[1] + "," + vallist[2] + "," + vallist[3] + "," + vallist[4] + "," + vallist[5] + "," + vallist[6])  # + "," + vallist[7])
-
-            try:
-                f.write(f"\r\nrest of packet: {str(message[38:])}")
-            except:
-                pass
-
-            f.close()
-        else:
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"clientstats/steamstats/{ipactual}.{timestamp}.unknown.csv"
-
-            f = open(filename, "w")
-            f.write(str(binascii.a2b_hex(message)))
-
-        self.serversocket.sendto(b"\xFF\xFF\xFF\xFFf", address)
+        statistics_db.log_event('steamstats', parsed)
+        # The native server does not emit an acknowledgement for this packet.
+        # Send response back to client.
+        # self.serversocket.sendto(b"\xFF\xFF\xFF\xFFf", address)
 
     def parse_phonehome(self, address, data, clientid):
-        self.log.info(f"{clientid}Received Phone Home")
         """
-        // C2M_PHONEHOME
-        //	u8( C2M_PHONEHOME_PROTOCOL_VERSION )
-        //	u32( sessionid ) or 0 to request a new sessionid
-        //  u16(encryptedlength)
-        //  remainder = encrypteddata:
-        // u8 corruption id == 1
-        //  string build unique id
-        //  string computername
-        //	string username
-        //  string gamedir
-        //  float( enginetimestamp )
-        //  u8 messagetype:
-        //    1:  engine startup
-        //    2:  engine shutdown
-        //    3:  map started + mapname
-        //    4:  map finished + mapname
-        //	string( mapname )
+        // Layout of raw, unencrypted data from client:
+        //  [0] = C2M_PHONEHOME (0x01)
+        //  [1] = '\n' (0x0A)
+        //  [2] = C2M_PHONEHOME_PROTOCOL_VERSION (byte)
+        //  [3..6]  = session_id (uint32)
+        //  [7..8]  = encrypted_length (uint16)
+        //  [9..end] = encrypted data
+
+        // Inside the encrypted portion, the C++ code writes:
+        //  [0] = corruption_id (u8) => 0x01
+        //  [1] = data_version (u8)
+        //  [2..N] = build_identifier (string)
+        //           computer_name (string)
+        //           username (string)
+        //           game_dir (string)
+        //           build_number (int32)
+        //           engine_timestamp (float)
+        //           message_type (u8)
+        //           if message_type in (3,4) => map_name (string)
+        //           isDebugUser (u8)
+        //           (padding to 8-byte multiple)
         """
+        self.log.info(f"{clientid} Received Phone Home")
 
-        ice = IceKey(1, [27, 200, 13, 14, 83, 45, 184, 54])  # unknown key, this is probably incorrect
+        #
+        # 1) Skip the first 2 bytes: [C2M_PHONEHOME, '\n']
+        #    so the next byte we read is the protocol version.
+        #
+        data_bin = data[2:]  # was data[3:] previously
 
-        # Assuming you have received the encrypted data in the 'data' variable
-        data_bin = bytes.fromhex(data[3:].hex())
-        data_length = len(data_bin)
-        reply = b"\xFF\xFF\xFF\xFF\x6E"
-        # Create a NetworkBuffer instance with the decrypted data
+        # Prepare a small quake-style header for our reply
+        # The C++ code expects to see something that ultimately yields
+        # responseType == 0x6E (M2C_ACKPHONEHOME) after discarding quake?s 4x 0xFF.
+        reply_header = b"\xFF\xFF\xFF\xFF\x6E"
+
         buffer = NetworkBuffer(data_bin)
 
-        # Extract information
-        protocol_version = buffer.extract_u8()
+        # 2) Parse protocol_version, session_id, encrypted_length.
+        protocol_version = buffer.extract_u8()   # This is now the correct byte
         session_id = buffer.extract_u32()
+        encrypted_length = buffer.extract_u16()
+        encrypted_data = buffer.extract_buffer(encrypted_length)
 
-        # Check if the byte string matches any of the stored context IDs
+        #
+        # 3) Decrypt the remainder using the correct ICE key
+        #    The C++ code uses:
+        #    unsigned char ucEncryptionKey[8] = {191, 1, 0, 222, 85, 39, 154, 1};
+        #
+        ice = IceKey(1, [191, 1, 0, 222, 85, 39, 154, 1])
+        decrypted = ice.Decrypt(encrypted_data)
+
+        buffer = NetworkBuffer(decrypted)
+
+        # 4) Read the encrypted fields in the order they're written by the client
+        corruption_id = buffer.extract_u8()      # 0x01
+        data_version = buffer.extract_u8()       # e.g. 1
+
+        build_id = buffer.extract_string()       # "build_identifier"
+        computer_name = buffer.extract_string()
+        username = buffer.extract_string()
+        game_dir = buffer.extract_string()
+
+        build_number = buffer.extract_u32()      # int32 build number
+        engine_timestamp = buffer.extract_float()# float( realtime )
+        message_type = buffer.extract_u8()
+
+        # If message_type is 3 or 4, the client wrote a map_name string
+        map_name = ""
+        if message_type in (3, 4):
+            map_name = buffer.extract_string()
+
+        # The client always writes isDebugUser (byte) after the optional map name
+        is_debug_user = buffer.extract_u8()
+
+        # 5) Validate the session ID if not zero
         is_match = globalvars.session_id_manager.match_byte_string(session_id)
-
         if session_id != 0 and not is_match:
-            self.log.warning(f"{clientid}Session ID Does not match any known previous IDs! {session_id}")
-            self.serversocket.sendto(reply + b"\x00", address)
+            self.log.warning(
+                f"{clientid} Session ID does not match any known previous IDs! {session_id}"
+            )
+            # The server tells the client to discard / fail
+            self.serversocket.sendto(reply_header + b"\x00", address)
             return
-        else:
-            encrypted_length = buffer.extract_u16()
-            encrypted_data = buffer.extract_buffer(encrypted_length)
 
-            # Decrypt the remainder of the data
-            decrypted = ice.Decrypt(encrypted_data)
+        # 6) If session_id == 0, create a new one
+        if session_id == 0:
+            session_id = globalvars.session_id_manager.add_new_context_id(address[0])
 
-            # Create a new NetworkBuffer instance for the decrypted data
-            buffer = NetworkBuffer(decrypted)
+        # 7) Log the extracted data
+        self.log.info(f"{clientid} Decrypted phonehome packet => "
+                      f"prot_ver={protocol_version}, corruption_id={corruption_id}, "
+                      f"data_ver={data_version}, build_id={build_id}, comp={computer_name}, "
+                      f"user={username}, game_dir={game_dir}, build_number={build_number}, "
+                      f"engine_ts={engine_timestamp}, msg_type={message_type}, map={map_name}, "
+                      f"isDebug={is_debug_user}, session_id={session_id}")
 
-            # Extract the remaining information
-            corruption_id = buffer.extract_u8()
-            unique_id = buffer.extract_string()
-            computer_name = buffer.extract_string()
-            username = buffer.extract_string()
-            game_dir = buffer.extract_string()
-            engine_timestamp = struct.unpack('f', buffer.extract_buffer(4))[0]
-            message_type = buffer.extract_u8()
+        # 8) Write extracted data to a file
+        extracted_data = {
+            "protocol_version": protocol_version,
+            "session_id": session_id,
+            "encrypted_length": encrypted_length,
+            "corruption_id": corruption_id,
+            "data_version": data_version,
+            "build_id": build_id,
+            "computer_name": computer_name,
+            "username": username,
+            "game_dir": game_dir,
+            "build_number": build_number,
+            "engine_timestamp": engine_timestamp,
+            "message_type": message_type,
+            "map_name": map_name,
+            "is_debug_user": is_debug_user
+        }
+        statistics_db.log_event('phonehome', extracted_data)
 
-            # Log the received data
-            self.log.info(f"{clientid}Received Phone Home")
+        #
+        # 9) Send back:  quake-style header + (allowPlay=1) + session_id (4 bytes)
+        #
+        # The C++ code (host_phonehome.cpp) does:
+        #   responseType = replybuf.ReadByte();  // expecting 0x6E
+        #   bool allowPlay = replybuf.ReadByte() == 1; // next byte
+        #   session_id = replybuf.ReadLong(); // next 4 bytes
+        #
+        # So we need:  [FF,FF,FF,FF, 6E, 01, <4 bytes sessionID> ]
+        #
+        ack_payload = reply_header + b"\x01" + struct.pack("<I", session_id)
 
-            # Prepare the extracted data
-            extracted_data = {
-                "protocol_version" : protocol_version,
-                "session_id"       : session_id,
-                "encrypted_length" : encrypted_length,
-                "corruption_id"    : corruption_id,
-                "unique_id"        : unique_id,
-                "computer_name"    : computer_name,
-                "username"         : username,
-                "game_dir"         : game_dir,
-                "engine_timestamp" : engine_timestamp,
-                "message_type"     : message_type
-            }
-
-            # Generate a filename based on the IP address and timestamp
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"clientstats/phonehome/{address}.{timestamp}.phonehome.txt"
-
-            # Write the extracted data to a file
-            with open(filename, "w") as file:
-                for key, value in list(extracted_data.items()):
-                    file.write("\n{} : {}".format(key, value))
-
-            """// M2C_ACKPHONEHOME details
-            //	u8(connection allowed (bool))
-            //  u32(sessionid)"""
-            if session_id == 0:
-                session_id = globalvars.session_id_manager.add_new_context_id()  # random session id
-
-            self.serversocket.sendto(reply + b"\x01" + session_id, address)
+        self.serversocket.sendto(ack_payload, address)
 
     def parse_surveyresults(self, address, data, clientid):
         self.log.info(f'{clientid}Recieved Survey Results')
-
-        # Helper function to read a null-terminated string
-        def read_null_terminated_string(bytes_, start_index):
-            end_index = bytes_.find(b'\x00', start_index)
-            return bytes_[start_index:end_index], end_index + 1
 
         ice = IceKey(1, [27, 200, 13, 14, 83, 45, 184, 54])
         data_bin = bytes.fromhex(data[3:].hex())
@@ -663,11 +820,10 @@ class CSERServer(UDPNetworkHandler):
             self.log.info(f'{clientid}Failed To Decrypt Survey Results')
             self.serversocket.sendto(b"\xFF\xFF\xFF\xFF\x68\x00", address)
         else:
-            # TODO put this into the database as steam2_survey_data
             if data[0:1] == b"\x02":
 
                 # Client ID
-                result['clientid'], index = read_null_terminated_string(byte_string, index)
+                result['clientid'], index = self.read_string(byte_string, index)
 
                 # RAM Size
                 result['ramsize'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
@@ -691,13 +847,13 @@ class CSERServer(UDPNetworkHandler):
                 index += 1
 
                 # Video Driver DLL
-                result['videodriverdll'], index = read_null_terminated_string(byte_string, index)
+                result['videodriverdll'], index = self.read_string(byte_string, index)
 
                 # Skip 1 byte
                 index += 1
 
                 # Video Card
-                result['videocard'], index = read_null_terminated_string(byte_string, index)
+                result['videocard'], index = self.read_string(byte_string, index)
 
                 # High Video Card Version
                 result['highvidcardver'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
@@ -717,7 +873,7 @@ class CSERServer(UDPNetworkHandler):
                     result[field], index = byte_string[index], index + 1
 
                 # Processor Type
-                result['proctype'], index = read_null_terminated_string(byte_string, index)
+                result['proctype'], index = self.read_string(byte_string, index)
 
                 # Logical Processor Count, Physical Processor Count, Hyper-Threading
                 result['logicalprocessorcount'], index = byte_string[index], index + 1
@@ -727,13 +883,13 @@ class CSERServer(UDPNetworkHandler):
                 result['hyperthreading'], index = byte_string[index], index + 1
 
                 # AGP String
-                result['agpstr'], index = read_null_terminated_string(byte_string, index)
+                result['agpstr'], index = self.read_string(byte_string, index)
 
                 # Bus Speed
                 result['bus_speed'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
 
                 # Windows Version
-                result['winver'], index = read_null_terminated_string(byte_string, index)
+                result['winver'], index = self.read_string(byte_string, index)
 
                 # IP Address
                 # Unpack the three bytes into three integers
@@ -757,7 +913,7 @@ class CSERServer(UDPNetworkHandler):
 
             elif data[0:1] == b"\x05":
 
-                result['clientid'], index = read_null_terminated_string(byte_string, index)
+                result['clientid'], index = self.read_string(byte_string, index)
 
                 # RAM Size
                 result['ramsize'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
@@ -788,21 +944,21 @@ class CSERServer(UDPNetworkHandler):
                     result[f'{game}_depth'], index = byte_string[index], index + 1
                     i += 1
 
-                result['adapter'], index = read_null_terminated_string(byte_string, index)
+                result['adapter'], index = self.read_string(byte_string, index)
 
-                result['driver_version'], index = read_null_terminated_string(byte_string, index)
+                result['driver_version'], index = self.read_string(byte_string, index)
 
-                result['video_card'], index = read_null_terminated_string(byte_string, index)
+                result['video_card'], index = self.read_string(byte_string, index)
 
-                result['directx_videocard_driver'], index = read_null_terminated_string(byte_string, index)
+                result['directx_videocard_driver'], index = self.read_string(byte_string, index)
 
-                result['directx_videocard_version'], index = read_null_terminated_string(byte_string, index)
+                result['directx_videocard_version'], index = self.read_string(byte_string, index)
 
-                result['msaa_modes'], index = read_null_terminated_string(byte_string, index)
+                result['msaa_modes'], index = self.read_string(byte_string, index)
 
-                result['monitor_vendor'], index = read_null_terminated_string(byte_string, index)
+                result['monitor_vendor'], index = self.read_string(byte_string, index)
 
-                result['monitor_model'], index = read_null_terminated_string(byte_string, index)
+                result['monitor_model'], index = self.read_string(byte_string, index)
 
                 result['driver_year'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
 
@@ -868,7 +1024,7 @@ class CSERServer(UDPNetworkHandler):
 
                 result['ntfs'], index = byte_string[index], index + 1
 
-                result['cpu_vendor'], index = read_null_terminated_string(byte_string, index)
+                result['cpu_vendor'], index = self.read_string(byte_string, index)
 
                 result['physical_processors'], index = byte_string[index], index + 1
 
@@ -876,11 +1032,11 @@ class CSERServer(UDPNetworkHandler):
 
                 result['hyperthreading'], index = byte_string[index], index + 1
 
-                result['agp'], index = read_null_terminated_string(byte_string, index)
+                result['agp'], index = self.read_string(byte_string, index)
 
                 result['bus_speed'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
 
-                result['os_version'], index = read_null_terminated_string(byte_string, index)
+                result['os_version'], index = self.read_string(byte_string, index)
 
                 result['audio_device'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
 
@@ -897,14 +1053,13 @@ class CSERServer(UDPNetworkHandler):
                 result['free_hd_space'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
 
                 result['total_hd_space'], index = struct.unpack('>I', byte_string[index:index + 4])[0], index + 4
-                # TODO loop here
+                drives = []
+                while index + 4 <= len(byte_string):
+                    drive, = struct.unpack('>I', byte_string[index:index + 4])
+                    drives.append(drive)
+                    index += 4
+                result['drives'] = drives
 
-
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = "clientstats/surveys/{}.{}.hwsurvey.txt".format(address[0], timestamp)
-            with open(filename, 'w') as file:
-                for key, value in result.items():
-                    if key != 'DecryptionOK':
-                        file.write(f'{key}: {value}\n')
+            statistics_db.record_s3surveydata(result)
 
             self.serversocket.sendto(b"\xFF\xFF\xFF\xFF\x68\x01\x00\x00\x00" + b"thank you\x00", address)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BLOB, BigInteger, Boolean, Column, DECIMAL, Date, DateTime, Float, ForeignKey, Integer, SmallInteger, String, Text, Time, TypeDecorator, UniqueConstraint, event, update
+from sqlalchemy import BLOB, BigInteger, Boolean, Column, DECIMAL, Date, DateTime, Float, ForeignKey, Integer, JSON, LargeBinary, SmallInteger, String, Text, Time, TypeDecorator, UniqueConstraint, event, text, update
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -11,6 +11,7 @@ Base = declarative_base()
 class custom_DateTime(TypeDecorator):
     """Stores datetimes in the database and converts back to datetime objects when retrieved."""
     impl = DateTime
+    cache_ok = True
 
     def process_bind_param(self, value, dialect):
         if isinstance(value, datetime):
@@ -40,6 +41,19 @@ class ExecutedSQLFile(Base):
     __tablename__ = 'executed_sql_files'
     id = Column(Integer, primary_key = True)
     filename = Column(String(255), unique = True)
+
+
+class GlobalIDSequence(Base):
+    """
+    Stores the sequence counter for GlobalID generation.
+    Each box_id has its own sequence that increments for each new GlobalID.
+    The sequence resets when the start_time changes (typically per-second).
+    """
+    __tablename__ = 'globalid_sequence'
+    box_id = Column(Integer, primary_key=True)
+    last_start_time = Column(Integer, nullable=False, default=0)  # Seconds since 2005-01-01
+    sequence_count = Column(Integer, nullable=False, default=0)  # Current sequence within the start_time
+
 
 # 2002 Beta 1 Tables
 class Beta1_User(Base):
@@ -111,6 +125,7 @@ class UserRegistry(Base):
     loginkey = Column(String(128))
     sessionkey = Column(String(128))
     symmetric_key = Column(String(256))
+    ufsSessionToken = Column(String(16))
     # community = relationship("friends_registry", backref = "user", uselist = False)
 
 class AccountExternalBillingInfoRecord(Base):
@@ -249,6 +264,16 @@ class AuthenticationTicketsRecord(Base):
     UserIPAddress = Column(String(60))
     TicketCreationTime = Column(custom_DateTime())
     TicketExpirationTime = Column(custom_DateTime())
+    TicketData = Column(LargeBinary)
+
+
+class AuthenticationTicketLog(Base):
+    __tablename__ = 'authenticationticketlog'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    UserRegistry_UniqueID = Column(Integer, ForeignKey('userregistry.UniqueID'))
+    TicketData = Column(LargeBinary)
+    TicketCreationTime = Column(custom_DateTime())
+    TicketExpirationTime = Column(custom_DateTime())
 
 
 class FriendsRegistry(Base):
@@ -360,7 +385,7 @@ class FriendsPlayHistory(Base):
     appID = Column(Integer)
     name = Column(String(256))
     serverID = Column(Integer)
-    server_ip = Column(Integer)
+    server_ip = Column(BigInteger)
     server_port = Column(Integer)
     game_data = Column(BLOB)
     token_crc = Column(Integer)
@@ -639,6 +664,8 @@ class ChatRoomMembers(Base):
     chatRoomID = Column(Integer, ForeignKey('chatrooms_registry.UniqueID'))
     friendRegistryID = Column(Integer, ForeignKey('friends_registry.accountID'))
     relationship = Column(Integer)
+    inviterAccountID = Column(Integer, ForeignKey('friends_registry.accountID'), nullable = True)
+    memberRankDetails = Column(Integer, default = 0)
     __table_args__ = (UniqueConstraint('chatRoomID', 'friendRegistryID'),)
 
 class ChatRoomSpeakers(Base):
@@ -725,6 +752,7 @@ class ClientInventoryItems(Base):
     position = Column(Integer)
     trade_after_datetime = Column(String(100))
 
+
 class PersistentItem(Base):
     __tablename__ = 'persistent_items'
 
@@ -737,8 +765,10 @@ class PersistentItem(Base):
     quality = Column(Integer, nullable=False)
     inventory_token = Column(Integer, nullable=False)
     quantity = Column(Integer, nullable=False)
+    blob_data = Column(LargeBinary(1024), nullable=True)  # Up to 1024 bytes of custom item data
 
     attributes = relationship("PersistentItemAttribute", back_populates="item", cascade="all, delete-orphan")
+
 
 class PersistentItemAttribute(Base):
     __tablename__ = 'persistent_item_attributes'
@@ -762,11 +792,10 @@ class LobbyRegistry(Base):
     flags = Column(Integer)
     owner_accountID = Column(Integer, ForeignKey('friends_registry.accountID'))
     cellID = Column(Integer)
-    public_ip = Column(Integer)
+    public_ip = Column(BigInteger)
     members_max = Column(Integer)
     # Relationships
     members = relationship("LobbyMembers", backref = "lobby", cascade = "all, delete-orphan")
-    lobby_metadata = relationship("LobbyMetadata", backref = "lobby", cascade = "all, delete-orphan")
 
 class LobbyMembers(Base):
     __tablename__ = 'Lobby_Members'
@@ -777,14 +806,6 @@ class LobbyMembers(Base):
     relation = Column(Integer)
     __table_args__ = (UniqueConstraint('LobbyID', 'friendRegistryID'),)
 
-class LobbyMetadata(Base):
-    __tablename__ = 'Lobby_Netadata'
-    UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    LobbyID = Column(Integer, ForeignKey('Lobby_Registry.UniqueID'))
-    friendRegistryID = Column(Integer, ForeignKey('friends_registry.accountID'))
-    key = Column(String(256))
-    value = Column(String(256))
-    __table_args__ = (UniqueConstraint('LobbyID', 'friendRegistryID', 'key'),)
 
 ##################################
 #           LeaderBoard          #
@@ -799,6 +820,7 @@ class LeaderboardRegistry(Base):
     display_type = Column(Integer)
     __table_args__ = (UniqueConstraint('appID', 'name'),)
 
+
 class LeaderboardEntry(Base):
     __tablename__ = 'Leaderboard_Entry'
     UniqueID = Column(Integer, primary_key = True, autoincrement = True)
@@ -810,6 +832,7 @@ class LeaderboardEntry(Base):
     details = Column(BLOB)
     ugcID = Column(Integer)
     __table_args__ = (UniqueConstraint('friendRegistryID', 'LeaderboardID'),)
+
 
 class RichPresence(Base):
     __tablename__ = 'Rich_Presence'
@@ -834,9 +857,11 @@ class UserMachineIDRegistry(Base):
     __tablename__ = 'UserMachineID_Registry'
     UniqueID = Column(Integer, primary_key = True, autoincrement = True)
     accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
-    BB3 = Column(String(256))
-    FF2 = Column(String(256))
-    _3B3 = Column(String(256))
+    BB3 = Column(String(256), nullable=True)   # Machine GUID
+    FF2 = Column(String(256), nullable=True)   # MAC Address
+    _3B3 = Column(String(256), nullable=True)  # Disk ID
+    BBB = Column(String(256), nullable=True)   # BIOS Serial
+    _333 = Column(String(256), nullable=True)  # Custom Data
 
 ##################################
 # Start of SteamDB database dump #
@@ -919,58 +944,10 @@ class RandomList(Base):
 ####################################
 #      Purchase Related Tables     #
 ####################################
-
-class GuestPassRegistry(Base):
-    __tablename__ = 'GuestPasses_Registry'
-    UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    GID = Column(Integer)
-    PackageID = Column(Integer)
-    TimeCreated = (custom_DateTime())
-    TimeExpiration = (custom_DateTime())
-    Sent = Column(Integer, nullable = True)
-    Acked = Column(Integer, nullable = True)
-    Redeemed = Column(Integer, nullable = True)
-    RecipientAddress = Column(String(256), nullable = True)
-    RecipientAccountID = Column(Integer,  ForeignKey('userregistry.UniqueID'), nullable = True)
-    SenderAddress = Column(String(256), nullable = True)
-    SenderName = Column(String(256), nullable = True)
-    SenderAccountID = Column(Integer, ForeignKey('userregistry.UniqueID'), nullable = True)
-
-
-class ExternalPurchaseInfoRecord(Base):
-    """For paypal and maybe 1 click payments"""
-    __tablename__ = 'external_purchase_record'
-    UniqueID = Column(Integer, primary_key=True, autoincrement=True)
-    accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
-    PackageID = Column(Integer)
-    TransactionType = Column(Integer)
-    TransactionData = Column(String(20))
-    DateAdded = Column(custom_DateTime())
-
-
 class Steam3LicenseRecord(Base):
-    """    	DWORD get_PackageId();
-	DWORD get_TimeCreated();
-	DWORD get_TimeNextProcess();
-	DWORD get_MinuteLimit();
-	DWORD get_MinutesUsed();
-	PaymentMethod get_PaymentMethod();
-	const char * get_PurchaseCountryCode();
-	DWORD get_Flags(); // LicenseFlags
-	LicenseType get_LicenseType();
-	DWORD get_TerritoryCode();
-	DWORD get_ChangeNumber();
-	DWORD get_OwnerAccountId();
-	DWORD get_InitialPeriod();
-	DWORD get_InitialTimeUnit();
-	DWORD get_RenewalPeriod();
-	DWORD get_RenewalTimeUnit();
-	ULONGLONG get_AccessToken();
-	DWORD get_MasterPackageId();
-"""
     __tablename__ = 'steam3_license_record'
     UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
+    AccountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
     PackageID = Column(Integer)
     LicenseKey = Column(String(256))
     DateAdded = Column(custom_DateTime())
@@ -991,31 +968,66 @@ class Steam3LicenseRecord(Base):
     MasterPackageID = Column(Integer)
 
 
+class ExternalPurchaseInfoRecord(Base):
+    """For paypal and maybe 1 click payments"""
+    __tablename__ = 'external_purchase_record'
+    UniqueID = Column(Integer, primary_key=True, autoincrement=True)
+    AccountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
+    PackageID = Column(Integer)
+    TransactionType = Column(Integer)
+    TransactionData = Column(String(20))
+    DateAdded = Column(custom_DateTime())
+
+
 class Steam3TransactionsRecord(Base):
     __tablename__ = 'steam3_transactions_record'
-    UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
-    TransactionType = Column(Integer)
-    TransactionEntryID = Column(Integer) # if type is cc, it'll point to Steam3_CC_Record
-    PackageID = Column(Integer)
-    GiftUniqueID = Column(Integer, ForeignKey('GuestPasses_Registry.UniqueID'), nullable = True)
-    AddressEntryID = Column(Integer, ForeignKey('steam3_transaction_address_record.UniqueID'), nullable = True)
+
+    # UniqueID is a 64-bit GlobalID generated by GlobalIDGenerator
+    UniqueID = Column(BigInteger, primary_key=True, autoincrement=False)
+    AccountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
+    PaymentType = Column(Integer)  # e.g. CC, PayPal, CD?Key, etc.
+    PaymentEntryID = Column(Integer)  # Points to Steam3CCRecord if CC, or external purchase, etc.
+
+    PackageID = Column(Integer)  # The purchased subscription
+
+    # Gift fields merged here:
+    GifterAccountID = Column(Integer, nullable=True)
+    GifteeEmail = Column(String(256), nullable=True)
+    GifteeAccountID = Column(String(256), nullable=True)
+    GiftMessage = Column(String(512), nullable=True)
+    GifteeName = Column(String(256), nullable=True)
+    Sentiment = Column(String(256), nullable=True)
+    Signature = Column(String(256), nullable=True)
+
+    AddressEntryID = Column(Integer, ForeignKey('steam3_transaction_address_record.UniqueID'), nullable=True)
+    ShippingEntryID = Column(Integer, ForeignKey('steam3_transaction_address_record.UniqueID'), nullable=True)
+
+    LicenseEntryID = Column(Integer, ForeignKey('steam3_license_record.UniqueID'), nullable=True)
     TransactionDate = Column(custom_DateTime())
-    DateCompleted = Column(custom_DateTime(), nullable = True)
-    DateCancelled = Column(custom_DateTime(), nullable = True)
-    DateAcknowledged = Column(custom_DateTime(), nullable = True)
+    DateCompleted = Column(custom_DateTime(), nullable=True)
+    DateCancelled = Column(custom_DateTime(), nullable=True)
+    DateAcknowledged = Column(custom_DateTime(), nullable=True)
+
     BaseCostInCents = Column(Integer)
     DiscountsInCents = Column(Integer)
     TaxCostInCents = Column(Integer)
-    ShippingCostInCents = Column(Integer, default = 0)
-    ShippingEntryID = Column(Integer, ForeignKey('steam3_transaction_address_record.UniqueID'), nullable = True)
-    GuestPasses_Included = Column(String(256))
+    ShippingCostInCents = Column(Integer, default=0)
+
+    PassInformation = Column(JSON, nullable=False, default={})
+
+    # Relationship to track multiple passes via a junction table:
+    guest_passes = relationship("TransactionGuestPasses", back_populates="transaction")
+
+    def __repr__(self):
+        return f"<Steam3TransactionsRecord(UniqueID={self.UniqueID}, " \
+               f"AccountID={self.AccountID}, GifterAccountID={self.GifterAccountID}, " \
+               f"GifteeAccountID={self.GifteeAccountID}, ...)>"
 
 
 class Steam3TransactionAddressRecord(Base):
     __tablename__ = 'steam3_transaction_address_record'
     UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
+    AccountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
     Name = Column(String(256))
     Address1 = Column(String(256))
     Address2 = Column(String(256))
@@ -1030,29 +1042,113 @@ class Steam3CCRecord(Base):
     """ Used to hold all other payment types besides paypal and oneclick"""
     __tablename__ = 'steam3_cc_record'
     UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
+    AccountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
     CardType = Column(Integer)
     CardNumber = Column(String(256))
     CardHolderName = Column(String(256))
     CardExpYear = Column(Integer)
     CardExpMonth = Column(Integer)
     CardCVV2 = Column(Integer)
-    BillingAddressEntryID = Column(Integer, ForeignKey('steam3_transaction_address_record.UniqueID'), nullable = True)
+    #BillingAddressEntryID = Column(Integer, ForeignKey('steam3_transaction_address_record.UniqueID'), nullable = True)
     DateAdded = Column(custom_DateTime())
 
-class Steam3GiftTransactionRecord(Base):
-    """ Used to hold temporary gifting information, until transaction is finalized"""
-    __tablename__ = 'steam3_gift_transaction_record'
+
+class TransactionGuestPasses(Base):
+    __tablename__ = 'TransactionGuestPasses'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    transaction_id = Column(BigInteger, ForeignKey('steam3_transactions_record.UniqueID'))
+    guest_pass_id = Column(Integer, ForeignKey('GuestPasses_Registry.UniqueID'))
+
+    # Optional: Establish relationships for easy navigation
+    transaction = relationship("Steam3TransactionsRecord", back_populates="guest_passes")
+    guest_pass = relationship("GuestPassRegistry")
+
+class GuestPassRegistry(Base):
+    """
+    Registry for guest passes and gift passes.
+
+    Guest passes are temporary licenses that can be sent to friends.
+    Gift passes are permanent licenses that can be gifted.
+
+    The pass type is determined by the billing type of the target subscription:
+    - BillingType 4 (GuestPass): Temporary, time-limited
+    - BillingType 6 (Gift): Permanent gift
+
+    Extended info keys from the subscription determine pass behavior:
+    - GrantExpirationDays: Days until the pass expires if not sent
+    - GrantPassesCount: Number of passes granted
+    - InitialPeriod: Duration of the pass once activated
+    - InitialTimeUnit: Unit for InitialPeriod (Day, Week, etc.)
+    """
+    __tablename__ = 'GuestPasses_Registry'
     UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    sender_accountID = Column(Integer, ForeignKey('userregistry.UniqueID'))
-    SubID = Column(Integer)
-    GifteeEmail = Column(String(256))
-    GifteeAccountID = Column(String(256))
-    GiftMessage = Column(String(512))
-    GifteeName = Column(String(256))
-    Sentiment = Column(String(256))
-    Signature = Column(String(256))
-    DateAdded = Column(custom_DateTime())
+    PackageID = Column(Integer)  # The subscription/package this pass grants
+    SourcePackageID = Column(Integer, nullable = True)  # The subscription that created this pass
+    TimeCreated = (custom_DateTime())
+    TimeExpiration = (custom_DateTime())  # When the pass expires for sending
+    TimeSent = Column(Integer, nullable = True)  # Unix timestamp when sent (0 if not sent)
+    TimeAcked = Column(Integer, nullable = True)  # Unix timestamp when acknowledged (0 if not)
+    TimeRedeemed = Column(Integer, nullable = True)  # Unix timestamp when redeemed (0 if not)
+    TimeActivationExpires = (custom_DateTime())  # When the activated pass expires (for guest passes)
+    Sent = Column(Integer, nullable = True, default = 0)  # Legacy: 1 if sent, 0 otherwise
+    Acked = Column(Integer, nullable = True, default = 0)  # Legacy: 1 if acknowledged
+    Redeemed = Column(Integer, nullable = True, default = 0)  # Legacy: 1 if redeemed
+    RecipientAddress = Column(String(256), nullable = True)  # Email address of recipient
+    RecipientAccountID = Column(Integer, ForeignKey('userregistry.UniqueID'), nullable = True)
+    SenderAddress = Column(String(256), nullable = True)  # Email address of sender
+    SenderName = Column(String(256), nullable = True)  # Display name of sender
+    PassTimeLimit = Column(Integer)  # InitialPeriod value
+    PassTimeLimitUnit = Column(String(10))  # InitialTimeUnit value
+    AppIDOwnedRequirement = Column(Integer)  # AppID that must be owned for this pass
+    # SenderAccountID will ALWAYS be set, but if sent is null/0
+    # then we send an empty string in the guestpass packet
+    SenderAccountID = Column(Integer, ForeignKey('userregistry.UniqueID'), nullable = True)
+    # Pass type: 0 = GuestPass (temp), 1 = Gift (permanent)
+    PassType = Column(Integer, nullable = True, default = 0)
+    # State: 0 = Available, 1 = Sent, 2 = Acked, 3 = Redeemed, 4 = Expired, 5 = Revoked
+    State = Column(Integer, nullable = True, default = 0)
+    # Gift-specific fields
+    GiftMessage = Column(Text, nullable = True)  # Personal message with gift
+    Signature = Column(String(256), nullable = True)  # Gift card signature
+    Sentiment = Column(String(256), nullable = True)  # Gift card sentiment
+
+
+class PendingSystemIM(Base):
+    """
+    Queue for SystemIM messages that need to be delivered when a user comes online.
+
+    When a user is offline and an event occurs that requires a SystemIM notification
+    (guest pass received, gift revoked, etc.), we store it here and deliver when
+    they log in.
+    """
+    __tablename__ = 'pending_system_im'
+    UniqueID = Column(Integer, primary_key = True, autoincrement = True)
+    RecipientAccountID = Column(Integer, ForeignKey('userregistry.UniqueID'), nullable = False)
+    MessageType = Column(Integer, nullable = False)  # SystemIMType enum value
+    MessageBody = Column(Text, nullable = True)  # Message text
+    MessageID = Column(BigInteger, nullable = True)  # Unique message identifier
+    AckRequired = Column(Integer, default = 1)  # Whether acknowledgment is required
+    TimeCreated = (custom_DateTime())
+    Delivered = Column(Integer, default = 0)  # 1 if delivered, 0 if pending
+    TimeDelivered = (custom_DateTime())  # When the message was delivered
+    # Optional reference to related guest pass
+    GuestPassID = Column(Integer, ForeignKey('GuestPasses_Registry.UniqueID'), nullable = True)
+
+# FIXME this is not needed, we store the gift/guest pass information in the transaction table
+"""class TemporaryPasses(Base):
+    __tablename__ = 'temporary_passes'
+    UniqueID = Column(Integer, primary_key=True, autoincrement=True)
+    AccountID = Column(Integer, ForeignKey('userregistry.UniqueID'), nullable=False)
+    TransactionID = Column(Integer, nullable=False)
+    PassInformation = Column(JSON, nullable=False)
+
+    def __repr__(self):
+        return (
+            f"<TemporaryPasses(id={self.id}, "
+            f"user_id={self.user_id}, "
+            f"transactionID={self.transactionID}, "
+            f"passes_json={self.passes_json})>"
+        )"""
 
 class CountryTax(Base):
     __tablename__ = 'country_tax'
@@ -1139,18 +1235,82 @@ class S3SurveyData(Base):
     NonSteamApp_fv = Column(Integer)
     machineid = Column(BigInteger)
     version = Column(Integer)
-    country = Column(Integer)
+    country = Column(String(255))
     ownership = Column(String(255))
+
+# ORM table classes
+class CserEvents(Base):
+    __tablename__ = 'cser_events'
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(32))
+    event_time = Column(DateTime)
+    data       = Column(JSON)
+
+
+class SurveyRaw(Base):
+    __tablename__ = 'survey_raw'
+    id   = Column(Integer, primary_key=True, autoincrement=True)
+    ts   = Column(DateTime)
+    data = Column(JSON)
+
+
+class SurveyTotals(Base):
+    __tablename__ = 'survey_totals'
+    field        = Column(String(64),  primary_key=True)
+    option_value = Column(String(128), primary_key=True)
+    count        = Column(Integer)
+
+
+class GameplayUsers(Base):
+    __tablename__ = 'gameplay_users'
+    day     = Column(Date,      primary_key=True)
+    game    = Column(String(64), primary_key=True)
+    user_id = Column(BigInteger, primary_key=True)
+
+
+class UserStats(Base):
+    __tablename__ = 'user_stats'
+    user_id = Column(BigInteger, primary_key=True)
+    app_id  = Column(Integer,    primary_key=True)
+    stat    = Column(String(128), primary_key=True)
+    value   = Column(String(256))
+
+
+class ContentLoad(Base):
+    __tablename__ = 'content_load'
+    day      = Column(Date,      primary_key=True)
+    server   = Column(String(64), primary_key=True)
+    starts   = Column(Integer,    default=0)
+    finishes = Column(Integer,    default=0)
+
+
+class AdminAudit(Base):
+    __tablename__ = 'admin_audit'
+    id      = Column(Integer,   primary_key=True, autoincrement=True)
+    admin   = Column(String(64))
+    action  = Column(String(64))
+    payload = Column(JSON)
+    ts      = Column(DateTime)
+
+
+class ScheduledRestarts(Base):
+    __tablename__ = 'scheduled_restarts'
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    server_id    = Column(String(64))
+    restart_time = Column(DateTime)
 
 
 class AdministrationUsersRecord(Base):
-    """ Used to hold temporary gifting information, until transaction is finalized"""
+    """Administrator login information."""
     __tablename__ = 'admin_users_record'
-    UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    Username = Column(Integer, ForeignKey('userregistry.UniqueID'))
-    PWHash = Column(Integer)
+
+    UniqueID = Column(Integer, primary_key=True, autoincrement=True)
+    # Store the admin's username directly instead of referencing userregistry.
+    Username = Column(String(60), nullable=False, unique=True)
+    # 64 character SHA-256 hex digest
+    PWHash = Column(String(64), nullable=False)
     PWSeed = Column(String(256))
-    Rights = Column(String(256))
+    Rights = Column(Integer)
 
 
 class PlatformUpdateNews(Base):
@@ -1169,3 +1329,320 @@ class CommunityAppIcons(Base):
     Icon = Column(Text, nullable=True)
     Logo = Column(Text, nullable=True)
     LogoSmall = Column(Text, nullable=True)
+
+
+class StmserverSettings(Base):
+    __tablename__ = 'stmserver_settings'
+
+    setting = Column(String(255), primary_key=True)
+    value = Column(Text)
+
+
+class LegacyGameKeys(Base):
+    __tablename__ = 'LegacyGameKeys'
+
+    AppID = Column(Integer, primary_key=True)
+    GameKey = Column(String(64), primary_key=True)
+    SteamID = Column(BigInteger, nullable=True)
+
+
+class UserStatsData(Base):
+    """User statistics data for games"""
+    __tablename__ = 'user_stats_data'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    steam_id = Column(BigInteger, nullable=False)
+    app_id = Column(Integer, nullable=False)
+    stat_id = Column(SmallInteger, nullable=False)
+    stat_value = Column(Integer, nullable=False)
+    last_updated = Column(custom_DateTime, nullable=False)
+    
+    # Composite unique constraint for steam_id, app_id, stat_id
+    __table_args__ = (UniqueConstraint('steam_id', 'app_id', 'stat_id', name='_user_stat_constraint'),)
+
+
+class UserAchievements(Base):
+    """User achievement data for games"""
+    __tablename__ = 'user_achievements'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    steam_id = Column(BigInteger, nullable=False)
+    app_id = Column(Integer, nullable=False)
+    stat_id = Column(SmallInteger, nullable=False)  # Achievement stat ID
+    bit_position = Column(SmallInteger, nullable=False)  # Bit position in the achievement stat
+    achieved_at = Column(Integer, nullable=False)  # Unix timestamp when achieved
+    last_updated = Column(custom_DateTime, nullable=False)
+    
+    # Composite unique constraint for steam_id, app_id, stat_id, bit_position
+    __table_args__ = (UniqueConstraint('steam_id', 'app_id', 'stat_id', 'bit_position', name='_user_achievement_constraint'),)
+
+
+class UserStatsCache(Base):
+    """Cache metadata for user stats"""
+    __tablename__ = 'user_stats_cache'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    steam_id = Column(BigInteger, nullable=False)
+    app_id = Column(Integer, nullable=False)
+    crc = Column(Integer, nullable=False)
+    pending_changes = Column(Integer, default=0)
+    schema_version = Column(Integer, nullable=True)
+    last_updated = Column(custom_DateTime, nullable=False)
+    
+    # Composite unique constraint for steam_id, app_id
+    __table_args__ = (UniqueConstraint('steam_id', 'app_id', name='_user_stats_cache_constraint'),)
+
+
+# Modern Chat Group System (Discord-like structure)
+class ChatRoomGroup(Base):
+    """Chat room groups with roles and channels"""
+    __tablename__ = 'chat_room_group'
+    
+    group_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    owner_id = Column(BigInteger, nullable=False)
+    tagline = Column(String(255), default='')
+    default_chat_id = Column(Integer, nullable=True)
+    default_role_id = Column(Integer, nullable=True)
+    clan_id = Column(BigInteger, nullable=True)  # Associated clan
+    avatar_id = Column(LargeBinary, nullable=True)
+    created_at = Column(custom_DateTime, nullable=False, default=datetime.now)
+    
+    # Relationships
+    chats = relationship("ChatRoomGroupChat", back_populates="group", cascade="all, delete-orphan")
+    roles = relationship("ChatRoomGroupRole", back_populates="group", cascade="all, delete-orphan")
+
+
+class ChatRoomGroupChat(Base):
+    """Individual chats within groups"""
+    __tablename__ = 'chat_room_group_chat'
+    
+    chat_id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, ForeignKey('chat_room_group.group_id'), nullable=False)
+    name = Column(String(255), nullable=False)
+    voice_allowed = Column(Boolean, default=False)
+    ordinal = Column(Integer, default=0)
+    
+    # Relationships
+    group = relationship("ChatRoomGroup", back_populates="chats")
+
+
+class ChatRoomGroupRole(Base):
+    """Role-based permissions for chat groups"""
+    __tablename__ = 'chat_room_group_role'
+    
+    role_id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, ForeignKey('chat_room_group.group_id'), nullable=False)
+    name = Column(String(255), nullable=False)
+    clan_rank = Column(Integer, nullable=True)
+    ordinal = Column(Integer, default=0)
+    
+    # Permission flags
+    can_create_rename_delete_channel = Column(Boolean, default=False)
+    can_kick = Column(Boolean, default=False)
+    can_ban = Column(Boolean, default=False)
+    can_invite = Column(Boolean, default=True)
+    can_change_tagline_avatar_name = Column(Boolean, default=False)
+    can_chat = Column(Boolean, default=True)
+    can_view_history = Column(Boolean, default=True)
+    can_change_group_roles = Column(Boolean, default=False)
+    can_change_user_roles = Column(Boolean, default=False)
+    can_mention_all = Column(Boolean, default=True)
+    can_set_watching_broadcast = Column(Boolean, default=True)
+    
+    # Relationships
+    group = relationship("ChatRoomGroup", back_populates="roles")
+
+
+# Enhanced Lobby System with Search Views
+class LobbySearchView(Base):
+    """View for efficient lobby searching and member counting"""
+    __tablename__ = 'lobby_search_view'
+    __table_args__ = {'info': {'is_view': True}}
+    
+    lobby_id = Column(Integer, primary_key=True)
+    app_id = Column(Integer)
+    type = Column(Integer)
+    flags = Column(Integer)
+    owner_id = Column(BigInteger)
+    cell_id = Column(Integer)
+    public_ip = Column(BigInteger)
+    members_max = Column(Integer)
+    members_count = Column(Integer)
+    available_slots = Column(Integer)
+
+
+# Enhanced Clan Permission Tables
+class ClanPermissionTemplate(Base):
+    """Templates for default clan permission sets"""
+    __tablename__ = 'clan_permission_template'
+    
+    template_id = Column(Integer, primary_key=True, autoincrement=True)
+    template_name = Column(String(50), nullable=False, unique=True)
+    permission_edit_profile = Column(Integer, default=0)
+    permission_make_officer = Column(Integer, default=0)
+    permission_add_event = Column(Integer, default=0)
+    permission_choose_potw = Column(Integer, default=0)
+    permission_invite_member = Column(Integer, default=0)
+    permission_kick_member = Column(Integer, default=0)
+
+
+# Event System Enhancement
+class ClanEventAttendance(Base):
+    """Track clan event attendance"""
+    __tablename__ = 'clan_event_attendance'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey('community_clan_events.eventID'), nullable=False)
+    player_id = Column(BigInteger, nullable=False)
+    attendance_status = Column(Integer, default=0)  # 0=maybe, 1=yes, 2=no
+    timestamp = Column(custom_DateTime, nullable=False, default=datetime.now)
+    
+    __table_args__ = (UniqueConstraint('event_id', 'player_id', name='_event_attendance_constraint'),)
+
+
+# Lobby Metadata System Tables
+class LobbyMetadata(Base):
+    """Store lobby key-value metadata"""
+    __tablename__ = 'lobby_metadata'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lobby_steam_id = Column(BigInteger, nullable=False)
+    metadata_key = Column(String(255), nullable=False)
+    metadata_value = Column(Text)
+    
+    __table_args__ = (
+        UniqueConstraint('lobby_steam_id', 'metadata_key', name='_lobby_metadata_uk'),
+    )
+
+
+class LobbyMemberMetadata(Base):
+    """Store per-member lobby metadata"""
+    __tablename__ = 'lobby_member_metadata'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lobby_steam_id = Column(BigInteger, nullable=False)
+    member_steam_id = Column(BigInteger, nullable=False)
+    metadata_key = Column(String(255), nullable=False)
+    metadata_value = Column(Text)
+    
+    __table_args__ = (
+        UniqueConstraint('lobby_steam_id', 'member_steam_id', 'metadata_key', name='_lobby_member_metadata_uk'),
+    )
+
+
+class LobbyGameServers(Base):
+    """Store lobby to game server bindings"""
+    __tablename__ = 'lobby_game_servers'
+    
+    lobby_steam_id = Column(BigInteger, primary_key=True)
+    server_ip = Column(Integer, nullable=False)
+    server_port = Column(SmallInteger, nullable=False)
+    server_steam_id = Column(BigInteger, nullable=True)
+
+
+class LobbyChatHistory(Base):
+    """Store lobby chat message history"""
+    __tablename__ = 'lobby_chat_history'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lobby_steam_id = Column(BigInteger, nullable=False)
+    message_id = Column(Integer, nullable=False)
+    sender_steam_id = Column(BigInteger, nullable=False)
+    message_text = Column(Text, nullable=False)
+    chat_entry_type = Column(SmallInteger, default=1)  # 1=ChatMsg, 2=Typing, 3=InviteGame, etc
+    timestamp = Column(custom_DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('lobby_steam_id', 'message_id', name='_lobby_chat_uk'),
+    )
+
+
+##################################
+#        FTP Server Tables       #
+##################################
+
+class AwaitingReview(Base):
+    """Stores pending FTP uploads that require administrative review."""
+    __tablename__ = 'awaiting_review'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    appid = Column(String(50), nullable=False, unique=True)
+    uploader = Column(String(100), nullable=False)
+    upload_datetime = Column(String(50), nullable=False)  # Stored as string in "%m/%d/%Y %H:%M:%S"
+    total_size = Column(Integer, nullable=False, default=0)
+    uploader_ip = Column(String(50), nullable=False)
+    uploader_port = Column(String(10), nullable=False)
+    file_paths = Column(Text, nullable=True)  # File paths separated by '|'
+    app_names = Column(Text, nullable=True)  # Comma-separated app names from XML
+    subscriptions = Column(Text, nullable=True)  # Subscription info: "id:name|id:name|..."
+
+
+class FileOwnership(Base):
+    """Records the file ownership for each file uploaded via FTP."""
+    __tablename__ = 'file_ownership'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uploader = Column(String(100), nullable=False)
+    appid = Column(String(50), nullable=False)
+    file_path = Column(Text, nullable=False)
+    upload_datetime = Column(String(50), nullable=False)
+    file_size = Column(Integer, nullable=False)
+
+
+class FTPAdminActionLog(Base):
+    """Logs admin actions for FTP uploads (approval or denial)."""
+    __tablename__ = 'ftp_admin_action_log'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    admin_username = Column(String(100), nullable=False)
+    admin_ip = Column(String(50), nullable=False)
+    appid = Column(String(50), nullable=False)
+    action = Column(String(20), nullable=False)  # e.g., "APPROVE", "DENY"
+    details = Column(Text, nullable=True)
+    timestamp = Column(String(50), nullable=False)
+
+
+class ApprovedApplication(Base):
+    """Stores approved applications for management after approval."""
+    __tablename__ = 'approved_applications'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    appid = Column(String(50), nullable=False, unique=True)
+    app_names = Column(Text, nullable=True)  # Comma-separated app names
+    subscriptions = Column(Text, nullable=True)  # Subscription info: "id:name|id:name|..."
+    xml_file_path = Column(Text, nullable=True)  # Path to the XML file for this app
+    approval_datetime = Column(String(50), nullable=False)
+    approved_by = Column(String(100), nullable=False)
+    last_modified = Column(String(50), nullable=True)
+    modified_by = Column(String(100), nullable=True)
+
+
+class FTPUser(Base):
+    """Stores FTP user accounts in the database."""
+    __tablename__ = 'ftp_users'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(100), nullable=False, unique=True)
+    password = Column(String(255), nullable=False)  # Plain text or hashed
+    permissions = Column(String(50), nullable=False, default='r')  # r=read, w=write, d=delete, u=upload
+    home_directory = Column(String(500), nullable=True)  # Custom home dir, or None for default
+    is_locked = Column(Boolean, nullable=False, default=False)
+    quota_mb = Column(Integer, nullable=True, default=0)  # Storage quota in MB (0 = unlimited)
+    bandwidth_kbps = Column(Integer, nullable=True, default=0)  # Bandwidth limit in KB/s (0 = unlimited)
+    created_datetime = Column(String(50), nullable=False)
+    created_by = Column(String(100), nullable=True)
+    last_login = Column(String(50), nullable=True)
+    login_count = Column(Integer, nullable=False, default=0)
+
+
+class MarketingMessages(Base):
+    """Stores marketing message content for Steam client popups."""
+    __tablename__ = 'MarketingMessages'
+    GID = Column(BigInteger, primary_key=True, autoincrement=False)
+    DATETIME = Column(DateTime, nullable=False, index=True, server_default=text('CURRENT_TIMESTAMP'))
+    HTML = Column(Text, nullable=False)
+
+
+class EmulatorDBVersion(Base):
+    """Stores the current database version."""
+    __tablename__ = 'version'
+    db_ver = Column(Integer, primary_key=True, autoincrement=False)
+
+
+

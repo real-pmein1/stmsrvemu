@@ -3,24 +3,41 @@ import traceback
 import binascii
 import os
 import os.path
-import threading
-import time
-
-import ipcalc
 from Crypto.Hash import SHA
-
+import threading
 import globalvars
 import utilities.blobs
 import utilities.encryption
 import utils
-from listmanagers.contentlistmanager import manager
-from listmanagers.contentserverlist_utilities import send_removal, heartbeat_thread
+from servers.managers.contentlistmanager import manager
+from servers.managers.contentserverlist_utilities import send_removal, heartbeat_thread
 from utilities import cdr_manipulator
 from utilities.manifests import *
 from utilities.networkhandler import TCPNetworkHandler
 from utilities.neuter import neuter
+from utilities.custom_neuter_tracker import validate_and_update_cached_pkg, extract_pkg_info, check_configs_if_needed
 
 cusConnectionCount = 0
+
+
+def _validate_pkg_cache(cache_path, filename):
+    """
+    Validate and update cached pkg file if needed.
+
+    Checks for custom neuter config changes and mod_pkg changes,
+    invalidating/updating the cache as necessary.
+
+    Args:
+        cache_path: Full path to the cached pkg file
+        filename: The pkg filename (str or bytes)
+    """
+    # Check for custom neuter config changes (rate-limited, mtime-based)
+    # This will invalidate affected caches if configs have changed
+    check_configs_if_needed()
+
+    pkg_type, version = extract_pkg_info(filename)
+    if pkg_type and version:
+        validate_and_update_cached_pkg(cache_path, pkg_type, version)
 
 
 
@@ -39,12 +56,12 @@ class clientupdateserver(TCPNetworkHandler):
         self.applist = []
         self.key = None
         self.contentserver_info = {
-                'server_id':self.secret_identifier,
-                'wan_ip':   server_ip,
-                'lan_ip':   globalvars.server_ip_b,
-                'port':     int(port),
-                'region':   globalvars.cs_region.encode('latin-1'),
-                'cellid':   globalvars.cellid,
+            'server_id': self.secret_identifier,
+            'wan_ip': server_ip,
+            'lan_ip': globalvars.server_ip_b,
+            'port': int(port),
+            'region': globalvars.cs_region.encode('latin-1'),
+            'cellid': globalvars.cellid,
         }
         self.log = logging.getLogger("ClUpdSRV")
         if not globalvars.aio_server:
@@ -57,7 +74,6 @@ class clientupdateserver(TCPNetworkHandler):
 
     def run(self):
         try:
-            self.log.info("Client Update Server thread started.")
             super().run()  # Call the parent run method which contains the main loop
         except Exception as e:
             self.log.error("Client Update Server encountered an exception:", exc_info=True)
@@ -78,8 +94,8 @@ class clientupdateserver(TCPNetworkHandler):
 
         def global_thread_exception_handler(args):
             logging.getLogger('threadhndl').error(
-                    f"Exception in thread '{args.thread.name}': {args.exc_type.__name__}: {args.exc_value}",
-                    exc_info = (args.exc_type, args.exc_value, args.exc_traceback)
+                f"Exception in thread '{args.thread.name}': {args.exc_type.__name__}: {args.exc_value}",
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
             )
 
         threading.excepthook = global_thread_exception_handler
@@ -87,10 +103,9 @@ class clientupdateserver(TCPNetworkHandler):
         clientid = str(client_address) + ": "
         try:
             self.log.info(clientid + "Connected to Client Update Server")
-            if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)): # or globalvars.public_ip == str(client_address[0]): # we ignore this because it breaks things
-                islan = True
-            else:
-                islan = False
+
+            # Determine if client is on LAN
+            islan = str(client_address[0]) in globalvars.server_network
 
             msg = client_socket.recv(4)
 
@@ -149,55 +164,67 @@ class clientupdateserver(TCPNetworkHandler):
                             newfilename = filename[:-14]
                             if self.config["public_ip"] != "0.0.0.0":
                                 try:
-                                    os.mkdir("files/cache/external")
+                                    os.mkdir(os.path.join("files", "cache", "external"))
                                 except OSError as error:
                                     self.log.debug(f"{clientid}External pkg dir already exists")
 
                                 try:
-                                    os.mkdir("files/cache/internal")
+                                    os.mkdir(os.path.join("files", "cache", "internal"))
                                 except OSError as error:
                                     self.log.debug(f"{clientid}Internal pkg dir already exists")
 
                                 if isbeta:
                                     try:
-                                        os.mkdir("files/cache/external/betav2")
+                                        os.mkdir(os.path.join("files", "cache", "external", "betav2"))
                                     except OSError as error:
                                         self.log.debug(clientid + "External beta pkg dir already exists")
                                     try:
-                                        os.mkdir("files/cache/internal/betav2")
+                                        os.mkdir(os.path.join("files", "cache", "internal", "betav2"))
                                     except OSError as error:
                                         self.log.debug(clientid + "Internal beta pkg dir already exists")
 
                                     if islan:
-                                        if not os.path.isfile("files/cache/internal/betav2/" + newfilename):
-                                            neuter(self.config["packagedir"] + "betav2/" + newfilename, "files/cache/internal/betav2/" + newfilename, self.config["server_ip"], self.config["dir_server_port"], True)
-                                        f = open('files/cache/internal/betav2/' + newfilename, 'rb')
+                                        internal_beta = os.path.join("files", "cache", "internal", "betav2", newfilename)
+                                        _validate_pkg_cache(internal_beta, newfilename)
+                                        if not os.path.isfile(internal_beta):
+                                            neuter(self.config["packagedir"] + "betav2/" + newfilename, internal_beta, self.config["server_ip"], self.config["dir_server_port"], True)
+                                        f = open(internal_beta, 'rb')
                                     else:
-                                        if not os.path.isfile("files/cache/external/betav2/" + newfilename):
-                                            neuter(self.config["packagedir"] + "betav2/" + newfilename, "files/cache/external/betav2/" + newfilename, self.config["public_ip"], self.config["dir_server_port"], False)
-                                        f = open('files/cache/external/betav2/' + newfilename, 'rb')
+                                        external_beta = os.path.join("files", "cache", "external", "betav2", newfilename)
+                                        _validate_pkg_cache(external_beta, newfilename)
+                                        if not os.path.isfile(external_beta):
+                                            neuter(self.config["packagedir"] + "betav2/" + newfilename, external_beta, self.config["public_ip"], self.config["dir_server_port"], False)
+                                        f = open(external_beta, 'rb')
                                 else:
                                     if islan:
-                                        if not os.path.isfile("files/cache/internal/" + newfilename.decode()):
-                                            neuter(self.config["packagedir"] + newfilename.decode(), "files/cache/internal/" + newfilename.decode(), self.config["server_ip"], self.config["dir_server_port"], True)
-                                        f = open('files/cache/internal/' + newfilename.decode(), 'rb')
+                                        internal_file = os.path.join("files", "cache", "internal", newfilename.decode())
+                                        _validate_pkg_cache(internal_file, newfilename)
+                                        if not os.path.isfile(internal_file):
+                                            neuter(self.config["packagedir"] + newfilename.decode(), internal_file, self.config["server_ip"], self.config["dir_server_port"], True)
+                                        f = open(internal_file, 'rb')
                                     else:
-                                        if not os.path.isfile("files/cache/external/" + newfilename.decode()):
-                                            neuter(self.config["packagedir"] + newfilename.decode(), "files/cache/external/" + newfilename.decode(), self.config["public_ip"], self.config["dir_server_port"], False)
-                                        f = open('files/cache/external/' + newfilename.decode(), 'rb')
+                                        external_file = os.path.join("files", "cache", "external", newfilename.decode())
+                                        _validate_pkg_cache(external_file, newfilename)
+                                        if not os.path.isfile(external_file):
+                                            neuter(self.config["packagedir"] + newfilename.decode(), external_file, self.config["public_ip"], self.config["dir_server_port"], False)
+                                        f = open(external_file, 'rb')
                             else:
                                 if isbeta:
                                     try:
-                                        os.mkdir("files/cache/betav2")
+                                        os.mkdir(os.path.join("files", "cache", "betav2"))
                                     except OSError as error:
                                         self.log.debug(clientid + "Beta pkg dir already exists")
-                                    if not os.path.isfile("files/cache/betav2/" + newfilename):
-                                        neuter(self.config["packagedir"] + "betav2/" + newfilename, "files/cache/betav2/" + newfilename, self.config["server_ip"], self.config["dir_server_port"], True)
-                                    f = open('files/cache/betav2/' + newfilename, 'rb')
+                                    beta_path = os.path.join("files", "cache", "betav2", newfilename)
+                                    _validate_pkg_cache(beta_path, newfilename)
+                                    if not os.path.isfile(beta_path):
+                                        neuter(self.config["packagedir"] + "betav2/" + newfilename, beta_path, self.config["server_ip"], self.config["dir_server_port"], True)
+                                    f = open(beta_path, 'rb')
                                 else:
-                                    if not os.path.isfile("files/cache/" + newfilename.decode()):
-                                        neuter(self.config["packagedir"] + newfilename.decode(), "files/cache/" + newfilename.decode(), self.config["server_ip"], self.config["dir_server_port"], True)
-                                    f = open('files/cache/' + newfilename.decode(), 'rb')
+                                    cache_path = os.path.join("files", "cache", newfilename.decode())
+                                    _validate_pkg_cache(cache_path, newfilename)
+                                    if not os.path.isfile(cache_path):
+                                        neuter(self.config["packagedir"] + newfilename.decode(), cache_path, self.config["server_ip"], self.config["dir_server_port"], True)
+                                    f = open(cache_path, 'rb')
 
                             file = f.read()
                             f.close()
@@ -212,64 +239,86 @@ class clientupdateserver(TCPNetworkHandler):
 
                             if self.config["public_ip"] != "0.0.0.0":
                                 try:
-                                    os.mkdir("files/cache/external")
+                                    os.mkdir(os.path.join("files", "cache", "external"))
                                 except OSError as error:
                                     self.log.debug(clientid + "External pkg dir already exists")
 
                                 try:
-                                    os.mkdir("files/cache/internal")
+                                    os.mkdir(os.path.join("files", "cache", "internal"))
                                 except OSError as error:
                                     self.log.debug(clientid + "Internal pkg dir already exists")
 
                                 if isbeta:
                                     try:
-                                        os.mkdir("files/cache/external/betav2")
+                                        os.mkdir(os.path.join("files", "cache", "external", "betav2"))
                                     except OSError as error:
                                         self.log.debug(clientid + "External beta pkg dir already exists")
                                     try:
-                                        os.mkdir("files/cache/internal/betav2")
+                                        os.mkdir(os.path.join("files", "cache", "internal", "betav2"))
                                     except OSError as error:
                                         self.log.debug(clientid + "Internal beta pkg dir already exists")
 
                                     if islan:  # or globalvars.public_ip == str(client_address[0]):
                                         try:
-                                            if not os.path.isfile("files/cache/internal/betav2/" + filename):
-                                                neuter(self.config["packagedir"] + "betav2/" + filename, "files/cache/internal/betav2/" + filename, self.config["server_ip"], self.config["dir_server_port"], True)
-                                            f = open('files/cache/internal/betav2/' + filename, 'rb')
+                                            internal_beta = os.path.join("files", "cache", "internal", "betav2", filename)
+                                            _validate_pkg_cache(internal_beta, filename)
+                                            if not os.path.isfile(internal_beta):
+                                                neuter(self.config["packagedir"] + "betav2/" + filename, internal_beta, self.config["server_ip"], self.config["dir_server_port"], True)
+                                            f = open(internal_beta, 'rb')
                                         except:
-                                            neuter(self.config["packagedir"] + filename, "files/cache/internal/" + filename, self.config["server_ip"], self.config["dir_server_port"], False)
-                                            f = open('files/cache/internal/' + filename, 'rb')
+                                            cache_internal = os.path.join("files", "cache", "internal", filename)
+                                            _validate_pkg_cache(cache_internal, filename)
+                                            if not os.path.isfile(cache_internal):
+                                                neuter(self.config["packagedir"] + filename, cache_internal, self.config["server_ip"], self.config["dir_server_port"], False)
+                                            f = open(cache_internal, 'rb')
                                     else:
-                                        if not os.path.isfile("files/cache/external/" + filename):
+                                        external_check_path = os.path.join("files", "cache", "external", filename)
+                                        _validate_pkg_cache(external_check_path, filename)
+                                        if not os.path.isfile(external_check_path):
                                             try:
-                                                if not os.path.isfile("files/cache/external/betav2/" + filename):
-                                                    neuter(self.config["packagedir"] + "betav2/" + filename, "files/cache/external/betav2/" + filename, self.config["public_ip"], self.config["dir_server_port"], False)
-                                                f = open('files/cache/external/betav2/' + filename, 'rb')
+                                                beta_ext = os.path.join("files", "cache", "external", "betav2", filename)
+                                                _validate_pkg_cache(beta_ext, filename)
+                                                if not os.path.isfile(beta_ext):
+                                                    neuter(self.config["packagedir"] + "betav2/" + filename, beta_ext, self.config["public_ip"], self.config["dir_server_port"], False)
+                                                f = open(beta_ext, 'rb')
                                             except:
-                                                neuter(self.config["packagedir"] + filename, "files/cache/external/" + filename, self.config["public_ip"], self.config["dir_server_port"], False)
-                                                f = open('files/cache/external/' + filename, 'rb')
+                                                cache_external = os.path.join("files", "cache", "external", filename)
+                                                _validate_pkg_cache(cache_external, filename)
+                                                if not os.path.isfile(cache_external):
+                                                    neuter(self.config["packagedir"] + filename, cache_external, self.config["public_ip"], self.config["dir_server_port"], False)
+                                                f = open(cache_external, 'rb')
+                                        else:
+                                            f = open(external_check_path, 'rb')
                                 else:
                                     if islan:
-                                        if not os.path.isfile("files/cache/internal/" + filename):
-                                            neuter(self.config["packagedir"] + filename, "files/cache/internal/" + filename, self.config["server_ip"], self.config["dir_server_port"], True)
-                                        f = open('files/cache/internal/' + filename, 'rb')
+                                        internal_path = os.path.join("files", "cache", "internal", filename)
+                                        _validate_pkg_cache(internal_path, filename)
+                                        if not os.path.isfile(internal_path):
+                                            neuter(self.config["packagedir"] + filename, internal_path, self.config["server_ip"], self.config["dir_server_port"], True)
+                                        f = open(internal_path, 'rb')
                                     else:
-                                        if not os.path.isfile("files/cache/external/" + filename):
-                                            neuter(self.config["packagedir"] + filename, "files/cache/external/" + filename, self.config["public_ip"], self.config["dir_server_port"], False)
-                                        f = open('files/cache/external/' + filename, 'rb')
+                                        external_path = os.path.join("files", "cache", "external", filename)
+                                        _validate_pkg_cache(external_path, filename)
+                                        if not os.path.isfile(external_path):
+                                            neuter(self.config["packagedir"] + filename, external_path, self.config["public_ip"], self.config["dir_server_port"], False)
+                                        f = open(external_path, 'rb')
                             else:
                                 if isbeta:
                                     try:
-                                        os.mkdir("files/cache/betav2")
+                                        os.mkdir(os.path.join("files", "cache", "betav2"))
                                     except OSError as error:
                                         self.log.debug(clientid + "Beta pkg dir already exists")
-                                    if not os.path.isfile("files/cache/betav2/" + filename):
-                                        neuter(self.config["packagedir"] + "betav2/" + filename, "files/cache/betav2/" + filename, self.config["server_ip"], self.config["dir_server_port"], True)
-                                    f = open('files/cache/betav2/' + filename, 'rb')
+                                    beta_file = os.path.join("files", "cache", "betav2", filename)
+                                    _validate_pkg_cache(beta_file, filename)
+                                    if not os.path.isfile(beta_file):
+                                        neuter(self.config["packagedir"] + "betav2/" + filename, beta_file, self.config["server_ip"], self.config["dir_server_port"], True)
+                                    f = open(beta_file, 'rb')
                                 else:
-                                    if not os.path.isfile("files/cache/" + filename):
-                                        neuter(self.config["packagedir"] + filename, "files/cache/" + filename, self.config["server_ip"], self.config["dir_server_port"], True)
-                                    f = open('files/cache/' + filename, 'rb')
+                                    cache_file = os.path.join("files", "cache", filename)
+                                    _validate_pkg_cache(cache_file, filename)
+                                    if not os.path.isfile(cache_file):
+                                        neuter(self.config["packagedir"] + filename, cache_file, self.config["server_ip"], self.config["dir_server_port"], True)
+                                    f = open(cache_file, 'rb')
 
                             file = f.read()
                             f.close()
@@ -338,4 +387,5 @@ class clientupdateserver(TCPNetworkHandler):
             raise e.with_traceback(tb)  # Re-raise with the original traceback
         finally:
             client_socket.close()
+
             self.log.info(clientid + "Disconnected from Client Update Server")

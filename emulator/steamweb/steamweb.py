@@ -83,7 +83,7 @@ class check_child_pid():
                 for pidfile in file[2]:
                     if pidfile.endswith(".pid"):
                         old_proc = pidfile[:-4]
-                        log.debug(serverid + "Apache2 process ID found: " + old_proc)
+                        # log.debug(serverid + "Apache2 process ID found: " + old_proc)
                         break
             current_process = psutil.Process(int(old_proc))
             children = current_process.children(recursive = True)

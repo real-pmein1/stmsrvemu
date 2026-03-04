@@ -10,7 +10,6 @@ import secrets
 import socket as real_socket
 import struct
 import time
-import ipcalc
 
 from Crypto.Hash import SHA, SHA1
 from Crypto.Signature import pkcs1_15
@@ -20,10 +19,12 @@ import globalvars
 import utilities.encryption as encryption
 import utilities.name_suggestor
 import utilities.time
+from utilities.sendmail import send_verification_email
+from utilities import server_stats
 import utils
 
-from listmanagers.contentlistmanager import manager as csdsmanager
-from listmanagers.dirlistmanager import manager as dirmanager
+from servers.managers.contentlistmanager import manager as csdsmanager
+from servers.managers.dirlistmanager import manager as dirmanager
 from utilities import auth_cc_blocker, blobs, cdr_manipulator, name_suggestor, sendmail, validationcode_manager
 from utilities.blobs import blob_serialize, blob_unserialize
 from utilities.database import ccdb
@@ -45,7 +46,9 @@ class authserver(TCPNetworkHandler):
         self.contentlist_manager = csdsmanager
         self.database = auth_dbdriver(config)
         self.innerIV = secrets.token_bytes(16)
-        self.block_rules = auth_cc_blocker.load_block_rules(config['configsdir'] + '/' + 'creditcard_blacklist.txt')
+        blacklist_path = os.path.join(config['configsdir'], 'creditcard_blacklist.txt')
+        self.block_rules = auth_cc_blocker.load_block_rules(blacklist_path)
+        self.login_attempts = {}
 
         # Create an instance of NetworkHandler
         super(authserver, self).__init__(config, port, self.server_type)
@@ -66,12 +69,17 @@ class authserver(TCPNetworkHandler):
         # ccdb.load_filesys_blob() # FIXME Deprecate this as it's not needed
 
         clientid = str(client_address) + ": "
+        try:
+            self.database.expire_expired_tickets()
+        except Exception:
+            pass
+        server_stats.expire_old()
 
         # Set a new random innerIV for security every time a connection is made, instead of doing it everytime a different packet is called. This should improve preformance a tiny amount.
         self.innerIV = secrets.token_bytes(16)
 
         self.log.info(f"{clientid}Connected to Auth Server")
-        if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)):
+        if str(client_address[0]) in globalvars.server_network:
             self.islan = True
         else:
             self.islan = False
@@ -165,8 +173,16 @@ class authserver(TCPNetworkHandler):
             # Convert b'\x01\x00\x00\x00' from bytes to integer and insert at position 1
             payment_tuple.insert(0, int.from_bytes(additional_data[b'\x01\x00\x00\x00'], 'little'))
 
-            price_before_tax = int.from_bytes(additional_data[b'\x14\x00\x00\x00'], 'little')
-            tax_amount = int.from_bytes(additional_data[b'\x15\x00\x00\x00'], 'little')
+            if b'\x14\x00\x00\x00' in additional_data:
+                price_before_tax = int.from_bytes(additional_data[b'\x14\x00\x00\x00'], 'little')
+            else:
+                price_before_tax = 0
+
+            if b'\x15\x00\x00\x00' in additional_data:
+                tax_amount = int.from_bytes(additional_data[b'\x15\x00\x00\x00'], 'little')
+            else:
+                tax_amount = 0
+
             payment_tuple.extend([str(price_before_tax), str(tax_amount)])
             # Append additional variables
             payment_tuple.extend([
@@ -234,7 +250,15 @@ class authserver(TCPNetworkHandler):
         subscription_id = int.from_bytes(blobnew.get(b'\x01\x00\x00\x00', None), 'little')
 
         if self.database.check_username_exists(username):
-            # TODO RETURN \X01 IF USER IS ABUSING RATELIMIT OR DEMAND IS TOO HIGH
+            now = time.time()
+            attempts = self.login_attempts.get(client_address[0], [])
+            attempts = [t for t in attempts if now - t < 60]
+            if len(attempts) >= 5:
+                client_socket.send(b"\x01")
+                return
+            attempts.append(now)
+            self.login_attempts[client_address[0]] = attempts
+
             # We check if the user's email is verified IF SMTP is enabled and force_email_verification is true
             if not self.database.check_email_verified(username):
                 if globalvars.smtp_enable.lower() == "true" and globalvars.force_email_verification.lower() == "true":
@@ -264,6 +288,9 @@ class authserver(TCPNetworkHandler):
             if payment_data is not None:
                 cc_card_number = payment_data[1]
 
+            if globalvars.steamui_ver == 20: # SO THAT THIS CLIENT CAN INSERT SUB 0
+                pkt_version = "b2004"
+
             cc_blocked = False
             if receipt_id == 5 and auth_cc_blocker.is_card_blocked(cc_card_number, self.block_rules):
                 cc_blocked = True
@@ -273,7 +300,7 @@ class authserver(TCPNetworkHandler):
                 cc_zip = payment_data[9]
             else:
                 # insert!
-                self.database.insert_subscription(username, subscription_id, receipt_id, client_socket.ip_to_bytes(client_address[0]), payment_data)
+                self.database.insert_subscription(username, subscription_id, receipt_id, client_socket.ip_to_bytes(client_address[0]), payment_data, pkt_version)
 
             execdict = self.database.get_userregistry_dict(username, pkt_version, client_address[0])
 
@@ -325,7 +352,7 @@ class authserver(TCPNetworkHandler):
         userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
         username_len = ticket_full[314:318]
         username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)]).decode('latin-1')
-        self.log.info(f"{clientid}Ticket login for: {username}")
+        self.log.info(f"{clientid}Refresh login ticket for: {username}")
         ticket_len = int(ticket_len, 16) * 2
         postticketdata = ticket_full[2 + ticket_len + 4:]
         key = self.innerkey
@@ -336,14 +363,20 @@ class authserver(TCPNetworkHandler):
         # ------------------------------------------------------------------
         # client_socket.send(b"\x00")
         # create login ticket
-        # TODO add/use authdb method check_or_set_auth_ticket for checking if ticket exists
-        self.database.update_subscription_status_flags(username)
+        account_id = self.database.get_uniqueuserid(username)
+        if account_id:
+            self.database.check_or_set_auth_ticket(account_id, client_address[0], datetime.datetime.utcnow(),
+                                                  datetime.datetime.utcnow() + datetime.timedelta(hours=1))
+        #self.database.update_subscription_status_flags_new(username)
 
         #  Check if the user is real, like if you redo the database and have a client with an old clientregistry.blob
         #  and that client tries to login automatically, this will catch it and reject it if the username is not real
         if not self.database.check_username_exists(username):
             client_socket.send(b"\x03") # FIXME figure out the correct error code for this packet when a user does not exist!
             return
+
+        if globalvars.steamui_ver == 20:
+            pkt_version = "b2004"
 
         execdict = self.database.get_userregistry_dict(username, pkt_version, client_address[0])
 
@@ -372,13 +405,21 @@ class authserver(TCPNetworkHandler):
 
         # set x05 to 0 if x03 is 1
 
-        self.database.update_subscription_status_flags(username)
+        self.database.update_subscription_status_flags_new(username)
 
     def change_account_name(self, client_address, client_socket, clientid, command, pkt_version):
         self.log.info(f"{clientid}Change Account Name - Not Operational")
         self.log.debug(command)
-        # TODO CHECK IF ACCOUNT NAME IN USE, IF TRUE SEND x02 ELSE SEND X00. x01 is unknown error!
-        client_socket.send(b"\x01")
+        try:
+            new_name = command.decode('latin-1').strip('\x00')
+        except Exception:
+            client_socket.send(b"\x01")
+            return
+
+        if self.database.check_username_exists(new_name):
+            client_socket.send(b"\x02")
+        else:
+            client_socket.send(b"\x00")
 
     def unknown_1b(self, client_address, client_socket, clientid, command, pkt_version):
         self.log.info(f"{clientid} Recieved Unknown Packet 0x1B - Not Operational")
@@ -399,16 +440,116 @@ class authserver(TCPNetworkHandler):
         # DO NOT SEND ANYTHING TO CLIENT! JUST RETURN
 
     def request_verification_email(self, client_address, client_socket, clientid, command, pkt_version):
-        self.log.info(f"{clientid}Requested Verification Email - Not Operational")
-        self.log.debug(command)
-        # TODO SEND EMAIL CONTAINING EMAIL VERIFICATION CODE
-        # DO NOT SEND ANYTHING TO CLIENT! JUST RETURN
+        self.log.info(f"{clientid}Requested Verification Email")
+        ticket_full = binascii.b2a_hex(command)
+        command = ticket_full[0:2]
+        ticket_len = ticket_full[2:6]
+        tgt_ver = ticket_full[6:10]
+        data1_len = ticket_full[10:14]
+        data1_len = int(data1_len, 16) * 2
+        userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+        username_len = ticket_full[314:318]
+        username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)]).decode('latin-1')
+        ticket_len = int(ticket_len, 16) * 2
+        ticket = ticket_full[2:ticket_len + 2]
+        postticketdata = ticket_full[2 + ticket_len + 4:]
+        key = self.innerkey
+        iv = binascii.a2b_hex(postticketdata[0:32])
+        encdata_len = int(postticketdata[36:40], 16) * 2
+        encdata = postticketdata[40:40 + encdata_len]
+        decodedmessage = binascii.b2a_hex(encryption.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+        decodedmessage = binascii.a2b_hex(decodedmessage)
+        username_len_new = struct.unpack("<H", decodedmessage[0:2])
+        username_len_new = (2 + username_len_new[0]) * 2
+        header = username_len_new + 8
+        blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+        blob_len = (blob_len[0])
+        blob = (decodedmessage[header:header + blob_len])
+
+        if globalvars.steamui_ver == 20:
+            pkt_version = "b2004"
+
+        userblob = self.database.get_userregistry_dict(username, pkt_version, client_address[0])
+
+        blob = blobs.blob_serialize(userblob)
+
+        # print(blob)
+        bloblen = len(blob)
+        self.log.debug(f"Blob length: {str(bloblen)}")
+
+        # innerIV  = secrets.token_bytes(16) #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+        innerIV = userIV
+        blob_encrypted = encryption.aes_encrypt(self.innerkey, innerIV, blob)
+        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+        blob_signature = encryption.sign_message(self.innerkey, blob_encrypted)
+        blob_encrypted_len = 10 + len(blob_encrypted) + 20
+        blob_encrypted = struct.pack(">L", blob_encrypted_len) + b"\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+        ticket = ticket + blob_encrypted
+        ticket_signed = ticket + encryption.sign_message(self.innerkey, ticket)
+        client_socket.send(b"\x00" + blob_encrypted + blob_signature)
+
+        code = self.validationcode_manager.generate_code(username)
+
+        if self.config["smtp_enabled"].lower() == "true":
+            email = self.database.get_user_email(username)
+            send_verification_email(email, code, client_address, username)
 
     def verify_email(self, client_address, client_socket, clientid, command, pkt_version):
-        self.log.info(f"{clientid}Verify Email - Not Operational")
-        self.log.debug(command)
+        self.log.info(f"{clientid}Verify Email")
+        ticket_full = binascii.b2a_hex(command)
+        command = ticket_full[0:2]
+        ticket_len = ticket_full[2:6]
+        tgt_ver = ticket_full[6:10]
+        data1_len = ticket_full[10:14]
+        data1_len = int(data1_len, 16) * 2
+        userIV = binascii.a2b_hex(ticket_full[14 + data1_len:14 + data1_len + 32])
+        username_len = ticket_full[314:318]
+        username = binascii.a2b_hex(ticket_full[14:14 + (int(username_len, 16) * 2)]).decode('latin-1')
+        ticket_len = int(ticket_len, 16) * 2
+        ticket = ticket_full[2:ticket_len + 2]
+        postticketdata = ticket_full[2 + ticket_len + 4:]
+        key = self.innerkey
+        iv = binascii.a2b_hex(postticketdata[0:32])
+        encdata_len = int(postticketdata[36:40], 16) * 2
+        encdata = postticketdata[40:40 + encdata_len]
+        decodedmessage = binascii.b2a_hex(encryption.aes_decrypt(key, iv, binascii.a2b_hex(encdata)))
+        decodedmessage = binascii.a2b_hex(decodedmessage)
+        username_len_new = struct.unpack("<H", decodedmessage[0:2])
+        username_len_new = (2 + username_len_new[0]) * 2
+        header = username_len_new + 8
+        blob_len = struct.unpack("<H", decodedmessage[header + 2:header + 4])
+        blob_len = (blob_len[0])
+        blob = (decodedmessage[header:header + blob_len])
+        verification_code_from_client = blob[:-struct.unpack(">B", blob[-1:])[0]].decode('latin-1')
+        
         # TODO CHECK VERIFICATION CODE FOR TIME (less than 15 minutes old) AND AGAINST WHAT THE USER SENT AS THE CODE
-        client_socket.send(b"\x01")
+
+        #if self.validationcode_manager.validate_code(code, username): # DONT CARE ABOUT THIS YET
+        self.database.set_email_verified(username)
+
+        if globalvars.steamui_ver == 20:
+            pkt_version = "b2004"
+
+        userblob = self.database.get_userregistry_dict(username, pkt_version, client_address[0])
+
+        blob = blobs.blob_serialize(userblob)
+
+        # print(blob)
+        bloblen = len(blob)
+        self.log.debug(f"Blob length: {str(bloblen)}")
+
+        # innerIV  = secrets.token_bytes(16) #ONLY FOR BLOB ENCRYPTION USING AES-CBC
+        innerIV = userIV
+        blob_encrypted = encryption.aes_encrypt(self.innerkey, innerIV, blob)
+        blob_encrypted = struct.pack("<L", bloblen) + innerIV + blob_encrypted
+        blob_signature = encryption.sign_message(self.innerkey, blob_encrypted)
+        blob_encrypted_len = 10 + len(blob_encrypted) + 20
+        blob_encrypted = struct.pack(">L", blob_encrypted_len) + b"\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted
+        ticket = ticket + blob_encrypted
+        ticket_signed = ticket + encryption.sign_message(self.innerkey, ticket)
+        client_socket.send(b"\x00" + blob_encrypted + blob_signature)
+        #else:
+        #    client_socket.send(b"\x01")
 
     def send_CDR(self, client_address, client_socket, clientid, command, pkt_version):
         blob = cdr_manipulator.read_blob(self.islan)
@@ -446,7 +587,7 @@ class authserver(TCPNetworkHandler):
             cryptedblob = reply[144:]
 
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
 
         if repr(encryption.verify_message(key, cryptedblob)):
             plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
@@ -509,7 +650,7 @@ class authserver(TCPNetworkHandler):
             cryptedblob = reply[144:]
 
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
 
         if repr(encryption.verify_message(key, cryptedblob)):
             plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
@@ -553,12 +694,12 @@ class authserver(TCPNetworkHandler):
         cryptedblob_signature = reply[134:136]
         cryptedblob_length = reply[136:140]
         cryptedblob_slack = reply[140:144]
-        if pkt_version == "r2003":  # retail 2003
+        if pkt_version == "r2003" or pkt_version == "b2003":  # 2003
             cryptedblob = reply[144:144 + datalength - 10]
         else:
             cryptedblob = reply[144:]
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
 
         if repr(encryption.verify_message(key, cryptedblob)):
             plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
@@ -568,25 +709,42 @@ class authserver(TCPNetworkHandler):
             plaintext = plaintext[0:plaintext_length]
             # print(plaintext)
             blobdict = blobs.blob_unserialize(plaintext)
-            # print(blobdict)
+            # pprint.pprint(blobdict)
             usernamechk = blobdict[b'\x01\x00\x00\x00']
             username_str = usernamechk.rstrip(b'\x00').decode('latin-1')
 
             # print(userblob)
             questionsalt = self.database.get_questionsalt(username_str)
             # print(questionsalt)
-            if questionsalt != 0:
-                client_socket.send(questionsalt)  # USER'S QUESTION SALT
-                reply2 = client_socket.recv_withlen()
-            else:
-                self.log.error(f"{clientid}User Does not exist!")
-                if pkt_version == "r2003":  # retail 2003
-                    client_socket.send(b"\x00")
+            questionanswer_from_db = self.database.get_question_info_2003(username_str)
+            if pkt_version == "r2003" or pkt_version == "b2003":
+                questionanswer_from_client = blobdict[b'\x03\x00\x00\x00']
+                if questionanswer_from_db == questionanswer_from_client:
+                    new_password_salt = blobdict[b'\x04\x00\x00\x00'].hex()
+                    new_password_digest = blobdict[b'\x05\x00\x00\x00'].hex()
+                    result = self.database.change_password(username_str, new_password_digest, new_password_salt)
+                    if result:
+                        client_socket.send(b"\x01") # Secret answer correct and password updated
+                    else:
+                        client_socket.send(b"\x00") # Password change failure
                 else:
-                    client_socket.send(b"\x01")
+                    client_socket.send(b"\x00") # Secret answer incorrect
+                reply2 = client_socket.recv_withlen() # Client receipt
                 client_socket.close()
                 return
-
+            else:
+                if questionsalt != 0:
+                    client_socket.send(questionsalt)  # USER'S QUESTION SALT
+                    reply2 = client_socket.recv_withlen()
+                else:
+                    self.log.error(f"{clientid}User Does not exist!")
+                    if pkt_version == "r2003" or pkt_version == "b2003":  # retail 2003
+                        client_socket.send(b"\x00")
+                    else:
+                        client_socket.send(b"\x01")
+                    client_socket.close()
+                    return
+            self.log.debug(reply2)
             header = reply2[0:2]
             enc_len = reply2[2:6]
             zeros = reply2[6:10]
@@ -673,12 +831,12 @@ class authserver(TCPNetworkHandler):
         cryptedblob_signature = reply[134:136]
         cryptedblob_length = reply[136:140]
         cryptedblob_slack = reply[140:144]
-        if pkt_version == "r2003":  # retail 2003
+        if pkt_version == "r2003" or pkt_version == "b2003":  # 2003
             cryptedblob = reply[144:144 + datalength - 10]
         else:
             cryptedblob = reply[144:]
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
         plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
         IV = cryptedblob[4:20]
         ciphertext = cryptedblob[20:-20]
@@ -704,35 +862,40 @@ class authserver(TCPNetworkHandler):
         # 0 = no personal question set or 1 = success, 2 = account or user does not exist, 3 user blocked, > 3 unknown error
 
         if self.database.check_username_exists(username_str):
-            if pkt_version == "r2003":  # retail 2003
-                client_socket.send(b"\x01")
+
+            execdict = self.database.get_usersecrets_dict(username_str, pkt_version, client_address[0])
+
+            if not isinstance(execdict, dict): # error
+                client_socket.send(execdict)
+                return
+
+            if globalvars.steamui_ver == 5: #FOR NOV 2003
+                execdict.pop(b'\x0f\x00\x00\x00')
+            # pprint.pprint(execdict)
+
+            blob = blobs.blob_serialize(execdict)
+
+            bloblen = len(blob)
+            self.log.debug(f"Blob length: {str(bloblen)}")
+
+            blob_encrypted = encryption.aes_encrypt(key, IV, blob)
+            blob_encrypted = struct.pack("<L", bloblen) + IV + blob_encrypted
+            blob_signature = encryption.sign_message(key, blob_encrypted)
+            blob_encrypted_len = 10 + len(blob_encrypted) + 20
+            blob_encrypted = struct.pack(">L", blob_encrypted_len) + b"\x01\x45" + struct.pack("<LL", blob_encrypted_len, 0) + blob_encrypted + blob_signature
+            #questionsalt = self.database.get_questionsalt(username_str)
+            if pkt_version == "r2003" or pkt_version == "b2003":  # 2003
+                #client_socket.send(b"\x01")
+                client_socket.send(blob_encrypted)
+                reply2 = client_socket.recv_withlen()
             else:
                 client_socket.send(b"\x00")
 
             if self.config["smtp_enabled"].lower() == "true":
                 self.send_change_info_validation_email(username_str, client_address)
         else:
-            if pkt_version == "r2003":  # retail 2003
+            if pkt_version == "r2003" or pkt_version == "b2003":  # 2003
                 client_socket.send(b"\x00")
-            elif pkt_version == "b2003":  # beta 2003
-                if self.database.check_email_exists(username_str):
-                    print('Email found')
-                    # Steam expects a blob with the question expects the packet ti be encrypted
-                    # TODO: finnish beta 2 forgotten password
-                    """question ={
-                            b'\x01\x00\x00\x00': b'this is a question\x00'
-                    }
-                    blob = blob_serialize(question)
-                    client_socket.send_withlen(b'\x00' + struct.pack('<H', len(blob)) + blob)  # USER'S QUESTION SALT
-                    reply2 = client_socket.recv_withlen()
-                    print(reply2)
-                    #else:
-                    #    self.log.error(f"{clientid}User Does not exist!")"""
-                    self.log.error(f"Beta 2003 Forgot Password functionality not implemented yet!")
-                    client_socket.send(b"\x01")
-                else:
-                    print('Email not found')
-                    client_socket.send(b"\x00")
             else:
                 client_socket.send(b"\x01")
 
@@ -753,7 +916,7 @@ class authserver(TCPNetworkHandler):
         cryptedblob = reply[144:144 + datalength - 10]  # modified for Steam '03 support
 
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
         plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
         IV = cryptedblob[4:20]
         ciphertext = cryptedblob[20:-20]
@@ -772,7 +935,7 @@ class authserver(TCPNetworkHandler):
                 client_socket.close()
                 return
         if self.database.check_username_exists(username_str):
-            self.log.error(f"{clientid}Username Already Exists!")
+            self.log.error(f"{clientid}Username Already Exists!") # DOESN'T WORK FOR B2003 - FIX!!!
             client_socket.send(b'\x02')
             client_socket.close()
             return
@@ -793,6 +956,9 @@ class authserver(TCPNetworkHandler):
         question = plainblob[b'\x05\x00\x00\x00'][username_bytes][b'\x03\x00\x00\x00'].rstrip(b'\x00').decode('latin-1')
         answer_digest = plainblob[b'\x05\x00\x00\x00'][username_bytes][b'\x04\x00\x00\x00'].hex()
         answer_salt = plainblob[b'\x05\x00\x00\x00'][username_bytes][b'\x05\x00\x00\x00'].hex()
+
+        if globalvars.steamui_ver == 20: #FOR APR 2004
+            pkt_version = "b2004"
 
         result = self.database.create_user(username_str, password_salt, password_digest, question, answer_salt, answer_digest, email_str, pkt_version)
 
@@ -816,10 +982,14 @@ class authserver(TCPNetworkHandler):
 
     def subscription_receipt_acknowledgement(self, client_address, client_socket, clientid, command, pkt_version):
         """d: b'#\x01h\x00\x01\x00\x80testtest\x00\x01\xb4\x03\xa8\xc0\xc0\xa8\x03\xb4\xc0\xa8\x03\xb4\xa0i\xc0\xa8\x03\xb4\xa0i\xb4\xa3g:\'\xafS\x8a\xc1\x16\x0e\xf8\xebw\x07Q\x80\xcf\xba\x80\xaf\xe6\xe2\x00\x80\x8a\xa9!\xb0\xe6\xe2\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa6\xbc\xd3\xd1\xa1\x0f\x05\x14\x83\x03\xce\xc2D1^\xc4\x00B\x00P\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00^\x8a>Y\x9f"c\x80`\xc0,\xd36\xb4\xdfQ\x00,\x000\\\x0bn\x98\xa0F\x0f\xac\x1e_N"l\x9b\xaa=\x0fY=\xd2Y3E<R3\xbe\xcf\x039\xe8\xa0\xec\xea;\xf2\x7f\x7f\x8f_\xb42\xe3}\xa7\xe5C^\x92q\xd4\x1b\x7f#\xb6\x81\x99\xfc\x1e&\xd5\xa3\x8d\xb5\xf4+x\x80'"""
-        self.log.info(f"{clientid}Client Acknowledged Subscription Receipt command: {command}")
+        self.log.info(f"{clientid}Client acknowledged subscription receipt")
+        self.log.debug(f"{clientid}Client receipt command: {command}")
         ticket = Steam2Ticket(command[3:])
         self.database.change_subscriptions_changeflag(ticket.username_str)
+        client_socket.send(b'\x00')
         client_socket.close()
+
+        # Is the updated blob supposed to be sent here?  The clients that use this don't get a blob refresh from the "ticket login"
 
     def get_num_accounts_with_email(self, client_address, client_socket, clientid, command, pkt_version):
         self.log.info(f"{clientid}Client Requested Email Address Check")
@@ -836,7 +1006,7 @@ class authserver(TCPNetworkHandler):
         cryptedblob_slack = reply[140:144]
         cryptedblob = reply[144:]
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
         plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
         IV = cryptedblob[4:20]
         ciphertext = cryptedblob[20:-20]
@@ -873,7 +1043,7 @@ class authserver(TCPNetworkHandler):
         cryptedblob_slack = reply[140:144]
         cryptedblob = reply[144:]
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
         plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
         IV = cryptedblob[4:20]
         ciphertext = cryptedblob[20:-20]
@@ -902,7 +1072,7 @@ class authserver(TCPNetworkHandler):
         cryptedblob_slack = reply[140:144]
         cryptedblob = reply[144:]
         key = encryption.get_aes_key(RSAdata, encryption.network_key)
-        self.log.debug(f"Message verification:{repr(encryption.verify_message(key, cryptedblob))}")
+        self.log.debug(f"Message verification: {repr(encryption.verify_message(key, cryptedblob))}")
         plaintext_length = struct.unpack("<L", cryptedblob[0:4])[0]
         IV = cryptedblob[4:20]
         ciphertext = cryptedblob[20:-20]
@@ -977,7 +1147,9 @@ class authserver(TCPNetworkHandler):
         server_ticket = b"\x55" * 0x80 # <---- TODO No info in ida about this blob, it was only serverside related shit
         innerIV = secrets.token_bytes(16)
         client_ticket_encrypted = encryption.aes_encrypt(key, innerIV, client_ticket)  # utils.encrypt_with_pad(client_ticket, key, innerIV)
-        if pkt_version == "b2003":  # beta 2003
+        if pkt_version == "b2003":  # beta 2003 - NEED THIS FOR 2003-06 BETA BUT USES R2003 PROTOCOL
+            ticket = b"\x00\x01"
+        elif globalvars.formatted_date < "2003/09/11":  # NEED THIS FOR 2003-06 BETA BUT USES R2003 PROTOCOL
             ticket = b"\x00\x01"
         else:  # retail 2003, 2004, 2007
             ticket = b"\x00\x02"
@@ -1059,6 +1231,9 @@ class authserver(TCPNetworkHandler):
             client_socket.close()
             return
 
+        if globalvars.steamui_ver == 20:
+            pkt_version = "b2004"
+
         userblob = self.database.get_userregistry_dict(username, pkt_version, client_address[0])
 
         blob = blobs.blob_serialize(userblob)
@@ -1134,9 +1309,8 @@ class authserver(TCPNetworkHandler):
                 else:
                     client_socket.send(b"\x01")
 
-                # TODO SHOULD WE SEND AN FAILED ATTEMPT EMAIL?
-                #if self.config["smtp_enabled"].lower() == "true":
-                #    sendmail.send_question_changed_attempt(emailaddress, client_address, username)
+                if self.config["smtp_enabled"].lower() == "true":
+                    sendmail.send_attempted_pw_change_email(emailaddress, client_address, username)
             else:
                 self.log.warning(f"{clientid}Database error for: {username}")
                 if pkt_version == "r2003":  # retail 2003
@@ -1233,6 +1407,8 @@ class authserver(TCPNetworkHandler):
 
         if globalvars.steamui_ver > 4 and globalvars.steamui_ver < 8: #FOR NOV 2003 - FEB 2004
             pkt_version = "r2003"
+        elif globalvars.steamui_ver == 20: #FOR APR 2004
+            pkt_version = "b2004"
         
         username_bytes = command[3:3 + usernamelen]
         username = username_bytes.decode('latin-1').lower()
@@ -1240,10 +1416,12 @@ class authserver(TCPNetworkHandler):
             self.log.info(f"{clientid}Unknown user: {username}")
             client_socket.send(b"\x00\x00\x00\x00\x00\x00\x00\x00")
             steamtime = utilities.time.unixtime_to_steamtime(time.time())
-            tgt_command = b"\x01"  # UNKNOWN USER
+            # TGT is:
+            # r2003: \x00 = time skew, \x01 authenticated (below), \x02
+            tgt_command = b"\x02"  # UNKNOWN USER
             padding = b"\x00" * 1222
             ticket_full = tgt_command + steamtime + padding
-            if pkt_version in ["b2003", "r2003"]:
+            if pkt_version in ["b2003"]:#, "r2003"]:
                 client_socket.send(b"\x02")
                 client_socket.close()
             else:
@@ -1283,7 +1461,7 @@ class authserver(TCPNetworkHandler):
             if not decodedmessage.endswith(b"04040404"):
                 self.log.info(f"{clientid}Incorrect password entered for: {username}")
 
-                if globalvars.steamui_ver < 24:
+                if globalvars.steamui_ver < 20:
                     tgt_command = b"\x00"
                 else:
                     tgt_command = b"\x02"  # Incorrect password
@@ -1326,9 +1504,9 @@ class authserver(TCPNetworkHandler):
             if count > 0:
                 wan_ip, lan_ip, port = matches[0]
                 if self.islan:
-                    bin_ip = utils.encodeIP((lan_ip.decode('latin-1'), port))
+                    bin_ip = utils.encodeIP((lan_ip, port))
                 else:
-                    bin_ip = utils.encodeIP((wan_ip.decode('latin-1'), port))
+                    bin_ip = utils.encodeIP((wan_ip, port))
             else:
                 if self.islan:
                     bin_ip = utils.encodeIP((self.config["server_ip"], self.config["validation_port"]))
@@ -1340,6 +1518,7 @@ class authserver(TCPNetworkHandler):
             currtime = int(currtime)
             creation_time = utilities.time.unixtime_to_steamtime(currtime)
             ticket_expiration_time = utilities.time.unixtime_to_steamtime(currtime + (utilities.time.get_expiration_seconds()))
+            #ticket_expiration_time = utilities.time.unixtime_to_steamtime(currtime + (60*60*24*28))
             subheader = self.innerkey \
                         + steamid \
                         + servers \
@@ -1423,9 +1602,16 @@ class authserver(TCPNetworkHandler):
                      + blob_encrypted
 
             ticket_signed = ticket + encryption.sign_message(self.innerkey, ticket)
-            # TODO add ticket information to authenticationticketrecord table Use authdb method check_or_set_auth_ticket()
+            creation_time = datetime.datetime.now()
+            expiration_time = creation_time + datetime.timedelta(hours=1)
+            account_id = self.database.get_uniqueuserid(username)
+            if account_id:
+                self.database.expire_tickets_for_user(account_id)
+                self.database.check_or_set_auth_ticket(account_id, client_address[0], creation_time, expiration_time, ticket_signed)
+                server_stats.expire_user_tickets(account_id)
+                server_stats.mark_login(account_id, client_address[0], ticket_signed.hex(), expiration_time.timestamp())
 
-            if globalvars.steamui_ver < 24:
+            if globalvars.steamui_ver < 20:
                 tgt_command = b"\x01"  # Authenticated # AuthenticateAndRequestTGT command
             else:
                 # tgt_command = b"\x03" #Clock-skew too far out

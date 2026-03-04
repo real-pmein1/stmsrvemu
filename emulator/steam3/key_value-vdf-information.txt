@@ -1,0 +1,10 @@
+1) 1-byte   => 1 or 2 to denote value-type (string or int), depending how you store "version"
+2) NUL-terminated key name "version"
+3) The string or integer data
+... repeated for "crc"
+... then 0 => subkey "stats"
+... etc.
+... 8 => end of subkey
+... 8 => end of top-level
+
+- \x08 denotes the end of a subkey or key, if you are at the end of the last subkey inside another key, you would end with 2 \x08's

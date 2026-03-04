@@ -3,6 +3,8 @@ import sys
 import threading
 import logging
 import subprocess
+import shutil
+from pathlib import Path
 import mariadb
 import time
 import os
@@ -18,7 +20,45 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError  # Make sure to impor
 import globalvars
 from .base_dbdriver import Base, ExecutedSQLFile
 
-log = logging.getLogger("SQLEngine")
+# Lazy logger initialization to ensure CustomLogger class is set first
+_log = None
+
+def get_log():
+    global _log
+    if _log is None:
+        _log = logging.getLogger("SQLEngine")
+    return _log
+
+
+def find_mariadb_client():
+    """Find the mariadb or mysql client executable on the system."""
+    # Check for built-in mariadb first (Windows)
+    if globalvars.IS_WINDOWS:
+        builtin_path = os.path.join("files", "mdb", "bin", "mariadb.exe")
+        if os.path.isfile(builtin_path):
+            return builtin_path
+
+    # Try to find mariadb or mysql in PATH
+    for cmd in ['mariadb', 'mysql']:
+        path = shutil.which(cmd)
+        if path:
+            return path
+
+    # Common Linux locations to check
+    common_paths = [
+        '/usr/bin/mariadb',
+        '/usr/bin/mysql',
+        '/usr/local/bin/mariadb',
+        '/usr/local/bin/mysql',
+        '/usr/local/mariadb/bin/mariadb',
+        '/usr/local/mysql/bin/mysql',
+    ]
+
+    for path in common_paths:
+        if os.path.isfile(path):
+            return path
+
+    return None
 
 # from tqdm import tqdm
 sql_execution_done_flag = False
@@ -30,67 +70,87 @@ class DatabaseDriver():
         super().__init__()
         self.engine = None
         self.lock = threading.Lock()
-        self.current_connection = None
         self.metadata = Base.metadata
         if DatabaseDriver._session_factory is None:
             self.connect()
 
         self.config = globalvars.config
 
-    def connect(self, connection_string):
+    def connect(self, _unused_connection_string: str = ""):
+        """
+        Wait for the bundled MariaDB to finish booting, then create the
+        SQLAlchemy engine.  We simply look for a
+        ?[Note] ? mariadbd.exe: ready for connections.? line whose
+        timestamp is *after* this function was entered.
+        """
         connection_string = get_db_config()
 
+        # ????????????????????????????????????????????????????????????????
         if globalvars.config['use_builtin_mysql'].lower() == "true":
-            if globalvars.mariadb_initialized:
+
+            if globalvars.mariadb_initialized:          # fast exit
                 self.real_connect(connection_string)
                 return
-            else:
-                # Check if mariadbd.exe is already running
-                mariadb_running = any(
-                    proc.name().lower() == "mariadbd.exe" for proc in psutil.process_iter(attrs=['name'])
-                )
 
-                if mariadb_running:
-                    log.info("MariaDB server is already running. Skipping initialization wait.")
-                    globalvars.mariadb_initialized = True
-                    self.real_connect(connection_string)
-                    return
+            # If the process exists we still have to wait for its ?ready?
+            # log-entry, so we no longer short-circuit here.
 
-            start_time = datetime.now()
-            # Wait for the specific readiness line
-            while True:
-                elapsed_time = (datetime.now() - start_time).total_seconds()
-                if elapsed_time > 60:
-                    log.error("MariaDB initialization is taking too long. Please consult your logs/mariadb_error.log for details and contact support in the Discord channel.")
-                    break
+            start_dt   = globalvars.mariadb_launch_dt
+            log_path   = Path('logs/mariadb_error.log')
+            deadline   = start_dt + timedelta(seconds=60)
+            last_pos   = 0                              # incremental tail
 
+            while datetime.now() < deadline:
                 try:
-                    with open('logs/mariadb_error.log', 'r') as log_file:
-                        lines = log_file.readlines()
-                        last_lines = lines[-10:]  # Get the last 10 lines of the log
-                        mariadb_port = globalvars.config['database_port']
+                    chunk = b''  # Initialize chunk before checking
+                    if log_path.exists():
+                        with log_path.open('rb') as lf:          # binary mode
+                            lf.seek(last_pos)
+                            chunk     = lf.read()                # new bytes
+                            last_pos  = lf.tell()                # safe: no iterator
 
-                        # Check for the readiness message in the last 5 lines
-                        for line in last_lines:
-                            if f"Version: '11.4.2-MariaDB-log'  socket: ''  port: {mariadb_port}  mariadb.org binary distribution" in line:
-                                globalvars.mariadb_initialized = True
-                                log.info("MariaDB server is ready.")
-                                self.real_connect(connection_string)
-                                return
+                    # Nothing new written yet?
+                    if not chunk:
+                        time.sleep(0.5)
+                        continue
+
+                    for raw_line in chunk.splitlines():
+                        line = raw_line.decode('latin-1', errors='ignore')
+                        if "ready for connections." not in line:
+                            continue
+
+                        try:
+                            ts = datetime.strptime(line[:19],
+                                                   "%Y-%m-%d %H:%M:%S")
+                        except ValueError:
+                            continue
+
+                        if ts >= start_dt:
+                            globalvars.mariadb_initialized = True
+                            get_log().info("MariaDB ready @ %s.", ts, category="database")
+                            self.real_connect(connection_string)
+                            return
+
                 except Exception as log_error:
-                    log.error(f"Error while reading the log file: {log_error}")
-                time.sleep(3)
+                    get_log().error("Error reading MariaDB log: %s", log_error)
 
-        else:
-            globalvars.mariadb_initialized = True
-            self.real_connect(connection_string)
+                time.sleep(0.5)  # light 2 Hz poll
+
+            get_log().error(
+                "MariaDB did not become ready within 60 s. "
+                "Check %s for details.", log_path)
+            return
+
+        globalvars.mariadb_initialized = True  # external DB
+        self.real_connect(connection_string)
 
     def real_connect(self, connection_string):
         self.engine = create_engine(connection_string,
-                                    pool_size = 65,
-                                    max_overflow = 55,
-                                    pool_timeout = 5,
-                                    pool_recycle = 1300
+                                    pool_size = 150,
+                                    max_overflow = 200,
+                                    pool_timeout = 15,
+                                    pool_recycle = 1800,
+                                    pool_use_lifo=True
                                     )
         if not database_exists(self.engine.url):
             create_database(self.engine.url)
@@ -116,19 +176,37 @@ class DatabaseDriver():
             # Check if the file has already been processed
             existing_file = session.query(ExecutedSQLFile).filter_by(filename = filename).first()
             if existing_file:
-                log.debug(f"File {filename} has already been executed. Skipping.")
-                return
+                # Verify that expected tables actually exist for critical database SQL files
+                needs_reexecution = False
+                if filename == "ClientConfigurationDB.sql":
+                    needs_reexecution = not self._table_exists_in_database("ClientConfigurationDB", "configurations")
+                elif filename == "ContentDescriptionDB.sql":
+                    needs_reexecution = not self._table_exists_in_database("ContentDescriptionDB", "filename")
+                elif filename == "BetaContentDescriptionDB.sql":
+                    needs_reexecution = not self._table_exists_in_database("BetaContentDescriptionDB", "filename")
+                elif filename == "ProductInformationDB.sql":
+                    needs_reexecution = not self._table_exists_in_database("ProductInformationDB", "applications")
 
-        log.info(f"Executing {sql_file}.")
+                if needs_reexecution:
+                    get_log().warning(f"File {filename} was marked as executed but expected tables are missing. Re-executing.")
+                    session.delete(existing_file)
+                    session.commit()
+                else:
+                    get_log().debug(f"File {filename} has already been executed. Skipping.")
+                    return
+
+        get_log().info(f"Executing {sql_file}.")
         try:
-            if sql_file == "files/sql/ContentDescriptionDB.sql" or sql_file == "files/sql/ClientConfigurationDB.sql" or sql_file == "files/sql/appinfo_pkv.sql":
+            if sql_file == "files/sql/ContentDescriptionDB.sql" or sql_file == "files/sql/ClientConfigurationDB.sql" or sql_file == "files/sql/ProductInformationDB.sql" or sql_file == "files/sql/BetaContentDescriptionDB.sql":
 
                 if sql_file == "files/sql/ClientConfigurationDB.sql":
                     database_schema = "ClientConfigurationDB"
                 elif sql_file == "files/sql/ContentDescriptionDB.sql":
                     database_schema = "ContentDescriptionDB"
+                elif sql_file == "files/sql/BetaContentDescriptionDB.sql":
+                    database_schema = "BetaContentDescriptionDB"
                 else:
-                    database_schema = "appinfo_pkv"
+                    database_schema = "ProductInformationDB"
 
                 config = globalvars.config
                 with Session(self.engine) as session:
@@ -136,9 +214,9 @@ class DatabaseDriver():
                     filename = os.path.basename(sql_file)
                     existing_file = session.query(ExecutedSQLFile).filter_by(filename = filename).first()
                     if existing_file:
-                        log.debug(f"File {filename} has already been executed. Skipping.")
+                        get_log().debug(f"File {filename} has already been executed. Skipping.")
                         return
-                    if os.path.isfile("files/mdb/bin/mariadb.exe"):
+                    if globalvars.IS_WINDOWS and os.path.isfile(os.path.join("files", "mdb", "bin", "mariadb.exe")):
                         # Connect to MariaDB Platform
                         try:
                             conn = mariadb.connect(
@@ -157,17 +235,61 @@ class DatabaseDriver():
                         cur.execute(f"CREATE DATABASE IF NOT EXISTS {database_schema}")
                         conn.close()
 
-                        # these need to be \\, not /, else import fails
-                        import_cddb = subprocess.Popen(f"files\\mdb\\bin\\mariadb.exe -u {config['database_username']} -p{config['database_password']} -h {config['database_host']} -P {config['database_port']} --skip-ssl {database_schema} < files\\sql\\{database_schema}.sql", shell=True)
+                        mariadb_bin = os.path.join("files", "mdb", "bin", "mariadb.exe")
+                        sql_path = os.path.join("files", "sql", f"{database_schema}.sql")
+                        import_cmd = [
+                            mariadb_bin,
+                            f"-u{config['database_username']}",
+                            f"-p{config['database_password']}",
+                            f"-h{config['database_host']}",
+                            f"-P{config['database_port']}",
+                            "--skip-ssl",
+                            database_schema,
+                        ]
+                        #with open(sql_path, "rb") as sql_file:
+                        #    import_cddb = subprocess.Popen(import_cmd, stdin=sql_file)
+                        #    import_cddb.wait()
+                    else:
+                        # Linux: Create the database first (same as Windows branch)
+                        try:
+                            conn = mariadb.connect(
+                                    user=config['database_username'],
+                                    password=config['database_password'],
+                                    host=config['database_host'],
+                                    port=int(config['database_port'])
+                            )
+                            cur = conn.cursor()
+                            cur.execute(f"DROP DATABASE IF EXISTS {database_schema}")
+                            cur.execute(f"CREATE DATABASE IF NOT EXISTS {database_schema}")
+                            conn.close()
+                        except mariadb.Error as e:
+                            get_log().error(f"Error creating database {database_schema}: {e}")
+                            return
+
+                        mariadb_client = find_mariadb_client()
+                        if not mariadb_client:
+                            get_log().error("Could not find mariadb or mysql client. Please ensure MariaDB/MySQL client is installed and in PATH.")
+                            return
+                        import_cmd = [
+                            mariadb_client,
+                            f"-u{config['database_username']}",
+                            f"-p{config['database_password']}",
+                            f"-h{config['database_host']}",
+                            f"-P{config['database_port']}",
+                            database_schema,
+                        ]
+                        sql_path = os.path.join("files", "sql", f"{database_schema}.sql")
+                    with open(sql_path, "rb") as sql_file_bin:
+                        import_cddb = subprocess.Popen(import_cmd, stdin=sql_file_bin)
                         import_cddb.wait()
 
-                        log.debug(f"Successfully executed statement.")
+                    #get_log().debug(f"Successfully executed statement.")
 
-                        log.info(f"Finished executing {sql_file}.")
-                        executed_file = ExecutedSQLFile(filename = filename)
-                        session.add(executed_file)
-                        session.commit()
-                        # os.remove(sql_file)
+                    get_log().info(f"Finished executing {sql_file}.")
+                    executed_file = ExecutedSQLFile(filename = filename)
+                    session.add(executed_file)
+                    session.commit()
+                    # os.remove(sql_file)
             else:
                 # Read the SQL file and escape problematic characters
                 with open(sql_file, 'r', encoding = 'latin-1') as file:
@@ -188,13 +310,13 @@ class DatabaseDriver():
                                 cursor = raw_connection.cursor()
                                 cursor.execute(statement)
                                 raw_connection.commit()
-                            log.debug(f"Successfully executed statement.")
+                            #get_log().debug(f"Successfully executed statement.")
                         except SQLAlchemyError as e:
-                            log.error(f"Error executing statement starting with: {statement[:100]}...\nError: {e}")
+                            get_log().error(f"Error executing statement starting with: {statement[:100]}...\nError: {e}")
                             break  # Stop on error to help narrow down issues
 
                 else:
-                    log.info(f"Finished executing {sql_file}.")
+                    get_log().info(f"Finished executing {sql_file}.")
 
                 # Record the executed file
                 with Session(self.engine) as session:
@@ -202,8 +324,16 @@ class DatabaseDriver():
                     session.add(executed_file)
                     session.commit()
 
+                # Delete admin_user.sql after processing
+                if filename == 'admin_user.sql':
+                    try:
+                        os.remove(sql_file)
+                        get_log().info(f"Deleted {sql_file} after successful execution.")
+                    except OSError as e:
+                        get_log().warning(f"Failed to delete {sql_file}: {e}")
+
         except Exception as e:
-            log.error(f"Error processing {sql_file}: {e}")
+            get_log().error(f"Error processing {sql_file}: {e}")
             return
 
     def _split_sql_statements(self, sql_commands):
@@ -246,18 +376,29 @@ class DatabaseDriver():
         inspector = inspect(self.engine)
         return table_name in inspector.get_table_names()
 
+    def _table_exists_in_database(self, database_name, table_name):
+        """Check if a specific table exists in a specific database."""
+        try:
+            config = globalvars.config
+            conn = mariadb.connect(
+                user=config['database_username'],
+                password=config['database_password'],
+                host=config['database_host'],
+                port=int(config['database_port']),
+                database=database_name
+            )
+            cur = conn.cursor()
+            cur.execute(f"SHOW TABLES LIKE '{table_name}'")
+            result = cur.fetchone()
+            conn.close()
+            return result is not None
+        except Exception as e:
+            get_log().debug(f"Error checking table {database_name}.{table_name}: {e}")
+            return False
+
     def disconnect(self):
-        if self.current_connection:
-            self.current_connection.close()
-            self.current_connection = None
         if self.engine:
             self.engine.dispose()
-
-    def get_current_connection(self):
-       # with self.lock:
-        if self.current_connection is None or self.current_connection.closed:
-            self.current_connection = self.engine.connect()
-        return self.current_connection
 
     def execute_query(self, query, params = None):
         #with self.lock:

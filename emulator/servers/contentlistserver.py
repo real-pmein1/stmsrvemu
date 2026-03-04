@@ -1,16 +1,14 @@
 import binascii
-import logging
 import os
-import socket as pysocket
 import struct
 import threading
 import time
-
-import ipcalc
+import socket
+import pickle
 
 import globalvars
 import utils
-from listmanagers.contentlistmanager import manager
+from servers.managers.contentlistmanager import manager
 from servers.managers.latency_manager import latencyaggregater
 from utilities import encryption
 from utilities.encryption import peer_decrypt_message, peer_encrypt_message
@@ -36,6 +34,19 @@ class contentlistserver(TCPNetworkHandler):
         thread.daemon = True
         thread.start()
 
+        peer_conf = self.config.get('content_peers', '')
+        self.peer_servers = []
+        for peer in [p.strip() for p in peer_conf.split(',') if p.strip()]:
+            try:
+                ip, prt = peer.split(':')
+                self.peer_servers.append((ip, int(prt)))
+                plist = self.request_peer_list(ip, int(prt))
+                for entry in plist:
+                    manager.add_contentserver_info(*entry)
+                self.log.info(f"Synced content servers from peer {peer}")
+            except Exception as e:
+                self.log.warning(f"Failed to sync with peer {peer}: {e}")
+
         # TODO Ben note: Figure out how to get the appid's and versions from the sdk contentserver.
         #  ideas include: if a packet exists for getting the app list, have csds send the packet and parse the response  # or put sdk contentserver in a folder within stmserver that we can parse through the files ourselves
 
@@ -45,18 +56,20 @@ class contentlistserver(TCPNetworkHandler):
         global csdsConnectionCount
 
         reply = b""
-        # TODO BEN NOTE: Add peering to this server!
 
         clientid = str(client_address) + ": "
         self.log.info(f"{clientid}Connected to Content Server Directory Server")
 
         # Determine if connection is local or external
-        if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)):
+        if str(client_address[0]) in globalvars.server_network:
             islan = True
         else:
             islan = False
 
         msg = server_socket.recv(1024)
+        if msg == b"\x00\x4f\x8c\x12":
+            self.send_peer_list(server_socket)
+            return
         if msg[:4] == b"\x00\x4f\x8c\x11":
             self.acceptcontentservers(client_address, server_socket, islan, msg)
             return
@@ -201,7 +214,7 @@ class contentlistserver(TCPNetworkHandler):
                 if appid == None and appversion == None:
                     break
 
-        if count == 2 and len(response) > 12: # FIXME do this properly!
+        if count == 2 and len(response) > 12: # FIXME do this properl, the client does not like more than two IP addresses.  2 ip addresses counts as a single group
             response = response[:12] # trim reply to expected clupd server length
             count = 1
         packet = struct.pack(">HI", count, cellid1)  # Cell ID
@@ -273,6 +286,25 @@ class contentlistserver(TCPNetworkHandler):
         else:
             self.send_error(server_socket, client_address, "Failed to parse game info")
 
+    def handle_custom_blob(self, server_socket, client_address, decrypted_data):
+        try:
+            sub_id, app_id, sub_len, app_len = struct.unpack_from('!IIII', decrypted_data)
+            offset = 16
+            sub_blob = decrypted_data[offset:offset + sub_len]
+            offset += sub_len
+            app_blob = decrypted_data[offset:offset + app_len]
+        except Exception as e:
+            self.log.error(f"Failed to unpack custom blob from {client_address}: {e}")
+            self.send_error(server_socket, client_address, "invalid format")
+            return
+
+        added = manager.add_custom_blob(sub_id, app_id, sub_blob, app_blob)
+        if added:
+            self.send_ok(server_socket, client_address)
+            self.log.info(f"Added custom application {app_id} from {client_address}")
+        else:
+            self.send_error(server_socket, client_address, "appid or subid in use")
+
     # Check if client should be forced to handshake again
     def check_client_heartbeat(self, client_address):
         if client_address in manager.client_last_heartbeat:
@@ -281,7 +313,7 @@ class contentlistserver(TCPNetworkHandler):
                 return True  # Force handshake
         return False
 
-    def handle_client_handshake(self, server_socket, client_address):
+    def handle_client_handshake(self, server_socket, client_address, islan):
         # Generate new salt and key for the handshake
         salt = os.urandom(16)
         key = encryption.derive_key(self.config['peer_password'], salt)
@@ -298,13 +330,15 @@ class contentlistserver(TCPNetworkHandler):
         key1_length = len(key_1024_data).to_bytes(4, 'big')
         key2_length = len(key_512_data).to_bytes(4, 'big')
 
-        # Read the second blob from file
-        try:
-            with open('files/cache/secondblob_wan.bin', 'rb') as f:
-                second_blob_data = f.read()
-        except FileNotFoundError:
-            self.log.error("Second blob file not found.")
-            self.send_error(server_socket, client_address, "Second blob file not found.")
+        # Get the second blob from memory (LAN or WAN based on client)
+        if islan:
+            second_blob_data = globalvars.CDR_BLOB_LAN
+        else:
+            second_blob_data = globalvars.CDR_BLOB_WAN
+
+        if not second_blob_data:
+            self.log.error("Second blob not loaded in memory.")
+            self.send_error(server_socket, client_address, "Second blob not available.")
             return
 
         second_blob_length = len(second_blob_data).to_bytes(4, 'big')
@@ -374,7 +408,7 @@ class contentlistserver(TCPNetworkHandler):
         if command_byte == b'\x01' or client_address not in manager.client_info or self.check_client_heartbeat(client_address):
             if command_byte == b'\x01':  # Handshake command
                 self.log.debug(f"Client {client_address} needs to handshake.")
-                self.handle_client_handshake(server_socket, client_address)
+                self.handle_client_handshake(server_socket, client_address, islan)
             else:
                 self.send_error(server_socket, client_address, "Client needs to handshake first.")
                 return
@@ -396,7 +430,57 @@ class contentlistserver(TCPNetworkHandler):
                     manager.client_last_heartbeat[client_address] = time.time()
                     self.log.debug(f"Received heartbeat from {client_address}")
                     self.send_ok(server_socket, client_address)
+                elif command_byte == b'\x05':  # Custom application blob
+                    self.log.debug(f"Received custom blob from {client_address}")
+                    self.handle_custom_blob(server_socket, client_address, decrypted_data)
+                elif command_byte == b'\x06':  # In-use ID list request
+                    self.log.debug(f"{client_address} requested in-use id list")
+                    self.send_used_ids(server_socket, client_address, key)
                 else:
                     break  # Break if the connection is closed or no further messages are received
+                for ip, prt in self.peer_servers:
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.connect((ip, prt))
+                        s.send(msg)
+                        s.close()
+                    except Exception as e:
+                        self.log.warning(f"Failed to forward packet to peer {ip}:{prt}: {e}")
             except:
                 return
+
+    def send_peer_list(self, sock):
+        data = pickle.dumps(manager.contentserver_list)
+        enc = encryption.encrypt_bytes(data, self.config['peer_password'])
+        sock.send(struct.pack('!I', len(enc)))
+        sock.send(enc)
+
+    def request_peer_list(self, ip, port):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((ip, port))
+        s.send(b"\x00\x4f\x8c\x12")
+        size_data = s.recv(4)
+        length = struct.unpack('!I', size_data)[0]
+        data = b""
+        while len(data) < length:
+            chunk = s.recv(length - len(data))
+            if not chunk:
+                break
+            data += chunk
+        s.close()
+        try:
+            dec = encryption.decrypt_bytes(data, self.config['peer_password'])
+            return pickle.loads(dec)
+        except Exception:
+            return []
+
+    def send_used_ids(self, sock, addr, key):
+        apps = []
+        subs = []
+        if globalvars.CDR_DICTIONARY:
+            apps = [int.from_bytes(k, 'little') for k in globalvars.CDR_DICTIONARY.get(b"\x01\x00\x00\x00", {}).keys()]
+            subs = [int.from_bytes(k, 'little') for k in globalvars.CDR_DICTIONARY.get(b"\x02\x00\x00\x00", {}).keys()]
+        payload = pickle.dumps({'apps': apps, 'subs': subs})
+        enc = peer_encrypt_message(key, payload)
+        sock.sendto(struct.pack('!I', len(enc)), addr)
+        sock.sendto(enc, addr)

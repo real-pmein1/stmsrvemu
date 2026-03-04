@@ -158,7 +158,7 @@ class GameID:
         return gameIdDetail
 
     def _set_mod_gameIdDetail(self, appId, modPath):
-        cleanedName = modPath.split('/')[-1].split('.')[0]
+        cleanedName = os.path.basename(modPath).split('.')[0]
         self.gameIdDetail = self._create_gameIdDetail(appId, GameIDType.GAMEMOD, self._calculate_crc(cleanedName))
 
     def _set_shortcut_gameIdDetail(self, exePath, appName):

@@ -3,13 +3,10 @@ import os
 import struct
 import sys
 import io
-import re
+import zlib
 import numpy as np
-
-from collections import defaultdict
-from Crypto.Signature import pkcs1_15
-from Crypto.Hash import SHA1
-from Crypto.PublicKey import RSA
+import glob
+from datetime import datetime
 
 import globalvars
 from utilities.blobs import SDKBlob
@@ -118,6 +115,60 @@ class Old_Storage(object):
             self.f.close()
             self.f = False
 
+    def write_neutered(self, fileid, filechunks_lan, filemode, filechunks_wan, path, version):
+        """
+        Write a file's chunks to separate LAN and WAN storage files.
+
+        This method writes neutered content with LAN/WAN split using v3 format
+        (64-bit: header >QQQ, chunks >QQ).
+
+        Args:
+            fileid: The file ID
+            filechunks_lan: List of chunk data for LAN
+            filemode: File mode (1=plain, 2=encrypted+compressed, 3=encrypted)
+            filechunks_wan: List of chunk data for WAN
+            path: Base path for output files
+            version: Storage version string for filename
+        """
+        # Create per-file data files
+        datafile_lan = path + self.name + "_" + str(fileid) + "_lan.data"
+        datafile_wan = path + self.name + "_" + str(fileid) + "_wan.data"
+        indexfile_lan = path + self.name + "_" + str(version) + "_lan.index"
+        indexfile_wan = path + self.name + "_" + str(version) + "_wan.index"
+
+        f = open(datafile_lan, "a+b")
+        w = open(datafile_wan, "a+b")
+        fi = open(indexfile_lan, "ab")
+        wi = open(indexfile_wan, "ab")
+
+        f.seek(0, 2)
+        w.seek(0, 2)
+
+        # v3 format: header >QQQ (24 bytes), chunks >QQ (16 bytes each)
+        outindex = struct.pack(">QQQ", fileid, len(filechunks_lan) * 16, filemode)
+        outindex_wan = struct.pack(">QQQ", fileid, len(filechunks_wan) * 16, filemode)
+
+        for chunk in filechunks_lan:
+            outfilepos = f.tell()
+            outindex = outindex + struct.pack(">QQ", outfilepos, len(chunk))
+            f.write(chunk)
+
+        for chunk_wan in filechunks_wan:
+            outfilepos_wan = w.tell()
+            outindex_wan = outindex_wan + struct.pack(">QQ", outfilepos_wan, len(chunk_wan))
+            w.write(chunk_wan)
+
+        fi.write(outindex)
+        wi.write(outindex_wan)
+
+        f.close()
+        fi.close()
+        w.close()
+        wi.close()
+
+        self.indexes[fileid] = outindex[24:]
+        self.filemodes[fileid] = filemode
+
 
 class Storage(object):
     def __init__(self, storagename, path, version, islan = False):
@@ -159,6 +210,10 @@ class Storage(object):
 
         # (self.indexes, self.filemodes) = readindexes(self.indexfile)
         # self.storage_type = "v3"
+        self.year = ""
+        self.current = datetime.strptime(globalvars.CDDB_datetime, "%m/%d/%Y %H:%M:%S")
+        if self.name == "261" and (datetime(2006, 10, 12) <= self.current < datetime(2006, 11, 6)):
+            self.year = "_2006"
         if os.path.isfile("files/cache/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + ".manifest"):
 
             self.indexfile = "files/cache/" + self.name + "_" + self.ver + "/" + self.name + self.suffix + ".index"
@@ -221,9 +276,9 @@ class Storage(object):
                     self.indexes[fileid] = index2[fileid]
                     self.filemodes[fileid] = mode2[fileid]
             self.storage_type = "v3e"
-        elif os.path.isfile(manifestpathnew + self.name + "_" + self.ver + ".v3.manifest"):
-            self.indexfile = config["storagedir"] + self.name + ".v3.index"
-            self.datafile = config["storagedir"] + self.name + ".v3.data"
+        elif os.path.isfile(manifestpathnew + self.name + "_" + self.ver + self.year + ".v3.manifest"):
+            self.indexfile = config["storagedir"] + self.name + self.year + ".v3.index"
+            self.datafile = config["storagedir"] + self.name + self.year + ".v3.data"
 
             (self.indexes, self.filemodes) = readindexes(self.indexfile)
             if os.path.isfile("files/cache/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + self.suffix + ".index"):
@@ -436,11 +491,112 @@ class Storage(object):
         self.indexes[fileid] = outindex[12:]
         self.filemodes[fileid] = filemode
 
+    def write_neutered(self, fileid, filechunks_lan, filemode, filechunks_wan, path, version, storage_format=None):
+        """
+        Write a file's chunks to separate LAN and WAN storage files.
+
+        This method writes neutered content with LAN/WAN split. The format is
+        determined by storage_format parameter or self.storage_type.
+
+        Args:
+            fileid: The file ID
+            filechunks_lan: List of chunk data for LAN
+            filemode: File mode (1=plain, 2=encrypted+compressed, 3=encrypted)
+            filechunks_wan: List of chunk data for WAN
+            path: Base path for output files
+            version: Storage version string for filename
+            storage_format: Override format ('v2', 'v3', 'v4'). If None, uses self.storage_type
+        """
+        # Determine format to use
+        fmt = storage_format if storage_format else getattr(self, 'storage_type', 'v3')
+
+        # Create per-file data files
+        datafile_lan = path + self.name + "_" + str(fileid) + "_lan.data"
+        datafile_wan = path + self.name + "_" + str(fileid) + "_wan.data"
+        indexfile_lan = path + self.name + "_" + str(version) + "_lan.index"
+        indexfile_wan = path + self.name + "_" + str(version) + "_wan.index"
+
+        f = open(datafile_lan, "a+b")
+        w = open(datafile_wan, "a+b")
+        fi = open(indexfile_lan, "ab")
+        wi = open(indexfile_wan, "ab")
+
+        f.seek(0, 2)
+        w.seek(0, 2)
+
+        if fmt == "v2":
+            # v2 format: header >LLL (12 bytes), chunks >LL (8 bytes each)
+            outindex = struct.pack(">LLL", fileid, len(filechunks_lan) * 8, filemode)
+            outindex_wan = struct.pack(">LLL", fileid, len(filechunks_wan) * 8, filemode)
+
+            for chunk in filechunks_lan:
+                outfilepos = f.tell()
+                outindex = outindex + struct.pack(">LL", outfilepos, len(chunk))
+                f.write(chunk)
+
+            for chunk_wan in filechunks_wan:
+                outfilepos_wan = w.tell()
+                outindex_wan = outindex_wan + struct.pack(">LL", outfilepos_wan, len(chunk_wan))
+                w.write(chunk_wan)
+
+            header_size = 12
+
+        elif fmt == "v4":
+            # v4 format: header >LLQ (16 bytes), chunks >QL (12 bytes each)
+            outindex = struct.pack(">LLQ", fileid, len(filechunks_lan) * 12, filemode)
+            outindex_wan = struct.pack(">LLQ", fileid, len(filechunks_wan) * 12, filemode)
+
+            for chunk in filechunks_lan:
+                outfilepos = f.tell()
+                outindex = outindex + struct.pack(">QL", outfilepos, len(chunk))
+                f.write(chunk)
+
+            for chunk_wan in filechunks_wan:
+                outfilepos_wan = w.tell()
+                outindex_wan = outindex_wan + struct.pack(">QL", outfilepos_wan, len(chunk_wan))
+                w.write(chunk_wan)
+
+            header_size = 16
+
+        else:
+            # v3 format (default): header >QQQ (24 bytes), chunks >QQ (16 bytes each)
+            outindex = struct.pack(">QQQ", fileid, len(filechunks_lan) * 16, filemode)
+            outindex_wan = struct.pack(">QQQ", fileid, len(filechunks_wan) * 16, filemode)
+
+            for chunk in filechunks_lan:
+                outfilepos = f.tell()
+                outindex = outindex + struct.pack(">QQ", outfilepos, len(chunk))
+                f.write(chunk)
+
+            for chunk_wan in filechunks_wan:
+                outfilepos_wan = w.tell()
+                outindex_wan = outindex_wan + struct.pack(">QQ", outfilepos_wan, len(chunk_wan))
+                w.write(chunk_wan)
+
+            header_size = 24
+
+        fi.write(outindex)
+        wi.write(outindex_wan)
+
+        f.close()
+        fi.close()
+        w.close()
+        wi.close()
+
+        self.indexes[fileid] = outindex[header_size:]
+        self.filemodes[fileid] = filemode
+
 
 class Steam2Storage(object):
     class BlobContainer:
         def __init__(self):
             pass
+
+    @staticmethod
+    def _chunk_cache_path(appid, version, fileid, chunkid, suffix=""):
+        return os.path.join("files", "cache",
+                            f"{appid}_{version}",
+                            f"{appid}_{fileid}{suffix}.data")
 
     def __init__(self, storagename, _, version, islan = False):
         self.log = logging.getLogger('SDKDepot')
@@ -461,6 +617,14 @@ class Steam2Storage(object):
         self.known_blobs = globalvars.known_blobs  # Use the globally scanned blob files
         self.known_dats = globalvars.known_dats  # Use the globally scanned dat files
 
+        if config["public_ip"] != "0.0.0.0":
+            if islan:
+                self.suffix = "_lan"
+            else:
+                self.suffix = "_wan"
+        else:
+            self.suffix = ""
+
         branch_id = (int(self.name), int(self.ver))
         blobcontainers, checksums, datreferences = self.get_blobdata(self.known_blobs, branch_id)
 
@@ -469,106 +633,140 @@ class Steam2Storage(object):
             id, filedata, checksums_list = datreferences[fileid]
             filesize, offset, filemode = filedata
 
-            # Determine datid
             if len(id) == 2:
                 datid = id
-            elif len(id) == 3:
+            elif len(id) >= 3:
                 datid = (id[0], id[1], blobcontainers[id].datachecksum)
             else:
                 self.log.error("bad id")
+                continue
 
             datfile_path = self.known_dats.get(datid)
+
+            if datfile_path is None and len(datid) >= 3:
+                short_id = (datid[0], datid[1])
+                datfile_path = self.known_dats.get(short_id)
+
             if datfile_path is None:
-                self.log.error("Data file not found for datid:", datid)
+                self.log.error(
+                    "Data file not found for datid: %s  (tried %s)",
+                    datid,
+                    datid if len(datid) == 2 else short_id
+                )
+                continue
 
             self.file_data_info[fileid] = {
-                    'datfile':  datfile_path,
-                    'offset':   offset,
-                    'filemode': filemode,
-                    'checksums':checksums_list,
-                    'filesize': filesize
+                'datfile':  datfile_path,
+                'offset':   offset,
+                'filemode': filemode,
+                'checksums': checksums_list,
+                'filesize': filesize
             }
 
             self.filemodes[fileid] = filemode
-
-    def readchunk(self, fileid, chunkid):
-        file_info = self.file_data_info.get(fileid)
-        if file_info is None:
-            self.log.error("FileID does not exist!")
-
-        datfile_path = file_info['datfile']
-        offset = file_info['offset']
-        filemode = file_info['filemode']
-        checksums = file_info['checksums']
-
-        if chunkid >= len(checksums):
-            self.log.error("Invalid chunkid")
-
-        compr_size, checksum = checksums[chunkid]
-
-        # Calculate chunk offset
-        chunk_offset = offset + sum(compr_size for compr_size, _ in checksums[:chunkid])
-
-        with open(datfile_path, 'rb') as f:
-            f.seek(chunk_offset)
-            chunk_data = f.read(compr_size)
-            if len(chunk_data) != compr_size:
-                self.log.error("Failed to read chunk data")
-
-        return chunk_data, filemode
-
-    def readchunks(self, fileid, chunkid, maxchunks):
-        file_info = self.file_data_info.get(fileid)
-        if file_info is None:
-            self.log.error("FileID does not exist!")
-
-        datfile_path = file_info['datfile']
-        offset = file_info['offset']
-        filemode = file_info['filemode']
-        checksums = file_info['checksums']
-
-        chunks = []
-        total_chunks = len(checksums)
-
-        if chunkid >= total_chunks:
-            self.log.error("Invalid chunkid")
-
-        num_chunks_to_read = min(maxchunks, total_chunks - chunkid)
-
-        # Calculate starting offset
-        chunk_offset = offset + sum(compr_size for compr_size, _ in checksums[:chunkid])
-
-        with open(datfile_path, 'rb') as f:
-            f.seek(chunk_offset)
-            for i in range(num_chunks_to_read):
-                compr_size, checksum = checksums[chunkid + i]
-                chunk_data = f.read(compr_size)
-                if len(chunk_data) != compr_size:
-                    self.log.error("Failed to read chunk data")
-                chunks.append(chunk_data)
-
-        return chunks, filemode
+            # Ensure all fileid entries point to the same .dat file during initialization
 
     def readfile(self, fileid):
-        file_info = self.file_data_info.get(fileid)
-        if file_info is None:
+        if fileid not in self.indexes:
             self.log.error("FileID does not exist!")
+            sys.exit()
+        with open(self.datafile, "rb") as f:
+            start, length = np.frombuffer(self.indexes[fileid], dtype = np.uint64).reshape(-1, 2).T
+            filechunks = [f.read(length[i]) for i in range(len(start))]
+        return filechunks, self.filemodes[fileid]
 
-        datfile_path = file_info['datfile']
-        offset = file_info['offset']
-        filemode = file_info['filemode']
-        checksums = file_info['checksums']
+    def readchunk(self, fileid, chunkid):
+        """
+        Thin wrapper: grab exactly one chunk via readchunks().
+        """
+        chunks, mode = self.readchunks(fileid, chunkid, 1)
+        return (chunks[0] if chunks else b""), mode
 
-        chunks = []
-        with open(datfile_path, 'rb') as f:
-            f.seek(offset)
-            for compr_size, checksum in checksums:
-                chunk_data = f.read(compr_size)
-                if len(chunk_data) != compr_size:
-                    self.log.error("Failed to read chunk data")
-                chunks.append(chunk_data)
+    def readchunks(self, fileid, first_chunk, maxchunks):
+        """
+        Try the cache .data file exactly like storage.readchunks(),
+        otherwise fall back to the original .dat-based logic.
+        """
+        info = self.file_data_info.get(fileid)
+        if info is None:
+            self.log.error("FileID does not exist!")
+            return [], 0
 
-        return chunks, filemode
+        # Build cache path (same naming as storage class)
+        cache_path = os.path.join(
+            "files", "cache",
+            f"{self.name}_{self.ver}",
+            f"{self.name}_{fileid}{self.suffix}.data"
+        )
+        index_path = os.path.join(
+            "files", "cache",
+            f"{self.name}_{self.ver}",
+            f"{self.name}_{self.ver}{self.suffix}.index"
+        )
+        # 1) Cached .data exists?  Use index file to pull compressed blobs.
+        if os.path.isfile(cache_path):
+            # Derive .index path from your .dat path
+            dat_path = info["datfile"]
+            idx_path =  index_path
+
+            if not os.path.isfile(idx_path):
+                self.log.error("Index file not found for cache: %s", idx_path)
+                return [], info["filemode"]
+
+            # Load the same index table the storage class uses
+            indexes, _ = readindexes(idx_path)
+            index = indexes.get(fileid)
+            if index is None:
+                self.log.error("No index entry for fileid %d in %s", fileid, idx_path)
+                return [], info["filemode"]
+
+            # Open the per-file cache once
+            if getattr(self, "f", False):
+                self.f.close()
+                self.f = False
+            self.f = open(cache_path, "rb")
+
+            filechunks = []
+            # Walk the index, starting at first_chunk
+            pos = first_chunk * 16
+            while pos < len(index) and len(filechunks) < maxchunks:
+                start, length = struct.unpack(">QQ", index[pos:pos+16])
+                self.f.seek(start)
+                filechunks.append(self.f.read(length))
+                pos += 16
+
+            self.f.close()
+            self.f = False
+            return filechunks, self.filemodes[fileid]
+
+        # 2) Fallback: read straight out of the .dat
+        checksums   = info["checksums"]
+        total_chunks = len(checksums)
+        if first_chunk >= total_chunks:
+            self.log.error("Invalid chunkid %d for fileid %d", first_chunk, fileid)
+            return [], info["filemode"]
+
+        filechunks = []
+        dat_path   = info["datfile"]
+        base_off   = info["offset"]
+
+        # slice out up to maxchunks
+        for cid in range(first_chunk, min(first_chunk + maxchunks, total_chunks)):
+            comp_size, _ = checksums[cid]
+            # cumulative offset for this chunk
+            chunk_off = base_off + sum(sz for sz, _ in checksums[:cid])
+
+            with open(dat_path, "rb") as df:
+                df.seek(chunk_off)
+                data = df.read(comp_size)
+                if len(data) != comp_size:
+                    self.log.error(
+                        "Failed to read %d bytes at %d in %s",
+                        comp_size, chunk_off, dat_path
+                    )
+                filechunks.append(data)
+
+        return filechunks, info["filemode"]
 
     # Implement writefile if needed (placeholder)
     def writefile(self, fileid, filechunks, filemode):
@@ -669,94 +867,480 @@ class Steam2Storage(object):
         return filedata, checksums, fingerprintdata
 
     def get_blobdata(self, known_blobs, id):
-        blobname = known_blobs[id]
+        # Determine cache directory from appid and version
+        if len(id) == 3:
+            appid, version, crc = id[0], id[1], id[2]
+        else:
+            appid, version = id[0], id[1]
+        cache_dir = os.path.join("files", "cache", f"{appid}_{version}")
+
+        # Look for any cached .checksums file: e.g. "123_456_lan.checksums" or "123_456.checksums"
+        checksum_pattern = os.path.join(cache_dir, f"{appid}_{version}*.checksums")
+        checksum_files = glob.glob(checksum_pattern)
+
+        # Look for any cached .manifest file
+        manifest_pattern = os.path.join(cache_dir, f"{appid}_{version}*.manifest")
+        manifest_files = glob.glob(manifest_pattern)
+
+        # Prepare blobcontainers, checksums, datreferences
+        # (we'll fill checksumbin and manifest later)
+        blobcontainers = {}
+        checksums = {}
+        datreferences = {}
+
+        # If we have a cached checksums blob, load it now
+        if checksum_files:
+            cached_checksums_path = checksum_files[0]
+            self.log.info(f"Loading cached checksums from {cached_checksums_path}")
+            with open(cached_checksums_path, "rb") as f:
+                cached_checksumbin = f.read()
+            # We'll still need filedata and newchecksums below, so defer assignment
+        else:
+            cached_checksumbin = None
+
+        # If we have a cached manifest blob, load it now
+        if manifest_files:
+            cached_manifest_path = manifest_files[0]
+            self.log.info(f"Loading cached manifest from {cached_manifest_path}")
+            with open(cached_manifest_path, "rb") as f:
+                cached_manifest = f.read()
+        else:
+            cached_manifest = None
+
+        # === Existing blob-loading logic ===
+        new_known_blobs = {}
+        for key, value in known_blobs.items():
+            if key[0] == id[0]:
+                new_known_blobs.update({(key[0], key[1]): value})
+        blobname = new_known_blobs[id]
         blobdata = open(blobname, "rb").read()
-        # Placeholder for SDKBlob; implement or import as needed
         b = SDKBlob(blobdata)
 
         parentver = b.get_i32(11)
         parentcrc = f"{b.get_i32(12):08x}"
 
-        if parentver == 0xffffffff:
-            blobcontainers = {}
-            checksums = {}
-            datreferences = {}
+        if not (id[0], parentver) in new_known_blobs:
+            parentver = 0xffffffff
 
+        if parentver == 0xffffffff:
+            pass
         else:
             if len(id) == 2:
                 parentid = (id[0], parentver)
-            elif len(id) == 3:
+            elif len(id) >= 3:
                 parentid = (id[0], parentver, parentcrc)
             else:
                 self.log.error("bad id")
-
-            if parentid not in known_blobs:
+            found = False
+            for key, value in new_known_blobs.items():
+                if parentid == key:
+                    found = True
+                    break
+            if not found:
+                parentver = 0xffffffff
                 self.log.error("parent blob doesn't exist:", parentid)
+            blobcontainers, checksums, datreferences = self.get_blobdata(new_known_blobs, parentid)
 
-            blobcontainers, checksums, datreferences = self.get_blobdata(known_blobs, parentid)
-
+        # Parse checksums out of the blob so we know filedata & newchecksums
         filedata, newchecksums, _ = self.parse_checksums(b.get_raw(4))
 
         for fileid in newchecksums:
             if fileid in checksums:
                 self.log.debug(f"overwritten fileid from {id} to {parentid}: {fileid:d}")
-
             checksums[fileid] = newchecksums[fileid]
-
             datreferences[fileid] = (id, filedata[fileid], newchecksums[fileid])
 
-        last_id = max(checksums.keys())
+        # Build indextable & checksumtable only if no cached checksums
+        if cached_checksumbin is None:
+            last_id = max(checksums.keys())
+            indextable = bytearray()
+            checksumtable = bytearray()
+            indexcount = last_id + 1
+            checksumoffset = 0
 
-        indextable = bytearray()
-        checksumtable = bytearray()
+            for fid in range(indexcount):
+                if fid not in checksums:
+                    indextable += struct.pack("<II", 0, 0)
+                else:
+                    num = len(checksums[fid])
+                    indextable += struct.pack("<II", num, checksumoffset)
+                    checksumoffset += num
+                    for _, chk in checksums[fid]:
+                        checksumtable += chk
 
-        indexcount = last_id + 1
-        checksumoffset = 0
+            checksumdata = (
+                b"\x21\x37\x89\x14"
+                + struct.pack("<III", 1, indexcount, checksumoffset)
+                + indextable
+                + checksumtable
+            )
+            signature = b.get_raw(9)
+            computed_checksumbin = checksumdata + signature
+        else:
+            computed_checksumbin = None
 
-        for fileid in range(last_id + 1):
-            if fileid not in checksums:
-                indextable += struct.pack("<II", 0, 0)
-
-            else:
-                numchecksums = len(checksums[fileid])
-
-                indextable += struct.pack("<II", numchecksums, checksumoffset)
-                checksumoffset += numchecksums
-
-                for _, checksum in checksums[fileid]:
-                    checksumtable += checksum
-
-        checksumdata = b"\x21\x37\x89\x14" + struct.pack("<III", 1, indexcount, checksumoffset) + indextable + checksumtable
-
-        signature = b.get_raw(9)
-        self.checksumbin = checksumdata + signature
+        # Finally, assign the checksumbin into both self and the container
+        final_checksumbin = cached_checksumbin or computed_checksumbin
+        self.checksumbin = final_checksumbin
         blobcontainers[id] = self.BlobContainer()
-        blobcontainers[id].checksumbin = checksumdata + signature
+        blobcontainers[id].checksumbin = final_checksumbin
         blobcontainers[id].filedata = filedata
         blobcontainers[id].checksums = newchecksums
         blobcontainers[id].datachecksum = "%08x" % b.get_i32(7)
-        blobcontainers[id].manifest = b.get_raw(3, 0)
+
+        # Assign manifest: use cached if available, else raw from blob
+        if cached_manifest is not None:
+            blobcontainers[id].manifest = cached_manifest
+        else:
+            blobcontainers[id].manifest = b.get_raw(3, 0)
 
         return blobcontainers, checksums, datreferences
 
+
     @staticmethod
     def gen_id_from_filename(filename):
-        log = logging.getLogger('SDKDepot')
         parts = os.path.basename(filename).split(".")[0].split("_")
-        if len(parts) == 4:
-            appid, appver, crc, hash = parts
-            appid = int(appid)
-            appver = int(appver)
-            id = (appid, appver, crc)
-
-        elif len(parts) == 2:
+        if len(parts) == 2:
+            # Format: appid_version
             appid, appver = parts
-            appid = int(appid)
-            appver = int(appver)
+            return (int(appid), int(appver))
 
-            id = (appid, appver)
+        elif len(parts) >= 4:
+            # Format: appid_version_crc_sha256 (renamed with integrity hashes)
+            appid, appver, crc, sha256 = parts[0:4]
+            return (int(appid), int(appver), crc)
 
         else:
-            log.error("Nonstandard filename format", filename)
+            raise Exception("Nonstandard filename format", filename)
 
-        return id
+
+class StorageBeta(object):
+    def __init__(self, storagename, path, version, islan = False):
+        self.log = logging.getLogger('Storage')
+        self.manifest = None
+        self.version = None
+        self.app = None
+        self.name = str(storagename)
+        self.ver = str(version)
+
+        # Normalize the path to ensure consistent path separators
+        normalized_path = os.path.normpath(path)
+
+        # Use os.path.join to create normalized comparisons for storage paths
+        storages_path = os.path.normpath("betastorages/")
+
+        # Check if the path ends with the normalized storage paths
+        if normalized_path.endswith(storages_path) or normalized_path.endswith(beta1_path):
+            manifestpathbeta = config["betamanifestdir"]
+        else:
+            self.log.error("Path to storages directory is not set to files/betastorages!")
+            return
+
+        if config["public_ip"] != "0.0.0.0":
+            if islan:
+                self.suffix = "_lan"
+            else:
+                self.suffix = "_wan"
+        else:
+            self.suffix = ""
+
+        if os.path.isfile("files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + ".manifest"):
+
+            self.indexfile = "files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + self.suffix + ".index"
+            self.datafile = "files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + self.suffix + ".data"
+
+            (self.indexes, self.filemodes) = readindexes(self.indexfile)
+            self.storage_type = "beta"
+        elif os.path.isfile(manifestpathbeta + self.name + "_" + self.ver + ".manifest"):
+            self.indexfile = config["betastoragedir"] + self.name + "_" + self.ver + ".index"
+            self.datafile = config["betastoragedir"] + self.name + "_" + self.ver + ".data"
+
+            (self.indexes, self.filemodes) = readindexes_tane(self.indexfile)
+            if os.path.isfile("files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + self.suffix + ".index"):
+                (index2, mode2) = readindexes_tane("files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + self.ver + self.suffix + ".index")
+                for fileid in index2:
+                    self.indexes[fileid] = index2[fileid]
+                    self.filemodes[fileid] = mode2[fileid]
+            self.storage_type = "beta"
+
+        self.f = False
+
+    def readchunk(self, fileid, chunkid):
+        index = self.indexes[fileid]
+
+        if not self.f:
+            self.f = open(self.datafile, "rb")
+
+        pos = chunkid * 16
+
+        (start, length) = struct.unpack(">QQ", index[pos:pos + 16])
+
+        self.f.seek(start)
+        file = self.f.read(length)
+
+        return file, self.filemodes[fileid]
+
+    def readchunks(self, fileid, chunkid, maxchunks):
+        try:
+            if self.storage_type == "beta":
+                filechunks = []
+                index = self.indexes[fileid]
+
+                if os.path.isfile("files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + str(fileid) + self.suffix + ".data"):
+                    if self.f:
+                        self.f.close()
+                        self.f = False
+                    self.f = open("files/cache/beta/" + self.name + "_" + self.ver + "/" + self.name + "_" + str(fileid) + self.suffix + ".data", "rb")
+
+                    indexstart = chunkid * 12
+
+                    for pos in range(indexstart, len(index), 12):
+                        (start, length) = struct.unpack(">QL", index[pos:pos + 12])
+
+                        self.f.seek(start)
+                        filechunks.append(self.f.read(length))
+
+                        maxchunks -= 1
+
+                        if maxchunks == 0:
+                            break
+                    self.f.close()
+                    self.f = False
+                    return filechunks, self.filemodes[fileid]
+
+                if not self.f:
+                    self.f = open(self.datafile, "rb")
+
+                indexstart = chunkid * 12
+
+                for pos in range(indexstart, len(index), 12):
+                    (start, length) = struct.unpack(">QL", index[pos:pos + 12])
+
+                    self.f.seek(start)
+                    filechunks.append(self.f.read(length))
+
+                    maxchunks -= 1
+
+                    if maxchunks == 0:
+                        break
+
+                return filechunks, self.filemodes[fileid]
+
+        except Exception as e:
+            self.log.error(f"There was a issue reading your chunks!!! {e}")
+
+    def readfile(self, fileid):
+        if fileid not in self.indexes:
+            self.log.error("FileID does not exist!")
+            sys.exit()
+        with open(self.datafile, "rb") as f:
+            start, length = np.frombuffer(self.indexes[fileid], dtype = np.uint64).reshape(-1, 2).T
+            filechunks = [f.read(length[i]) for i in range(len(start))]
+        return filechunks, self.filemodes[fileid]
+
+    def writefile(self, fileid, filechunks, filemode):
+        if fileid in self.indexes:
+            self.log.error("FileID already exists!")
+            sys.exit()
+        if os.path.exists(self.datafile):
+            os.remove(self.datafile)
+        with open(self.datafile, "a+b") as f, open(self.indexfile, "ab") as fi:
+            f.seek(0, 2)  # this is a hack to get the f.tell() to show the correct position
+            outindex = np.array([fileid, len(filechunks) * 16, filemode], dtype = np.uint64).tobytes()
+            for chunk in filechunks:
+                outfilepos = f.tell()
+                outindex += np.array([outfilepos, len(chunk)], dtype = np.uint64).tobytes()
+                f.write(chunk)
+            fi.write(outindex)
+        self.indexes[fileid] = outindex[12:]
+        self.filemodes[fileid] = filemode
+
+    def write_neutered(self, fileid, filechunks_lan, filemode, filechunks_wan, path, version):
+        """
+        Write a file's chunks to separate LAN and WAN storage files.
+
+        This method writes neutered content with LAN/WAN split using v4 format
+        (mixed: header >LLQ, chunks >QL) which is typical for beta storages.
+
+        Args:
+            fileid: The file ID
+            filechunks_lan: List of chunk data for LAN
+            filemode: File mode (1=plain, 2=encrypted+compressed, 3=encrypted)
+            filechunks_wan: List of chunk data for WAN
+            path: Base path for output files
+            version: Storage version string for filename
+        """
+        # Create per-file data files
+        datafile_lan = path + self.name + "_" + str(fileid) + "_lan.data"
+        datafile_wan = path + self.name + "_" + str(fileid) + "_wan.data"
+        indexfile_lan = path + self.name + "_" + str(version) + "_lan.index"
+        indexfile_wan = path + self.name + "_" + str(version) + "_wan.index"
+
+        f = open(datafile_lan, "a+b")
+        w = open(datafile_wan, "a+b")
+        fi = open(indexfile_lan, "ab")
+        wi = open(indexfile_wan, "ab")
+
+        f.seek(0, 2)
+        w.seek(0, 2)
+
+        # v4 format: header >LLQ (16 bytes), chunks >QL (12 bytes each)
+        outindex = struct.pack(">LLQ", fileid, len(filechunks_lan) * 12, filemode)
+        outindex_wan = struct.pack(">LLQ", fileid, len(filechunks_wan) * 12, filemode)
+
+        for chunk in filechunks_lan:
+            outfilepos = f.tell()
+            outindex = outindex + struct.pack(">QL", outfilepos, len(chunk))
+            f.write(chunk)
+
+        for chunk_wan in filechunks_wan:
+            outfilepos_wan = w.tell()
+            outindex_wan = outindex_wan + struct.pack(">QL", outfilepos_wan, len(chunk_wan))
+            w.write(chunk_wan)
+
+        fi.write(outindex)
+        wi.write(outindex_wan)
+
+        f.close()
+        fi.close()
+        w.close()
+        wi.close()
+
+        self.indexes[fileid] = outindex[16:]
+        self.filemodes[fileid] = filemode
+
+
+# =============================================================================
+# NEUTER STORAGE WRITER - Lightweight class for neuter.py compatibility
+# =============================================================================
+
+class NeuterStorageWriter:
+    """
+    Lightweight storage writer for neutering operations.
+
+    This class provides a simplified interface for neuter.py to write
+    neutered content without requiring full storage initialization.
+    It reads existing indexes from .orig.index if available (to track
+    already-processed files) and provides write_neutered() for output.
+
+    Replaces the standalone NeuterStorage, NeuterStorage03, and NeuterStorage04 classes.
+    """
+
+    def __init__(self, storagename, path, storage_format='v3'):
+        """
+        Initialize the neuter storage writer.
+
+        Args:
+            storagename: The storage name (typically appid as string)
+            path: Base path for storage files
+            storage_format: Storage format ('v2', 'v3', or 'v4')
+        """
+        self.name = str(storagename)
+        self.path = path
+        self.storage_format = storage_format
+
+        # Read existing indexes from .orig.index if available
+        self.indexfile = path + self.name + ".orig.index"
+
+        if storage_format == 'v2':
+            (self.indexes, self.filemodes) = readindexes_old(self.indexfile)
+        elif storage_format == 'v4':
+            (self.indexes, self.filemodes) = readindexes_tane(self.indexfile)
+        else:  # v3 (default)
+            (self.indexes, self.filemodes) = readindexes(self.indexfile)
+
+    def writefile(self, fileid, filechunks_lan, filemode, filechunks_wan, path, version):
+        """
+        Write a file's chunks to separate LAN and WAN storage files.
+
+        This is the main method called by neuter.py. Signature matches
+        the original NeuterStorage* classes for compatibility.
+
+        Args:
+            fileid: The file ID
+            filechunks_lan: List of chunk data for LAN
+            filemode: File mode (1=plain, 2=encrypted+compressed, 3=encrypted)
+            filechunks_wan: List of chunk data for WAN
+            path: Base path for output files
+            version: Storage version string for filename
+        """
+        # Create per-file data files
+        datafile_lan = path + self.name + "_" + str(fileid) + "_lan.data"
+        datafile_wan = path + self.name + "_" + str(fileid) + "_wan.data"
+        indexfile_lan = path + self.name + "_" + str(version) + "_lan.index"
+        indexfile_wan = path + self.name + "_" + str(version) + "_wan.index"
+
+        f = open(datafile_lan, "a+b")
+        w = open(datafile_wan, "a+b")
+        fi = open(indexfile_lan, "ab")
+        wi = open(indexfile_wan, "ab")
+
+        f.seek(0, 2)
+        w.seek(0, 2)
+
+        if self.storage_format == "v2":
+            # v2 format: header >LLL (12 bytes), chunks >LL (8 bytes each)
+            outindex = struct.pack(">LLL", fileid, len(filechunks_lan) * 8, filemode)
+            outindex_wan = struct.pack(">LLL", fileid, len(filechunks_wan) * 8, filemode)
+
+            for chunk in filechunks_lan:
+                outfilepos = f.tell()
+                outindex = outindex + struct.pack(">LL", outfilepos, len(chunk))
+                f.write(chunk)
+
+            for chunk_wan in filechunks_wan:
+                outfilepos_wan = w.tell()
+                outindex_wan = outindex_wan + struct.pack(">LL", outfilepos_wan, len(chunk_wan))
+                w.write(chunk_wan)
+
+            header_size = 12
+
+        elif self.storage_format == "v4":
+            # v4 format: header >LLQ (16 bytes), chunks >QL (12 bytes each)
+            outindex = struct.pack(">LLQ", fileid, len(filechunks_lan) * 12, filemode)
+            outindex_wan = struct.pack(">LLQ", fileid, len(filechunks_wan) * 12, filemode)
+
+            for chunk in filechunks_lan:
+                outfilepos = f.tell()
+                outindex = outindex + struct.pack(">QL", outfilepos, len(chunk))
+                f.write(chunk)
+
+            for chunk_wan in filechunks_wan:
+                outfilepos_wan = w.tell()
+                outindex_wan = outindex_wan + struct.pack(">QL", outfilepos_wan, len(chunk_wan))
+                w.write(chunk_wan)
+
+            header_size = 16
+
+        else:
+            # v3 format (default): header >QQQ (24 bytes), chunks >QQ (16 bytes each)
+            outindex = struct.pack(">QQQ", fileid, len(filechunks_lan) * 16, filemode)
+            outindex_wan = struct.pack(">QQQ", fileid, len(filechunks_wan) * 16, filemode)
+
+            for chunk in filechunks_lan:
+                outfilepos = f.tell()
+                outindex = outindex + struct.pack(">QQ", outfilepos, len(chunk))
+                f.write(chunk)
+
+            for chunk_wan in filechunks_wan:
+                outfilepos_wan = w.tell()
+                outindex_wan = outindex_wan + struct.pack(">QQ", outfilepos_wan, len(chunk_wan))
+                w.write(chunk_wan)
+
+            header_size = 24
+
+        fi.write(outindex)
+        wi.write(outindex_wan)
+
+        f.close()
+        fi.close()
+        w.close()
+        wi.close()
+
+        self.indexes[fileid] = outindex[header_size:]
+        self.filemodes[fileid] = filemode
+
+    def close(self):
+        """Close any open file handles (for compatibility)."""
+        pass
+

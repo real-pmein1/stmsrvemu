@@ -1,4 +1,16 @@
 from enum import Enum, IntEnum, IntFlag
+from steam3.Types.chat_types import (
+    ClanRelationship, ChatEntryType, ChatRoomType, ChatPermission, 
+    ChatRoomEnterResponse, ChatAction, ChatActionResult, ChatRoomFlags,
+    ChatInfoType, ChatMemberStateChange, ChatMemberStatus, ChatMemberRankDetails, ChatRoomType2
+)
+from steam3.Types.steam_types import (
+    ELeaderboardDataRequest as LeaderboardDataRequest,
+    ELeaderboardSortMethod as LeaderboardSortMethod,
+    ELeaderboardDisplayType as LeaderboardDisplayType,
+    ELeaderboardUploadScoreMethod as LeaderboardUploadScoreMethod
+)
+# Removed LobbyIds import to avoid circular dependency
 
 class FriendRelationship(IntEnum):
     none = 0
@@ -17,9 +29,9 @@ class PlayerState(IntEnum):
     busy = 0x02
     away = 0x03
     snooze = 0x04
-    lookingToTrade = 0x05 # Max for clients before 2010
+    lookingToTrade = 0x05  # Max for clients before 2010
     lookingToPlay = 0x06
-    max = 0x07  # Assumed next sequence if max was meant to be inclusive
+    invisible = 0x07  # Appears offline to friends but is actually online
 
 class ClanRank(Enum):
     none = 0x00
@@ -63,19 +75,59 @@ class PersonaStateFlags(IntFlag):
     gameLobbyId = 0x4000
     watchingBroadcast = 0x8000
 
+# Flags shared by all the original sets
+RequestedPersonaStateFlags_common = (
+    PersonaStateFlags.playerName |
+    PersonaStateFlags.queryPort |
+    PersonaStateFlags.sourceId |
+    PersonaStateFlags.presence |
+    PersonaStateFlags.lastSeen |
+    PersonaStateFlags.extraInfo |
+    PersonaStateFlags.gameDataBlob |
+    # PersonaStateFlags.facebook |  # Uncomment if needed
+    PersonaStateFlags.richPresence |
+    PersonaStateFlags.broadcastId |
+    PersonaStateFlags.gameLobbyId
+)
+
+# Individual flag sets
+RequestedPersonaStateFlags_self = (
+    RequestedPersonaStateFlags_common |
+    PersonaStateFlags.status
+)
+
+RequestedPersonaStateFlags_inFriendsList_friend = (
+    RequestedPersonaStateFlags_common |
+    PersonaStateFlags.status
+)
+
+RequestedPersonaStateFlags_inFriendsList_other = (
+    RequestedPersonaStateFlags_common
+)
+
+RequestedPersonaStateFlags_clanMembers = (
+    RequestedPersonaStateFlags_common |
+    PersonaStateFlags.status |
+    PersonaStateFlags.clanInfo
+)
+
+RequestedPersonaStateFlags_chatMembers = (
+    RequestedPersonaStateFlags_common |
+    PersonaStateFlags.status
+    # | PersonaStateFlags.chatMetadata
+)
+
+RequestedPersonaStateFlags_gameServerMembers = (
+    RequestedPersonaStateFlags_common |
+    PersonaStateFlags.status
+)
+
 # The struct can be represented as a class in Python
 class FriendRelation:
     def __init__(self, friendGlobalId: int, relationship: FriendRelationship):
         self.friendGlobalId = friendGlobalId
         self.relationship = relationship
 
-
-class ClanRelationship(IntEnum):
-    none = 0
-    blocked = 1
-    invited = 2
-    member = 3
-    kicked = 4
 
 class ClanRelation:
     def __init__(self, clanGlobalId: int, relationship: ClanRelationship):
@@ -102,106 +154,8 @@ class ClanAccountFlags(IntFlag):
     locked = 0x04
     disabled = 0x08
 
-class ChatInfoType(IntEnum):
-    stateChange = 1
-    infoUpdate = 2
-    memberLimitChange = 3
 
-class ChatMemberStateChange(IntFlag):
-    entered = 0x01
-    left = 0x02
-    disconnected = 0x04
-    kicked = 0x08
-    banned = 0x10
-    startedVoiceSpeak = 0x1000
-    endedVoiceSpeak = 0x2000
 
-class ChatEntryType(IntEnum):
-    invalid = 0x00
-    chatMsg = 0x01
-    typing = 0x02
-    inviteGame = 0x03
-    emote = 0x04
-    lobbyGameStart = 0x05
-    lobbyLeftConversation = 0x06
-
-class ChatRoomType(IntEnum):
-    none = 0
-    friend = 1
-    MUC = 2  # multi-user chat
-    lobby = 3
-
-class ChatPermission(IntFlag):
-    close = 0x0001
-    invite = 0x0002
-    talk = 0x0008
-    kick = 0x0010
-    mute = 0x0020
-    setMetadata = 0x0040
-    changePermissions = 0x0080
-    ban = 0x0100
-    changeAccess = 0x0200
-    everyoneNotInClanDefault = 0x0008
-    everyoneDefault = 0x000a
-    memberDefault = 0x011a
-    officerDefault = 0x021a
-    ownerDefault = 0x037b
-    mask = 0x03fb
-
-class ChatRoomEnterResponse(IntEnum):
-    success = 1
-    doesntExist = 2
-    notAllowed = 3
-    full = 4
-    error = 5
-    banned = 6
-
-class ChatAction(IntEnum):
-    inviteChat = 1
-    kick = 2
-    ban = 3
-    unBan = 4
-    startVoiceSpeak = 5
-    endVoiceSpeak = 6
-    lockChat = 7
-    unlockChat = 8
-    closeChat = 9
-    setJoinable = 10
-    setUnjoinable = 11
-    setOwner = 12
-    setInvisibleToFriends = 13
-    setVisibleToFriends = 14
-    setModerated = 15
-    setUnmoderated = 16
-
-class ChatActionResult(Enum):
-    success = 1
-    error = 2
-    notPermitted = 3
-    notAllowedOnClanMember = 4
-    notAllowedOnBannedUser = 5
-    notAllowedOnChatOwner = 6
-    notAllowedOnSelf = 7
-    chatDoesntExist = 8
-    chatFull = 9
-    voiceSlotsFull = 10
-
-class Relation:
-    def __init__(self, steamGlobalId: int, relationship: int):  # Using int for relationship type due to potential mixed usage
-        self.steamGlobalId = steamGlobalId
-        self.relationship = relationship
-
-class ChatRoomFlags(IntFlag):
-    none = 0
-    locked = 1
-    invisibleToFriends = 2
-    moderated = 4
-    unjoinable = 8
-
-class LobbyIds:
-    def __init__(self, appId: int, lobbyGlobalId: int):
-        self.appId = appId
-        self.lobbyGlobalId = lobbyGlobalId
 
 class LobbyType(Enum):
     none = 0
@@ -234,3 +188,4 @@ class LobbyFilterType(Enum):
     nearValue = 3
     distance = 4
     maxResults = 5
+

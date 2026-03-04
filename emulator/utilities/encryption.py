@@ -14,7 +14,7 @@ from Crypto.Protocol.KDF import scrypt
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pkcs1_15
 
-from config import read_config as get_config
+from config import get_config
 
 config = get_config()
 
@@ -182,6 +182,37 @@ main_key = None
 network_key = None
 BERstring = None
 signed_mainkey_reply = None
+network_key_reply = None  # Precomputed network key response for configserver
+
+
+def init_network_key_reply():
+    """Precompute the network key response used by configserver.
+
+    Call this after main_key and network_key have been loaded.
+    """
+    global BERstring, signed_mainkey_reply, network_key_reply
+
+    # Convert the network key modulus to bytes
+    network_key_n_hex = hex(network_key.n)[2:]
+    if len(network_key_n_hex) % 2 != 0:
+        network_key_n_hex = "0" + network_key_n_hex
+    network_key_n_bytes = binascii.a2b_hex(network_key_n_hex)
+
+    # Build the BER/DER encoded public key structure
+    BERstring = (
+        binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100")
+        + network_key_n_bytes
+        + b"\x02\x01\x11"
+    )
+
+    # Sign the BER string with the main key
+    signature = rsa_sign_message(main_key, BERstring)
+
+    # Build the complete reply: length-prefixed BER string + length-prefixed signature
+    network_key_reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
+    signed_mainkey_reply = network_key_reply  # Alias for backwards compatibility
+
+
 def get_aes_key(encryptedstring, rsakey):
     return PKCS1_OAEP.new(rsakey).decrypt(encryptedstring)
 

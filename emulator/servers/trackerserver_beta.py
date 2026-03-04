@@ -8,7 +8,6 @@ import time
 import traceback
 
 import globalvars
-# TODO replace with something faster
 
 from config import get_config
 from utilities import encryption
@@ -18,18 +17,6 @@ from utilities.networkhandler import UDPNetworkHandler
 from utilities.tracker_utils import Message, Packet, Packet_Beta, di, parse_data, parse_size_prepended_value, validate_msg
 
 config = get_config()
-
-# logging.basicConfig(
-#    format="%(asctime)s %(levelname)-8s %(message)s",
-#    filename="logs/trackerserver_debug.log",
-#    encoding="utf-8",
-#    level=logging.DEBUG)
-
-# console = logging.StreamHandler()
-# console.setLevel(logging.INFO)
-# console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
-# logging.getLogger().addHandler(console)
-
 
 from enum import IntEnum
 
@@ -59,7 +46,8 @@ class Client:
         self.staletime = time.time() + self.timeout
 
     def update_timeout(self, timeout):
-        self.timeout = timeout
+        # Ensure a minimum timeout of 60 seconds to prevent premature staleness
+        self.timeout = max(timeout, 60)
         self.keep_alive()
 
 
@@ -83,25 +71,28 @@ class TrackerServer(UDPNetworkHandler):
         self.pending = []
         self.pending_lock = threading.Lock()
 
-        """self.do_sends_thread = threading.Thread(target = self.do_sends_loop)
-        self.do_sends_thread.daemon = True  # Optional: makes the thread exit when the main thread exits
-        self.do_sends_thread.start()"""
         self.isbeta1 = False
         self.isbeta_tracker = True  # beta 1 / beta 2
         self.isretail = False
         self.usermgr = beta2_dbdriver(config)  # beta 2 / 2004
 
-
-
     def handle_client(self, data, addr):
         # data, addr = self.serversocket.recvfrom(16384)
         clientid = str(addr) + ": "
         self.log.info(clientid + "Connected to Tracker Server")
+
+        # FIXME this needs to be more accurate!
         if globalvars.record_ver == 0:  # 2002/beta 1
             self.isbeta1 = True
             self.usermgr = beta1_dbdriver(config)
-        elif globalvars.record_ver < 1:  # 2004
+        elif globalvars.record_ver == 1:  # 2003 beta
+            self.isbeta_tracker = True
+            self.isbeta1 = False
+            self.usermgr = beta2_dbdriver(config)
+        elif globalvars.record_ver >= 2: # 2003 retail+
             self.isbeta_tracker = False
+            self.isbeta1 = False
+            self.usermgr = beta2_dbdriver(config)
 
         self.handle_incoming(data, addr)
 
@@ -268,7 +259,7 @@ class TrackerServer(UDPNetworkHandler):
                     self.beta1_pre_login(client, msg)
 
             elif cmdid == 2003:  # Login Challange Response (Beta 1 Tracker Only)
-                self.login(client, msg)
+                self.login(client, msg, pkt)
 
             elif cmdid == 2004:  # search for users
                 if not self.isbeta1:
@@ -347,7 +338,9 @@ class TrackerServer(UDPNetworkHandler):
             self.log.error(e)
 
     def check_sessionid(self, client, cmdid, pkt):
-        if cmdid == 2001:
+        # cmdid 2001 is pre-login for beta2/retail, cmdid 2002 is pre-login for beta1
+        # In both cases, sessionid should be 0
+        if cmdid == 2001 or (cmdid == 2002 and self.isbeta1):
             if pkt.sessionid != 0:
                 self.log.error("bad sessionid for connect?")
                 return False
@@ -426,7 +419,7 @@ b'\x05\xf2q\\Y\x15jVlU\n\x02\xb9\x0b
 \x05AddOnFlag\x00\x04\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00'
         """
         try:
-            if not self.isbeta_tracker:
+            if not self.isbeta_tracker or self.isbeta1:
                 uid = di(msg["uid"])
                 targetid = di(msg["targetID"])
             else:
@@ -665,8 +658,17 @@ Text 1 b'gotta get donald duck to run the cuntry'"""
         # validate_msg(msg, ("uid", "ReqReason"))
         targetuid = di(msg["uid"])
         reason = msg["ReqReason"]
+
+        # Prevent self-friend requests
+        if client.uid == targetuid:
+            self.log.warning(f"user {client.uid:x} attempted to send friend request to themselves, ignoring")
+            msg = Message(client, 1, True)
+            self.enqueue(msg)
+            return
+
         self.log.info(f"user {client.uid:x} requests friendship with {targetuid:x}, reason {reason}")
-        self.usermgr.request_friend(client.uid, targetuid)
+        if not self.usermgr.request_friend(client.uid, targetuid):
+            self.log.warning(f"friend request from {client.uid:x} to {targetuid:x} was rejected by database")
         msg = Message(client, 1, True)
         self.enqueue(msg)
         if targetuid in self.clients_by_uid:
@@ -677,12 +679,22 @@ Text 1 b'gotta get donald duck to run the cuntry'"""
         targetuid = di(msg["targetID"])
         auth = di(msg["auth"])
 
+        # Prevent self-friend acknowledgement
+        if client.uid == targetuid:
+            self.log.warning(f"user {client.uid:x} attempted to acknowledge friend request from themselves, ignoring")
+            msg = Message(client, 1, True)
+            self.enqueue(msg)
+            return
+
         if auth == 1:
             self.log.info(f"user {client.uid:x} acknowledged friend request from {targetuid:x}")
             #change both user and friend entries to relationship 3
-            self.usermgr.accept_friend_request(client.uid, targetuid)
+            if not self.usermgr.accept_friend_request(client.uid, targetuid):
+                self.log.warning(f"accept_friend_request from {client.uid:x} for {targetuid:x} was rejected")
         else:
-            self.log.error("refusing a friend request isn't implemented yet!")
+            # User declined/removed friend - remove both entries from database
+            self.log.info(f"user {client.uid:x} declined/removed friend {targetuid:x}")
+            self.usermgr.remove_friend(client.uid, targetuid)
 
         msg = Message(client, 1, True)
         self.enqueue(msg)
@@ -837,8 +849,9 @@ Text 1 b'gotta get donald duck to run the cuntry'"""
 
         self.log.info(f"Sending Tracker login OK message to user")
 
-        # pending friend requests
-        for friendid in self.usermgr.pending_friends(client.uid):
+        # pending friend requests (including global ones)
+
+        for friendid in self.usermgr.pending_friends(client.uid, self.isretail):
             self.log.info(f"user {client.uid:x} has pending friend request from {friendid:x}")
             self.send_friend_request(client, friendid)
 
@@ -1103,7 +1116,17 @@ Text 1 b'gotta get donald duck to run the cuntry'"""
         self.enqueue(msg)
 
     def send_friend_request(self, client, friendid):
-        friendid, email, username, firstname, lastname = self.usermgr.get_user_by_uid(friendid)
+        # Defensive check: prevent sending friend request notification from self
+        if client.uid == friendid:
+            self.log.warning(f"Prevented sending self-friend request notification to user {client.uid:x}")
+            return
+
+        user_info = self.usermgr.get_user_by_uid(friendid)
+        if user_info is None or user_info[0] == 0:
+            self.log.warning(f"Could not find user info for friendid {friendid}, skipping friend request notification")
+            return
+
+        friendid, email, username, firstname, lastname = user_info
         self.log.debug(f"send friend request: {friendid}, {email}, {username}, {firstname}, {lastname}")
         msg = Message(client, 1, True)
         self.enqueue(msg)

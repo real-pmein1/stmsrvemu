@@ -23,9 +23,18 @@ def read_config():
             'server_sm':                           "255.255.255.0",
 
             # Log Configurations
-            'log_level':                           "logging.INFO",
+            'log_level':                           "INFO",
             'log_to_file':                         "true",
             'logging_enabled':                     "true",
+            'enable_test_logging':                 "false",  # Create consolidated test logs on startup, blob changes, and shutdown
+            
+            # ImpSocket Packet Logging Per Server (disable send/recv messages)
+            # Default: Show logging for all servers EXCEPT CM servers
+            'disable_impsocket_logging_cm_servers': "true",     # Disable for CM servers (high volume)
+            'disable_impsocket_logging_content_server': "false", # Show ContentServer logging
+            'disable_impsocket_logging_auth_server': "false",   # Show AuthServer logging
+            'disable_impsocket_logging_admin_server': "false",  # Show AdminServer logging  
+            'disable_impsocket_logging_other_servers': "false",  # Show all other servers logging
 
             # File Path Configurations
             'configsdir':                          "files/configs/",
@@ -39,8 +48,6 @@ def read_config():
             'v2manifestdir':                       "files/v2manifests/",  # FIXME Eventually Deprecate After v.8 Release
             'v3manifestdir2':                      "files/v3manifests2/",  # FIXME Eventually Deprecate After v.8 Release
             'v4manifestdir':                       "files/v4manifests/",  # FIXME Eventually Deprecate After v.8 Release
-            'customstoragedir':                    "files/custom_storages/",  # FIXME not needed, if i can get sdk stuff working
-            'custommanifestdir':                   "files/custom_manifests/",  # FIXME not needed, if i can get sdk stuff working
             'steam2sdkdir':                        "files/steam2_sdk_depots/",
             'packagedir':                          "files/packages/",
             'blobdir':                             "files/blobs/",
@@ -54,7 +61,7 @@ def read_config():
             'cafe_use_mac_auth':                   "false",
 
             # SDK/SteamWorks ContentServer Configurations
-            'sdk_ip':                              "0.0.0.0",
+            'sdk_ip':                              "127.0.0.1",
             'sdk_port':                            "27030",
             'use_sdk':                             "false",
             'use_sdk_as_cs':                       "false",
@@ -64,6 +71,7 @@ def read_config():
             'enable_blacklist':                    "true",
             'ip_blacklist':                        "ip_blacklist.txt",
             'ip_whitelist':                        "ip_whitelist.txt",
+            'enable_firehol':                      "true",
 
             # Email/SMTP Configurations
             'smtp_enabled':                        "false",
@@ -72,7 +80,7 @@ def read_config():
             'smtp_username':                       "",
             'smtp_security':                       "tls",
             'smtp_password':                       "",
-            'network_logo':                        "",  # Used in email template
+            'network_logo':                        "http://google.com/logo.jpg",  # Used in email template
             'network_name':                        "STMServer",  # Used in email template
             'email_location_support':              "false",  # Adds ip location to email for change password attempts or failed logins
             'force_email_verification':            "false",  # Sets whether to require email accounts to be verified before logging in
@@ -86,6 +94,15 @@ def read_config():
             'database_host':                       "127.0.0.1",
             'database_port':                       "3306",
 
+            # CMS Database Configurations
+            'use_cms':                             "false",
+            'cms_usesamedb':                       "",
+            'cms_dbname':                          "",
+            'cms_dbaddress':                       "",
+            'cms_dbport':                          "",
+            'cms_dbusername':                      "",
+            'cms_dbpassword':                      "",
+
             # Server Port Configurations
             'ftp_server_port':                     "21",
             'tracker_server_port':                 "1200",
@@ -97,6 +114,11 @@ def read_config():
             'cm_unencrypted_server_port':          "27014",  # Formerly friends_server_port
             'cm_encrypted_server_port':            "27017",  # Formerly cm_server_port
             'content_server_port':                 "27030",
+
+            # P2P Audio Relay Configurations (for voice chat)
+            'relay_enabled':                       "true",   # Enable P2P audio relay for voice calls
+            'relay_ip':                            "127.0.0.1",  # IP address clients connect to for audio
+            'relay_port':                          "27036",  # UDP port for audio relay
             'clupd_server_port':                   "27031",
             'harvest_server_port':                 "27032",
             'config_server_port':                  "27035",
@@ -106,15 +128,15 @@ def read_config():
             'validation_port':                     "27040",
             'vtt_server_port':                     "27046",  # Formerly vss_server_port1
             'cafe_server_port':                    "27047",  # Formerly vss_server_port2
-            'admin_server_port':                   "32677",  # TODO finish for v.81; For remote administration tool
+            'admin_server_port':                   "32677",  
             'ping_server_port':                    "27057",  # server used to ping clients to calculate latency
 
             # Content Server and CM Related Configurations
             'cellid':                              "1",
-            'override_ip_country_region':          "false",  # Formerly server_region and prior to that: cs_region
+            'override_ip_country_region':          "US",  # Formerly server_region and prior to that: cs_region
             'enable_custom_banner':                "false",
             'custom_banner_url':                   "",
-            'cache_sdk_depot':                     "false",
+            'cache_sdk_depot':                     "true",
 
             # RSA Key Configurations
             'main_key_n':                          "0x86724794f8a0fcb0c129b979e7af2e1e309303a7042503d835708873b1df8a9e307c228b9c0862f8f5dbe6f81579233db8a4fe6ba14551679ad72c01973b5ee4ecf8ca2c21524b125bb06cfa0047e2d202c2a70b7f71ad7d1c3665e557a7387bbc43fe52244e58d91a14c660a84b6ae6fdc857b3f595376a8e484cb6b90cc992f5c57cccb1a1197ee90814186b046968f872b84297dad46ed4119ae0f402803108ad95777615c827de8372487a22902cb288bcbad7bc4a842e03a33bd26e052386cbc088c3932bdd1ec4fee1f734fe5eeec55d51c91e1d9e5eae46cf7aac15b2654af8e6c9443b41e92568cce79c08ab6fa61601e4eed791f0436fdc296bb373",
@@ -124,7 +146,6 @@ def read_config():
 
             # Apache/HTTP Configurations
             'use_webserver':                       "true",
-            'use_external_webserver':              "false",
             'store_url_new':                       "/storefront",
             'support_url_new':                     "/support",
             'http_ip':                             "",
@@ -141,7 +162,7 @@ def read_config():
 
             # Blob Configurations
             'steam_date':                          "2004^10^01",
-            'steam_time':                          "00:14:03",
+            'steam_time':                          "00_00_01",
             'subtract_time':                       "0",
             'auto_blobs':                          "false",
             'disable_steam3_purchasing':           "true",
@@ -151,38 +172,58 @@ def read_config():
             'amount_of_suggested_names':           "10",
             'use_builtin_suggested_name_modifiers':"true",
 
+            # Guestpass/Gift System
+            'disable_guestpass_system':            "true",  # Disables guest pass and gift pass handling during purchases
+
             # Misc Configurations
             'emu_auto_update':                     "true",
-            'enable_steam3_servers':               "false",
-            'allow_harvest_upload':                "True",
+            'enable_steam3_servers':               "true",
+            'allow_harvest_upload':                "true",
             'storage_check':                       "false",  # Not Needed
             'universe':                            "1",
             'hldsupkg':                            "",
             'ticket_expiration_time_length':       "0d0h45m0s",
-            'run_all_servers':                     "false",
+            'run_all_servers':                     "true",
+            'enable_ftp':                          "true",
+            'force_sdk_upload_review':             "true",
+            'auto_verify_steam3_email':            "true",
+            'auto_friend_later_clients':           "true",
+            'cloud_root':                          "cloud",
+
+            'global_tracker':                     "false",
+            'global_tracker_ip':                  "127.0.0.1",
+            'global_tracker_port':                "1300",
+            'local_network_name':                 "",
+            'force_beta1_specialkey':             "false",  # forces users to generate ore recieve a beta 1 generated key in order to register
+            'use_emu_console':                    "false",
+            'use_ben_console':                    "false",  # Use simple console instead of TUI console
+            'tinserver_ip':                       "127.0.0.1",  # only until we finish CM
 
             # Split-Server Related Configurations (Unused until servers can be split apart)
             'harvest_ip':                          "0.0.0.0",
-            'masterdir_ipport':                    "127.0.0.1:27038",  # TODO Finish for v.81
+            'masterdir_ipport':                    "127.0.0.1:27038",  # TODO Finish for v0.92
             'csds_ipport':                         "",
             'tracker_ip':                          "",
             'dir_ismaster':                        "true",
             'peer_password':                       "",
+            'dir_peers':                           "",
+            'content_peers':                       "",
 
             # (CM) Connection Manager Server Configurations
             'overwrite_machineids':                "true",
+            'cmboxid':                             "1",  # Box ID for GlobalID generation (0-1023, must be unique per CM server)
 
             # Developer Related Configurations
             'reset_clears_client':                 "false",
             'disable_storage_neutering':           "false",  # Formerly disable_gcf_converter
+            'storage_neutor':                      "true",   # Enable STORAGENEUTER level logging (GCF checksum logs)
             'uat':                                 "0",
-            'from_source':                         "false",  # if true, runs neuter app from source from py39_tools/neuter/neuter_app.py
 
             # Admin Server Related Configurations
-            'admin_inactive_timout':               "600",  # TODO Release for .81 - adminserver related
+            'admin_inactive_timout':               "600",
 
             # Security Related
-            'use_random_keys':                     "false",
+            'use_random_keys':                     "true",
 
             # Script reload paths
             'DirectoryServer_script_path':         "servers/directoryserver.py",
@@ -207,7 +248,8 @@ def read_config():
             'CafeServer_script_path':              "servers/vttserver.py",
     }
 
-    c = configparser.ConfigParser(defaults=myDefaults)
+    # Use strict=False to allow duplicate options (last value wins, like Windows behavior)
+    c = configparser.ConfigParser(defaults=myDefaults, strict=False)
     c.read("emulator.ini")
 
     values = {}
@@ -228,6 +270,15 @@ def read_config():
 
     config_data = values  # Update the global config_data directly
 
+    # Clear globalvars replacement caches when config changes to prevent stale cached values.
+    # Import here to avoid circular import at module load time.
+    try:
+        import globalvars
+        if hasattr(globalvars, 'clear_replacement_cache'):
+            globalvars.clear_replacement_cache()
+    except ImportError:
+        pass  # globalvars not yet available during initial config load
+
     # FIXME Technically we shouldnt return ANYTHING as the code should be using get_config to grab it from memory to keep things consistent and less confusing!
     return values
 
@@ -245,26 +296,26 @@ def save_config_value(key, value, old_key=None):
     # Check if the old_key or key already exists
     key_exists = False
     for i, line in enumerate(lines):
-        # Check for the key (active or commented)
-        if ((old_key and line.startswith(old_key + '=')) or
-            line.startswith(key + '=') or
-            line.lstrip().startswith(';' + key + '=')):
-            # If key is commented, remove the comment
-            if line.lstrip().startswith(';' + key + '='):
-                line = line.lstrip()[1:]
-                lines[i] = line  # Ensure the modified line is saved back to the list
+        # Strip the line and check for key with various formats (key=, key =, key  =, etc.)
+        stripped = line.lstrip()
 
+        # Check if line starts with the key followed by optional spaces and '='
+        # Handle: "key=value", "key = value", "key= value", ";key = value" (commented)
+        is_old_key_match = old_key and re.match(rf'^{re.escape(old_key)}\s*=', stripped)
+        is_key_match = re.match(rf'^{re.escape(key)}\s*=', stripped)
+        is_commented_key = re.match(rf'^;\s*{re.escape(key)}\s*=', stripped)
+
+        if is_old_key_match or is_key_match or is_commented_key:
             # Replace the line with new key and value
             lines[i] = key + '=' + value + '\n'
             key_exists = True
             break
 
     # If the key doesn't exist, add it as a new line
-    lastchar = lines[len(lines) - 1][-1:]
-    if lastchar != "\n":
-        lastline = lines[-1:][0]
-        del lines[-1:]
-        lines.append(lastline + "\n")
+    if lines:
+        lastchar = lines[-1][-1:] if lines[-1] else ''
+        if lastchar != "\n":
+            lines[-1] = lines[-1] + "\n"
     if not key_exists:
         lines.append(key + '=' + value + '\n')
 

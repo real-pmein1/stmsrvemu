@@ -176,8 +176,8 @@ class EType(SteamIntEnum):
 
 
 class EInstanceFlag(SteamIntEnum):
-    ALL = 0x00000
-    OLDCLIENT = 1  # some 2006 clients (steam/steamui 14/147) use 1 for some reason
+    NONE = 0x00000
+    ALL = 1
     MMSLOBBY = 0x20000
     LOBBY = 0x40000
     CLAN = 0x80000
@@ -187,6 +187,7 @@ class EVanityUrlType(SteamIntEnum):
     Individual = 1
     Group = 2
     GameGroup = 3
+
 
 """enum EServerType : __int32
 {
@@ -245,18 +246,20 @@ class EServerType(SteamIntEnum):
     CM = 7
     FBS = 8
     BoxMonitor = 9
+    FG = 9
     SS = 10
     DRMS = 11
     HubOBSOLETE = 12
     Console = 13
-    PICS = 14
+    PICS = 14 # ASB according to 2008 65553
     Client = 15
     contentstats = 16
     DP = 17  # publisher stats
     WG = 18
     SM = 19
-    SLC = 20
+    SLC = 20 # AKA Tracker
     UFS = 21  # file upload/cloud server
+    Seeder = 22
     Util = 23
     DSS = 24
     Community = 24
@@ -265,6 +268,7 @@ class EServerType(SteamIntEnum):
     Spare = 27
     FTS = 28
     SiteLicense = 29
+    EPM = 29
     PS = 30
     IS = 31
     CCS = 32
@@ -605,45 +609,6 @@ class ETwoFactorTokenType(SteamIntEnum):
     ValveMobileApp = 1
     ThirdParty = 2
 
-
-class EChatEntryType(SteamIntEnum):
-    """Doc: https://partner.steamgames.com/doc/api/steam_api#EChatEntryType"""
-    Invalid = 0
-    ChatMsg = 1             #: Normal text message from another user
-    Typing = 2              #: Another user is typing (not used in multi-user chat)
-    InviteGame = 3          #: Invite from other user into that users current game
-    Emote = 4               #: text emote message (deprecated, should be treated as ChatMsg)
-    LobbyGameStart = 5      #: lobby game is starting (dead - listen for LobbyGameCreated_t callback instead)
-    LeftConversation = 6    #: user has left the conversation ( closed chat window )
-    Entered = 7             #: user has entered the conversation (used in multi-user chat and group chat)
-    WasKicked = 8           #: user was kicked (message: 64-bit steamID of actor performing the kick)
-    WasBanned = 9           #: user was banned (message: 64-bit steamID of actor performing the ban)
-    Disconnected = 10       #: user disconnected
-    HistoricalChat = 11     #: a chat message from user's chat history or offilne message
-    Reserved1 = 12          #: No longer used
-    Reserved2 = 13          #: No longer used
-    LinkBlocked = 14        #: a link was removed by the chat filter.
-
-
-class EChatRoomEnterResponse(SteamIntEnum):
-    """Doc: https://partner.steamgames.com/doc/api/steam_api#EChatRoomEnterResponse"""
-    Success = 1              #: Success
-    DoesntExist = 2          #: Chat doesn't exist (probably closed)
-    NotAllowed = 3           #: General Denied - You don't have the permissions needed to join the chat
-    Full = 4                 #: Chat room has reached its maximum size
-    Error = 5                #: Unexpected Error
-    Banned = 6               #: You are banned from this chat room and may not join
-    Limited = 7              #: Joining this chat is not allowed because you are a limited user (no value on account)
-    ClanDisabled = 8         #: Attempt to join a clan chat when the clan is locked or disabled
-    CommunityBan = 9         #: Attempt to join a chat when the user has a community lock on their account
-    MemberBlockedYou = 10    #: Join failed - some member in the chat has blocked you from joining
-    YouBlockedMember = 11    #: Join failed - you have blocked some member already in the chat
-    NoRankingDataLobby = 12  #: No longer used
-    NoRankingDataUser = 13   #: No longer used
-    RankOutOfRange = 14      #: No longer used
-    RatelimitExceeded = 15   #: Join failed - to many join attempts in a very short period of time
-
-
 class ECurrencyCode(SteamIntEnum):
     Invalid = 0
     USD = 1
@@ -878,6 +843,25 @@ class EClientUIMode(SteamIntEnum):
     Mobile = 2
     Web = 3
 
+class MarketingMessageFlags(SteamIntEnum):
+    NoFlags = 0
+    HighPriority = 1
+    PlatformWindows = 2
+    PlatformMac = 4
+    PlatformRestrictions = PlatformWindows | PlatformMac
+
+class MarketingMessageUnknownFlags(SteamIntEnum):
+    NoFlags = 0
+    fullApp = 1
+    unknown2 = 2
+    unknown4 = 4
+    unknown8 = 8
+    unknown16 = 16
+    unknown64 = 64
+    #aggregate flags
+    usual = fullApp | unknown2 | unknown4 | unknown8 | unknown64
+
+
 class EPurchaseResultDetail(SteamIntEnum):
     NoDetail = 0
     AVSFailure = 1
@@ -1012,6 +996,19 @@ class EBillingType(SteamIntEnum):
     NumBillingTypes = 16
 
 
+class EPurchaseStatus(SteamIntEnum):
+    Pending=0
+    Succeeded=1
+    Failed=2
+    Refunded=3
+    Init=4
+    Chargedback=5
+    Revoked=6
+    InDispute = 7
+    PartialRefund = 8
+    RefundToWallet = 9
+
+
 class EPaymentMethod(SteamIntEnum):
     NONE = 0
     ActivationCode = 1
@@ -1107,6 +1104,14 @@ class EPaymentMethod(SteamIntEnum):
     Split = 512
     Complimentary = 1024
 
+class ECreditCardType(SteamIntEnum):
+    Unknown = 0
+    Visa = 1
+    Master = 2
+    AmericanExpress = 3
+    Discover = 4
+    DinersClub = 5
+    JCB = 6
 
 class EPackageStatus(SteamIntEnum):
     Available = 0
@@ -1131,6 +1136,15 @@ class EIntroducerRouting(SteamIntEnum):
     k_eRouteP2PFileShare = 0x0
     k_eRouteP2PVoiceChat = 0x1
     k_eRouteP2PNetworking = 0x2
+
+
+class P2PSessionError(SteamIntEnum):
+    """P2P session error codes matching C++ enum"""
+    none = 0
+    notRunningApp = 1
+    noRightsToApp = 2
+    destinationNotLoggedIn = 3
+    timeout = 4
 
 class AppInfoSections(SteamIntEnum):
     AppInfoSection_unknown = 0

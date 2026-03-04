@@ -1,6 +1,10 @@
 import struct
 import datetime
 import io
+import logging
+from typing import Optional, List
+
+log = logging.getLogger("AppInfoParser")
 
 
 class ApplicationData:
@@ -8,12 +12,20 @@ class ApplicationData:
     Class to store data for a single application.
     """
     def __init__(self, app_id):
+        self.version = None
         self.app_id = app_id
         self.state = None
         self.last_change = None
         self.change_number = None
+        self.is_allsections = False
         self.sections = {}      # Dictionary to store section data
         self.sections_raw = {}  # Dictionary to store raw bytes of each section
+        # V2+ format fields (2014+)
+        self.token = None       # uint64 access token
+        self.sha_digest = None  # 20-byte SHA digest
+        # For indexed random access
+        self.file_offset = None  # Byte offset in VDF file
+        self.data_size = None    # Total size of app entry in bytes
 
     def __repr__(self):
         return f"<ApplicationData app_id={self.app_id}>"
@@ -68,39 +80,51 @@ class AppInfoParser:
             magic = struct.unpack('<I', magic_bytes)[0]
 
             # Map magic numbers to parsing methods
+            # V1 (2010-2012): 0x02464456 (VDF\x02)
+            # V2 (2012-2014): 0x06564424 ($DV\x06), 0x07564425
+            # V2+ (2014+): 0x07564426, 0x07564427 (with token and SHA)
             magic_methods = {
-                    0x02464456: self.parse_app_data_cache_v1,
-                    0x06564424: self.parse_app_data_cache_v2,
-                    0x07564425: self.parse_app_data_cache_v2,
+                    0x02464456: self.parse_single_appinfo_file_v1,
+                    0x06564424: self.parse_single_appinfo_file_v2,
+                    0x07564425: self.parse_single_appinfo_file_v2,
+                    0x07564426: self.parse_single_appinfo_file_v2_plus,
+                    0x07564427: self.parse_single_appinfo_file_v2_plus,
                     0x06565524: self.parse_package_data_cache,
                     0x06565525: self.parse_package_data_cache,
-                    0xFFFFFFFF: self.parse_single_app_data_cache_v2,
-                    None: self.parse_single_app_data_cache_v1,
+                    0xFFFFFFFF: self.parse_individual_appinfo_file_v2,
             }
 
             if magic in magic_methods:
                 magic_methods[magic](reader, magic)
             else:
-                raise Exception(f"Unknown magic number: 0x{magic:08X}")
+                try:
+                    reader.seek(0)  # Rewind the reader
+                    self.parse_individual_appinfo_file_v1(reader)
+                except:
+                    raise Exception(f"Unknown magic number: 0x{magic:08X}")
 
-    def parse_app_data_cache_v1(self, reader, magic = None):
+    def parse_single_appinfo_file_v1(self, reader, magic=None):
         universe_bytes = reader.read(4)
         if len(universe_bytes) < 4:
             raise Exception("Unexpected end of file when reading universe")
+
         self.universe = struct.unpack('<i', universe_bytes)[0]
 
         while True:
+            # Record position for indexed access
+            app_start_pos = reader.tell() if hasattr(reader, 'tell') else None
+
             app_id_bytes = reader.read(4)
             if len(app_id_bytes) < 4:
-                raise Exception("Unexpected end of file when reading appId")
-            app_id = struct.unpack('<i', app_id_bytes)[0]
+                break  # Normal EOF
+            app_id = struct.unpack('<I', app_id_bytes)[0]
             if app_id == 0:
                 break
 
             state_bytes = reader.read(4)
             if len(state_bytes) < 4:
                 raise Exception("Unexpected end of file when reading state")
-            state = struct.unpack('<i', state_bytes)[0]
+            state = struct.unpack('<I', state_bytes)[0]
 
             last_change_bytes = reader.read(4)
             if len(last_change_bytes) < 4:
@@ -111,7 +135,7 @@ class AppInfoParser:
             change_number_bytes = reader.read(4)
             if len(change_number_bytes) < 4:
                 raise Exception("Unexpected end of file when reading changeNumber")
-            change_number = struct.unpack('<i', change_number_bytes)[0]
+            change_number = struct.unpack('<I', change_number_bytes)[0]
 
             app_data = ApplicationData(app_id)
             app_data.state = state
@@ -121,27 +145,38 @@ class AppInfoParser:
             # Parse sections
             self.parse_app_data_cache_sections(reader, app_data)
 
+            # Store position info for indexed access
+            if app_start_pos is not None:
+                app_end_pos = reader.tell() if hasattr(reader, 'tell') else None
+                if app_end_pos is not None:
+                    app_data.file_offset = app_start_pos
+                    app_data.data_size = app_end_pos - app_start_pos
+
             # Add to applications list
             self.applications.append(app_data)
 
-    def parse_app_data_cache_v2(self, reader, magic = None):
+    def parse_single_appinfo_file_v2(self, reader, magic=None):
         universe_bytes = reader.read(4)
         if len(universe_bytes) < 4:
             raise Exception("Unexpected end of file when reading universe")
+
         self.universe = struct.unpack('<i', universe_bytes)[0]
 
         while True:
+            # Record position for indexed access
+            app_start_pos = reader.tell() if hasattr(reader, 'tell') else None
+
             app_id_bytes = reader.read(4)
             if len(app_id_bytes) < 4:
-                raise Exception("Unexpected end of file when reading appId")
-            app_id = struct.unpack('<i', app_id_bytes)[0]
+                break  # Normal EOF
+            app_id = struct.unpack('<I', app_id_bytes)[0]
             if app_id == 0:
                 break
 
             data_size_bytes = reader.read(4)
             if len(data_size_bytes) < 4:
                 raise Exception("Unexpected end of file when reading dataSize")
-            data_size = struct.unpack('<i', data_size_bytes)[0]
+            data_size = struct.unpack('<I', data_size_bytes)[0]
 
             data = reader.read(data_size)
             if len(data) != data_size:
@@ -152,7 +187,7 @@ class AppInfoParser:
             state_bytes = data_reader.read(4)
             if len(state_bytes) < 4:
                 raise Exception("Unexpected end of data when reading state")
-            state = struct.unpack('<i', state_bytes)[0]
+            state = struct.unpack('<I', state_bytes)[0]
 
             last_change_bytes = data_reader.read(4)
             if len(last_change_bytes) < 4:
@@ -163,12 +198,17 @@ class AppInfoParser:
             change_number_bytes = data_reader.read(4)
             if len(change_number_bytes) < 4:
                 raise Exception("Unexpected end of data when reading changeNumber")
-            change_number = struct.unpack('<i', change_number_bytes)[0]
+            change_number = struct.unpack('<I', change_number_bytes)[0]
 
             app_data = ApplicationData(app_id)
             app_data.state = state
             app_data.last_change = last_change
             app_data.change_number = change_number
+
+            # Store position info for indexed access
+            if app_start_pos is not None:
+                app_data.file_offset = app_start_pos
+                app_data.data_size = 8 + data_size  # app_id(4) + data_size(4) + data
 
             # Parse sections
             self.parse_app_data_cache_sections(data_reader, app_data)
@@ -176,8 +216,104 @@ class AppInfoParser:
             # Add to applications list
             self.applications.append(app_data)
 
-    def parse_single_app_data_cache_v1(self, reader, app_id):
-        app_data = ApplicationData(app_id)
+    def parse_single_appinfo_file_v2_plus(self, reader, magic=None):
+        """
+        Parse V2+ format (2014+) with token and SHA digest.
+
+        Format per app:
+        - uint32: app_id
+        - uint32: data_size (size of following data blob)
+        - Data blob containing:
+          - uint32: state
+          - uint32: last_change (unix timestamp)
+          - uint64: token (access token)
+          - 20 bytes: sha_digest
+          - uint32: change_number
+          - Sections (until 0x00 terminator)
+        """
+        universe_bytes = reader.read(4)
+        if len(universe_bytes) < 4:
+            raise Exception("Unexpected end of file when reading universe")
+
+        self.universe = struct.unpack('<i', universe_bytes)[0]
+
+        while True:
+            # Record position for indexed access
+            app_start_pos = reader.tell() if hasattr(reader, 'tell') else None
+
+            app_id_bytes = reader.read(4)
+            if len(app_id_bytes) < 4:
+                break  # Normal EOF
+            app_id = struct.unpack('<I', app_id_bytes)[0]
+            if app_id == 0:
+                break
+
+            data_size_bytes = reader.read(4)
+            if len(data_size_bytes) < 4:
+                raise Exception("Unexpected end of file when reading dataSize")
+            data_size = struct.unpack('<I', data_size_bytes)[0]
+
+            data = reader.read(data_size)
+            if len(data) != data_size:
+                raise Exception(f"Unexpected end of file when reading data for app {app_id}")
+
+            data_reader = BytesRecordingReader(io.BytesIO(data))
+
+            # Read state (4 bytes)
+            state_bytes = data_reader.read(4)
+            if len(state_bytes) < 4:
+                raise Exception("Unexpected end of data when reading state")
+            state = struct.unpack('<I', state_bytes)[0]
+
+            # Read last_change (4 bytes)
+            last_change_bytes = data_reader.read(4)
+            if len(last_change_bytes) < 4:
+                raise Exception("Unexpected end of data when reading lastChange")
+            last_change_unix = struct.unpack('<I', last_change_bytes)[0]
+            last_change = self._convert_timestamp(last_change_unix)
+
+            # Read token (8 bytes) - V2+ specific
+            token_bytes = data_reader.read(8)
+            if len(token_bytes) < 8:
+                raise Exception("Unexpected end of data when reading token")
+            token = struct.unpack('<Q', token_bytes)[0]
+
+            # Read SHA digest (20 bytes) - V2+ specific
+            sha_digest = data_reader.read(20)
+            if len(sha_digest) < 20:
+                raise Exception("Unexpected end of data when reading SHA digest")
+
+            # Read change_number (4 bytes)
+            change_number_bytes = data_reader.read(4)
+            if len(change_number_bytes) < 4:
+                raise Exception("Unexpected end of data when reading changeNumber")
+            change_number = struct.unpack('<I', change_number_bytes)[0]
+
+            app_data = ApplicationData(app_id)
+            app_data.state = state
+            app_data.last_change = last_change
+            app_data.change_number = change_number
+            app_data.token = token
+            app_data.sha_digest = sha_digest
+
+            # Store position info for indexed access
+            if app_start_pos is not None:
+                app_data.file_offset = app_start_pos
+                app_data.data_size = 8 + data_size  # app_id(4) + data_size(4) + data
+
+            # Parse sections
+            self.parse_app_data_cache_sections(data_reader, app_data)
+
+            # Add to applications list
+            self.applications.append(app_data)
+
+    def parse_individual_appinfo_file_v1(self, reader):
+        appId_bytes = reader.read(4)
+        if len(appId_bytes) < 4:
+            raise EOFError("Unexpected end of file when reading appId")
+        appId = struct.unpack('<i', appId_bytes)[0]
+
+        app_data = ApplicationData(appId)
 
         # Parse sections
         self.parse_app_data_cache_sections(reader, app_data)
@@ -185,30 +321,42 @@ class AppInfoParser:
         # Add to applications list
         self.applications.append(app_data)
 
-    def parse_single_app_data_cache_v2(self, reader, magic = None):
-        unknown1_bytes = reader.read(4)
-        if len(unknown1_bytes) < 4:
-            raise Exception("Unexpected end of file when reading unknown1")
-        unknown1 = struct.unpack('<i', unknown1_bytes)[0]
+    def parse_individual_appinfo_file_v2(self, reader, magic = None):
+        """struct __cppobj CAppData
+           {
+             uint32 m_unAppID;
+             uint32 m_unChangeNumber;
+             uint32 m_bAllSections;
+           };
+        """
+        version_bytes = reader.read(4)
+        if len(version_bytes) < 4:
+            raise EOFError("Unexpected end of file when reading version_bytes")
+        version = struct.unpack('<i', version_bytes)[0]
 
-        app_id_bytes = reader.read(4)
-        if len(app_id_bytes) < 4:
-            raise Exception("Unexpected end of file when reading appId")
-        app_id = struct.unpack('<i', app_id_bytes)[0]
+        if version != 1:
+            print("Warning: version_bytes != 1 (version_bytes = {})".format(version_bytes))
 
-        unknown2_bytes = reader.read(4)
-        if len(unknown2_bytes) < 4:
-            raise Exception("Unexpected end of file when reading unknown2")
-        unknown2 = struct.unpack('<i', unknown2_bytes)[0]
+        appId_bytes = reader.read(4)
+        if len(appId_bytes) < 4:
+            raise EOFError("Unexpected end of file when reading appId")
+        appId = struct.unpack('<i', appId_bytes)[0]
 
-        unknown3_bytes = reader.read(4)
-        if len(unknown3_bytes) < 4:
-            raise Exception("Unexpected end of file when reading unknown3")
-        unknown3 = struct.unpack('<i', unknown3_bytes)[0]
+        changenumber_bytes = reader.read(4)
+        if len(changenumber_bytes) < 4:
+            raise EOFError("Unexpected end of file when reading appinfo Change Number")
+        changenumber = struct.unpack('<i', changenumber_bytes)[0]
+
+        is_allsections_bytes = reader.read(4)
+        if len(is_allsections_bytes) < 4:
+            raise EOFError("Unexpected end of file when reading is_allsections")
+        is_allsections = bool(struct.unpack('<i', is_allsections_bytes)[0])
 
         # Parse application data
-        app_data = ApplicationData(app_id)
-        # unknown1, unknown2, and unknown3 can be stored if needed
+        app_data = ApplicationData(appId)
+        app_data.version = version
+        app_data.change_number = changenumber
+        app_data.is_allsections = is_allsections
 
         # Parse sections
         self.parse_app_data_cache_sections(reader, app_data)
@@ -429,6 +577,262 @@ class AppInfoParser:
             if app.app_id == app_id:
                 return app
         return None
+
+    def _convert_timestamp(self, unix_time):
+        """
+        Converts a Unix timestamp (seconds since 1970-01-01 UTC) to a datetime,
+        with a safe fallback if the value is out of range.
+        """
+        try:
+            return datetime.datetime.utcfromtimestamp(unix_time)
+        except (OverflowError, OSError, ValueError):
+            # If it's garbage, just return the raw value so nothing crashes.
+            return unix_time
+
+    def get_app_ids(self):
+        """
+        Returns a sorted list of app IDs present in this appinfo file.
+        """
+        return sorted(app.app_id for app in self.applications)
+
+    def get_appid_change_numbers(self):
+        """
+        Returns a list of (app_id, change_number) for all applications
+        parsed from this appinfo file.
+        """
+        result = []
+        for app in self.applications:
+            # change_number can be None for some paths; optionally filter those out
+            result.append((app.app_id, app.change_number))
+        return result
+
+    @classmethod
+    def read_single_app_indexed(cls, vdf_path: str, app_id: int,
+                                 file_offset: int, data_size: int,
+                                 format_magic: int) -> Optional[ApplicationData]:
+        """
+        Read a single app from a VDF file using index information.
+
+        This enables O(1) access to app data without parsing the entire file.
+
+        :param vdf_path: Path to the VDF file
+        :param app_id: The app ID to read
+        :param file_offset: Byte offset where the app entry starts
+        :param data_size: Total size of the app entry in bytes
+        :param format_magic: The VDF format magic number
+        :return: ApplicationData or None if read fails
+        """
+        try:
+            with open(vdf_path, 'rb') as f:
+                f.seek(file_offset)
+                raw_data = f.read(data_size)
+
+            if len(raw_data) < data_size:
+                log.warning(f"Short read for app {app_id}: got {len(raw_data)}, expected {data_size}")
+                return None
+
+            data_reader = BytesRecordingReader(io.BytesIO(raw_data))
+
+            # Create a temporary parser instance for the parsing methods
+            parser = cls.__new__(cls)
+            parser.applications = []
+
+            # Determine format and parse accordingly
+            if format_magic == 0x02464456:
+                # V1 format: appId(4) + state(4) + lastChange(4) + changeNumber(4) + sections
+                app_data = parser._parse_v1_app_entry(data_reader)
+            elif format_magic in (0x06564424, 0x07564425):
+                # V2 format: appId(4) + dataSize(4) + data blob
+                app_data = parser._parse_v2_app_entry(data_reader)
+            elif format_magic in (0x07564426, 0x07564427):
+                # V2+ format: appId(4) + dataSize(4) + data blob with token/SHA
+                app_data = parser._parse_v2_plus_app_entry(data_reader)
+            else:
+                log.error(f"Unknown format magic: 0x{format_magic:08X}")
+                return None
+
+            if app_data:
+                app_data.file_offset = file_offset
+                app_data.data_size = data_size
+
+            return app_data
+
+        except Exception as e:
+            log.error(f"Failed to read app {app_id} from {vdf_path}: {e}")
+            return None
+
+    def _parse_v1_app_entry(self, reader) -> Optional[ApplicationData]:
+        """Parse a single V1 format app entry."""
+        try:
+            app_id_bytes = reader.read(4)
+            if len(app_id_bytes) < 4:
+                return None
+            app_id = struct.unpack('<I', app_id_bytes)[0]
+
+            state_bytes = reader.read(4)
+            state = struct.unpack('<I', state_bytes)[0] if len(state_bytes) >= 4 else 0
+
+            last_change_bytes = reader.read(4)
+            last_change_unix = struct.unpack('<I', last_change_bytes)[0] if len(last_change_bytes) >= 4 else 0
+            last_change = self._convert_timestamp(last_change_unix)
+
+            change_number_bytes = reader.read(4)
+            change_number = struct.unpack('<I', change_number_bytes)[0] if len(change_number_bytes) >= 4 else 0
+
+            app_data = ApplicationData(app_id)
+            app_data.state = state
+            app_data.last_change = last_change
+            app_data.change_number = change_number
+
+            self.parse_app_data_cache_sections(reader, app_data)
+            return app_data
+
+        except Exception as e:
+            log.error(f"Error parsing V1 app entry: {e}")
+            return None
+
+    def _parse_v2_app_entry(self, reader) -> Optional[ApplicationData]:
+        """Parse a single V2 format app entry."""
+        try:
+            app_id_bytes = reader.read(4)
+            if len(app_id_bytes) < 4:
+                return None
+            app_id = struct.unpack('<I', app_id_bytes)[0]
+
+            data_size_bytes = reader.read(4)
+            if len(data_size_bytes) < 4:
+                return None
+            data_size = struct.unpack('<I', data_size_bytes)[0]
+
+            # Read the data blob
+            data = reader.read(data_size)
+            if len(data) != data_size:
+                return None
+
+            data_reader = BytesRecordingReader(io.BytesIO(data))
+
+            state_bytes = data_reader.read(4)
+            state = struct.unpack('<I', state_bytes)[0] if len(state_bytes) >= 4 else 0
+
+            last_change_bytes = data_reader.read(4)
+            last_change_unix = struct.unpack('<I', last_change_bytes)[0] if len(last_change_bytes) >= 4 else 0
+            last_change = self._convert_timestamp(last_change_unix)
+
+            change_number_bytes = data_reader.read(4)
+            change_number = struct.unpack('<I', change_number_bytes)[0] if len(change_number_bytes) >= 4 else 0
+
+            app_data = ApplicationData(app_id)
+            app_data.state = state
+            app_data.last_change = last_change
+            app_data.change_number = change_number
+
+            self.parse_app_data_cache_sections(data_reader, app_data)
+            return app_data
+
+        except Exception as e:
+            log.error(f"Error parsing V2 app entry: {e}")
+            return None
+
+    def _parse_v2_plus_app_entry(self, reader) -> Optional[ApplicationData]:
+        """Parse a single V2+ format app entry (with token and SHA)."""
+        try:
+            app_id_bytes = reader.read(4)
+            if len(app_id_bytes) < 4:
+                return None
+            app_id = struct.unpack('<I', app_id_bytes)[0]
+
+            data_size_bytes = reader.read(4)
+            if len(data_size_bytes) < 4:
+                return None
+            data_size = struct.unpack('<I', data_size_bytes)[0]
+
+            # Read the data blob
+            data = reader.read(data_size)
+            if len(data) != data_size:
+                return None
+
+            data_reader = BytesRecordingReader(io.BytesIO(data))
+
+            state_bytes = data_reader.read(4)
+            state = struct.unpack('<I', state_bytes)[0] if len(state_bytes) >= 4 else 0
+
+            last_change_bytes = data_reader.read(4)
+            last_change_unix = struct.unpack('<I', last_change_bytes)[0] if len(last_change_bytes) >= 4 else 0
+            last_change = self._convert_timestamp(last_change_unix)
+
+            # Token (8 bytes)
+            token_bytes = data_reader.read(8)
+            token = struct.unpack('<Q', token_bytes)[0] if len(token_bytes) >= 8 else 0
+
+            # SHA digest (20 bytes)
+            sha_digest = data_reader.read(20)
+            if len(sha_digest) < 20:
+                sha_digest = b'\x00' * 20
+
+            change_number_bytes = data_reader.read(4)
+            change_number = struct.unpack('<I', change_number_bytes)[0] if len(change_number_bytes) >= 4 else 0
+
+            app_data = ApplicationData(app_id)
+            app_data.state = state
+            app_data.last_change = last_change
+            app_data.change_number = change_number
+            app_data.token = token
+            app_data.sha_digest = sha_digest
+
+            self.parse_app_data_cache_sections(data_reader, app_data)
+            return app_data
+
+        except Exception as e:
+            log.error(f"Error parsing V2+ app entry: {e}")
+            return None
+
+    @classmethod
+    def read_multiple_apps_indexed(cls, vdf_path: str, app_entries: list,
+                                    format_magic: int) -> List[ApplicationData]:
+        """
+        Read multiple apps from a VDF file using index information.
+
+        :param vdf_path: Path to the VDF file
+        :param app_entries: List of (app_id, file_offset, data_size) tuples
+        :param format_magic: The VDF format magic number
+        :return: List of ApplicationData objects
+        """
+        results = []
+        try:
+            with open(vdf_path, 'rb') as f:
+                for app_id, file_offset, data_size in app_entries:
+                    f.seek(file_offset)
+                    raw_data = f.read(data_size)
+
+                    if len(raw_data) < data_size:
+                        log.warning(f"Short read for app {app_id}")
+                        continue
+
+                    data_reader = BytesRecordingReader(io.BytesIO(raw_data))
+
+                    # Create parser instance for parsing methods
+                    parser = cls.__new__(cls)
+                    parser.applications = []
+
+                    if format_magic == 0x02464456:
+                        app_data = parser._parse_v1_app_entry(data_reader)
+                    elif format_magic in (0x06564424, 0x07564425):
+                        app_data = parser._parse_v2_app_entry(data_reader)
+                    elif format_magic in (0x07564426, 0x07564427):
+                        app_data = parser._parse_v2_plus_app_entry(data_reader)
+                    else:
+                        continue
+
+                    if app_data:
+                        app_data.file_offset = file_offset
+                        app_data.data_size = data_size
+                        results.append(app_data)
+
+        except Exception as e:
+            log.error(f"Failed to read apps from {vdf_path}: {e}")
+
+        return results
+
 
 # Example usage
 if __name__ == "__main__":

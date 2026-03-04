@@ -7,7 +7,7 @@ import time
 import ipcalc
 
 import globalvars
-from listmanagers.masterlistmanager import Server, challenge_manager, server_manager
+from servers.managers.masterlistmanager import Server, challenge_manager, server_manager
 from utilities.master_packethandler import PacketHandler
 from utilities.networkhandler import UDPNetworkHandler
 
@@ -75,7 +75,7 @@ class MasterServer(UDPNetworkHandler):
         server = server_manager.is_server_in_list(ds_ip)
         if not server:
             self.last_unique_id += 1
-            server = Server(ds_ip, False, False, int(time.time()), self.last_unique_id + 1, False, False, "", int(num), 0, 0,
+            server = Server(ds_ip, False, False, int(time.time()), self.last_unique_id, False, False, "", int(num), 0, 0,
                             gamedir, "", "w", False, False, False, info, len(info))
             server_manager.add_server(server)
         else:
@@ -108,17 +108,15 @@ class MasterServer(UDPNetworkHandler):
         proxyaddress = PacketHandler.info_value_for_key(info, "proxyaddress")
         # version = PacketHandler.info_value_for_key(info, "version")
         ds_ip = address  # CLIENT ip address (WAN OR LAN)
+        ds_ip_local = address
         print(globalvars.server_net)
         print(ipcalc.Network(str(globalvars.server_net)))
+        print(address)
         print(str(address[0]) in ipcalc.Network(str(globalvars.server_net)))
         print(globalvars.public_ip)
         if globalvars.public_ip != "0.0.0.0" and str(address[0]) in ipcalc.Network(str(globalvars.server_net)):  # DED SERVER ON EMU LAN for WAN servicing
             ip_port_str = globalvars.public_ip + ":" + str(address[1])
-            ds_ip = self.parse_address(ip_port_str)
-            ds_ip_local = address  # FOR SAME-LAN DED SERVER
-            print(ds_ip)
-            print(ds_ip_local)
-            server_local = server_manager.is_server_in_list(ds_ip_local)
+            ds_ip = self.parse_address(ip_port_str)  # THIS IS THE WAN IP OF THE EMU NETWORK
         # Update or create a server instance
         server = server_manager.is_server_in_list(ds_ip)
 
@@ -145,28 +143,30 @@ class MasterServer(UDPNetworkHandler):
             server.info = info
             server.info_length = len(info)
 
-        if server_local is None:  # Check if the LOCAL ded server was not found
-            self.last_unique_id += 1
+        if ds_ip != ds_ip_local:  # Only run if the IPs are different for LAN/WAN
+            server_local = server_manager.is_server_in_list(ds_ip_local)
+            if server_local is None:  # Check if the LOCAL ded server was not found
+                self.last_unique_id += 1
 
-            server = Server(ds_ip_local, False, False, 0, self.last_unique_id + 1, isproxy, isproxytarget, proxyaddress,
-                            num, maxplayers, bots, gamedir, _map, os, password, dedicated, secure, info, len(info))
-            server_manager.add_server(server)
-        else:
-            server.time = int(time.time())  # Now this should be safe
-            server.players = int(num)
-            server.max = maxplayers
-            server.bots = bots
-            server.gamedir = gamedir
-            server.map = _map
-            server.os = os
-            server.password = password
-            server.dedicated = dedicated
-            server.secure = secure
-            server.isproxy = isproxy
-            server.isProxyTarget = isproxytarget
-            server.proxyTarget = proxyaddress
-            server.info = info
-            server.info_length = len(info)
+                server = Server(ds_ip_local, False, False, 0, self.last_unique_id + 1, isproxy, isproxytarget, proxyaddress,
+                                num, maxplayers, bots, gamedir, _map, os, password, dedicated, secure, info, len(info))
+                server_manager.add_server(server)
+            else:
+                server.time = int(time.time())  # Now this should be safe
+                server.players = int(num)
+                server.max = maxplayers
+                server.bots = bots
+                server.gamedir = gamedir
+                server.map = _map
+                server.os = os
+                server.password = password
+                server.dedicated = dedicated
+                server.secure = secure
+                server.isproxy = isproxy
+                server.isProxyTarget = isproxytarget
+                server.proxyTarget = proxyaddress
+                server.info = info
+                server.info_length = len(info)
 
         server_manager.print_all_servers()
 
@@ -214,11 +214,19 @@ class MasterServer(UDPNetworkHandler):
         # print(repr(truenextid))
         # Construct the response packet
         reply = bytearray(b'\xff\xff\xff\xff\x66')
+        globalvars.formatted_underscore_date
         reply += b"\x0a"
         i = 6
+        fake_server_for_2003 = bytearray(b'')
 
         savepos = i
-        reply.extend(bytearray(6))  # Placeholder for the final truenextid
+        # what happens here for Sept 2003?  it doesnt like having the placeholder, we could split this packet up then reassemble at the end
+        if globalvars.formatted_underscore_date < "2003-09-11":
+            reply.extend(bytearray(4))  # Placeholder for the final truenextid
+        elif globalvars.formatted_underscore_date > "2004-04-25":
+            reply.extend(bytearray(6))  # Placeholder for the final truenextid
+        else:
+            fake_server_for_2003 = bytearray(b'\x7f\x00\x00\x01\xdd\xff')
         i += 4
 
         for server in server_list:
@@ -280,6 +288,8 @@ class MasterServer(UDPNetworkHandler):
                 new_truenextid |= (1 << 31)
             struct.pack_into('!I', reply, savepos, new_truenextid)"""
         # print(repr(reply))
+        if reply == b'\xff\xff\xff\xff\x66\x0a':
+            reply += fake_server_for_2003
         reply += b'\0\0\0\0\0\0'
         # Send the packet
         self.serversocket.sendto(reply, address)
@@ -293,7 +303,7 @@ class MasterServer(UDPNetworkHandler):
     def packet_get_batch2(self, data, address):
         packet_handler = PacketHandler(data)
         truenextid = packet_handler.read_long()
-        self.log.info("Get Batch server list requested")
+        self.log.info("Get Batch2 server list requested")
         info = packet_handler.read_string()
         criteria = {}
         # print(repr(info))

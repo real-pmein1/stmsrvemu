@@ -1,12 +1,15 @@
 import struct
 
+from steam3.Responses.auth_responses import build_account_info_response
+from steam3.cm_packet_utils import CMPacket
+
 from steam3 import config
 from steam3.ClientManager.client import Client
 from steam3.Responses.friends_responses import build_AcceptFriendResponse, build_AddFriendResponse, build_InviteFriendResponse, build_SetIgnoreFriendResponse, build_friendslist_response, build_persona_message
-from steam3.Types.community_types import PersonaStateFlags
+from steam3.Types.community_types import PersonaStateFlags, PlayerState, RequestedPersonaStateFlags_self
 from steam3.Types.steamid import SteamID
 from steam3.cm_packet_utils import CMPacket
-from steam3.utilities import decipher_persona_flags, getAccountId
+from steam3.utilities import decipher_persona_flags
 from utilities.sendmail import send_friends_invite_email
 
 
@@ -37,14 +40,14 @@ def handle_RemoveFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     # \x08\x00\x00\x00\x01\x00\x10\x01'
 
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved  Remove User From Friends List")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Remove Friend Request")
     request = packet.CMRequest
 
     friendID = struct.unpack_from('<I', request.data, 0)[0] // 2
-    print(f"remove friend id: {friendID}")
+    print(f"Remove friend id: {friendID}")
     client_obj.remove_friends(friendID)
 
-    return [build_friendslist_response(client_obj)]
+    return [build_friendslist_response(client_obj, proto=packet.is_proto)]
 
 
 #2024-05-17 16:23:19     CMUDP27014    INFO     ('192.168.3.180', 53435) Client Requested to Add Friend
@@ -60,90 +63,124 @@ def handle_RemoveFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
 
 # \xff\xff\xff\xff\xff\xff\xff\xff
 # \x08\x00\x00\x00\x01\x00\x10\x01'
-
 def handle_AddFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
 
     isold = False
-    friends_userid = None
-    jobID, friends_userid = struct.unpack_from('<QQ', request.data, 0)
-    searchStr = request.data[16:].decode('latin-1').rstrip("\x00")
-    friends_userid = SteamID(friends_userid)
-    if len(searchStr) > 0:
-        cmserver_obj.log.info(f"{client_address} Client Requested to Add Friend\n data: {request.data}")
+    jobID = 0
+    friendSteamID = None
+    searchStr = ""
+
+    if packet.is_proto:
+        # Parse protobuf format
+        from steam3.protobufs.steammessages_clientserver_friends_pb2 import CMsgClientAddFriend
+        proto_msg = CMsgClientAddFriend()
+        try:
+            proto_msg.ParseFromString(request.data)
+            if proto_msg.HasField('steamid_to_add') and proto_msg.steamid_to_add != 0:
+                friendSteamID = SteamID.from_raw(proto_msg.steamid_to_add)
+            if proto_msg.HasField('accountname_or_email_to_add'):
+                searchStr = proto_msg.accountname_or_email_to_add
+            cmserver_obj.log.info(f"{client_address} Client Requested to Add Friend (protobuf): steamid={friendSteamID.get_accountID()}, search={searchStr}")
+        except Exception as e:
+            cmserver_obj.log.error(f"Failed to parse CMsgClientAddFriend: {e}")
+            return -1
     else:
-        cmserver_obj.log.info(f"{client_address} Client Accepted A Friend Request\n data: {friends_userid.account_number}")
+        # Parse legacy clientmsg format
+        jobID, friendSteamID_raw = struct.unpack_from('<QQ', request.data, 0)
+        searchStr = request.data[16:].decode('latin-1').rstrip("\x00")
+        friendSteamID = SteamID.from_raw(friendSteamID_raw)
+        if len(searchStr) > 0:
+            cmserver_obj.log.info(f"{client_address} Client Requested to Add Friend\n data: {request.data}")
+        else:
+            cmserver_obj.log.info(f"{client_address} Client Accepted A Friend Request\n data: {friendSteamID.get_accountID()}")
 
-    # send list of people with similar names
-    if request.eMsgID == 0x02C9:  # Old style add friend packet
-        packet.eMsgID = 0x0301
-        cmserver_obj.log.info(f"[old style] Username searched: {searchStr} Friends UserID: {friends_userid}")
-        isold = True
-        """jobID, friends_userid = struct.unpack_from('<QQ', request.data, 0)
-        # when adding a friend: 
-        # b'\r\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00test22\x00' """
-        # accepting a friend request results in this:
-        # b'\xff\xff\xff\xff\xff\xff\xff\xff\x04\x00\x00\x00\x01\x00\x10\x01'
-    else:  # new style add friend packet
-        """jobID, friends_userid = struct.unpack_from('<QQ', request.data, 0)
-        searchStr = request.data[16:].decode('latin-1').rstrip("\x00")  # Assuming searchStr encoding is Latin-1"""
-        cmserver_obj.log.info(f"[new style] Job ID: {jobID} Userid: {friends_userid}, searchStr: {searchStr}")
-        packet.eMsgID = 0x0318
+        # send list of people with similar names
+        if request.eMsgID == 0x02C9:  # Old style add friend packet
+            packet.eMsgID = 0x0301
+            cmserver_obj.log.info(f"[old style] Username searched: {searchStr} Friends UserID: {friendSteamID.get_accountID()}")
+            isold = True
+        else:  # new style add friend packet
+            cmserver_obj.log.info(f"[new style] Job ID: {jobID} Userid: {friendSteamID.get_accountID}, searchStr: {searchStr}")
+            packet.eMsgID = 0x0318
 
-    if friends_userid.account_number != 0:
-        return build_AcceptFriendResponse(cmserver_obj, client_obj, request, friends_userid.account_number, jobID)
+    if friendSteamID and friendSteamID.get_accountID() != 0:
+        return build_AcceptFriendResponse(cmserver_obj, client_obj, request, friendSteamID.get_accountID(), jobID, proto=packet.is_proto)
 
-    requester_userid = getAccountId(request)
-    # unknown1 = struct.unpack_from('<I', request.data, 0)[0]
-
-    return build_AddFriendResponse(cmserver_obj,  client_obj, isold, request, requester_userid, searchStr, jobID)
+    return build_AddFriendResponse(cmserver_obj, client_obj, isold, request, searchStr, jobID, proto=packet.is_proto)
 
 
-def handle_RequestFriendData(cmserver_obj, packet, client_obj):
+def handle_RequestFriendData(cmserver_obj, packet: CMPacket, client_obj: Client):
     """responds with persona state response
     packetid: 815
     b'R\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00\x10\x01'"""
     client_address = client_obj.ip_port
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Friend Data Request")
     request = packet.CMRequest
-    # persona flag == PersonaStateFlag_none
-    persona_flag, usercount = struct.unpack_from('<II', request.data, 0)
 
-    # Initialize the offset after the first 8 bytes (which we've already read)
-    offset = 8
-    steam_ids = []
+    accountIDs = []
 
-    print(f"Friend Data Request Persona Flag: {decipher_persona_flags(persona_flag)}")
-    # Loop over usercount to read each Steam ID (8 bytes each)
-    while usercount > 0:
-        # Unpack 8 bytes from the current offset as a Steam ID
-        steam_id, clientID = struct.unpack_from('<II', request.data, offset)
-        steam_ids.append(steam_id//2)
+    if packet.is_proto:
+        # Parse protobuf format
+        from steam3.protobufs.steammessages_clientserver_friends_pb2 import CMsgClientRequestFriendData
+        proto_msg = CMsgClientRequestFriendData()
+        try:
+            proto_msg.ParseFromString(request.data)
+            persona_flag = proto_msg.persona_state_requested if proto_msg.HasField('persona_state_requested') else 0
+            for friend_steamid in proto_msg.friends:
+                steamID = SteamID.from_integer(friend_steamid)
+                accountIDs.append(steamID.get_accountID())
+        except Exception as e:
+            cmserver_obj.log.error(f"Failed to parse CMsgClientRequestFriendData: {e}")
+            return -1
+    else:
+        # Parse legacy clientmsg format
+        # persona flag == PersonaStateFlag_none
+        persona_flag, usercount = struct.unpack_from('<II', request.data, 0)
 
-        # Advance the offset by 8 bytes for the next Steam ID
-        offset += 8
-        usercount -= 1  # Decrement the usercount
+        # Initialize the offset after the first 8 bytes (which we've already read)
+        offset = 8
 
-    return build_persona_message(client_obj, persona_flag, steam_ids)
+        print(f"Friend Data Request Persona Flag: {decipher_persona_flags(persona_flag)}")
+        # Loop over usercount to read each Steam ID (8 bytes each)
+        while usercount > 0:
+            # Unpack 8 bytes from the current offset as a Steam ID
+            steamIDBytes = struct.unpack_from('<Q', request.data, offset)[0]
+            steamID = SteamID.from_integer(steamIDBytes)
+            accountIDs.append(steamID.get_accountID())
+
+            # Advance the offset by 8 bytes for the next Steam ID
+            offset += 8
+            usercount -= 1  # Decrement the usercount
+
+    return build_persona_message(client_obj, persona_flag, accountIDs, proto=packet.is_proto)
 
 
 def handle_GetFriendsUserInfo(cmserver_obj, packet: CMPacket, client_obj: Client):
-    # TODO this packet is supposed to return a persona state packet, but something doesnt add-up atm
-    #   b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x006\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xacJ\x00\x00\x00\x00\x00\x00\x00'
+
     client_address = client_obj.ip_port
     request = packet.CMRequest
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Client requested friendslist user info")
-    # Extract the number of asked contacts from eMsgID data
+
+    # 1) Read the 4?byte count
     nbAsked = struct.unpack_from('<I', request.data, 0)[0]
-    # print(f"nbAsked: {nbAsked}")
-    requested_friendids = []
-    for ind in range(nbAsked):
-        # Extract each asked accountId
-        accountId = struct.unpack_from('<I', request.data, 4 + 8 * ind)[0]
-        requested_friendids.append(accountId)
-    #return build_contactlist_user_info(client_obj, requested_friendids)
-    return build_persona_message(client_obj, 0x02, requested_friendids)
+
+    requestedAccountIDs = []
+    offset = 4     # skip past that 4?byte integer
+
+    for _ in range(nbAsked):
+        # 2) unpack a single 8?byte little?endian SteamID
+        steamid_int = struct.unpack_from('<Q', request.data, offset)[0]
+        offset += 8
+
+        # 3) convert to SteamID and pull the accountID
+        steamid = SteamID.from_integer(steamid_int)
+        requestedAccountIDs.append(steamid.get_accountID())
+
+    #return build_contactlist_user_info(client_obj, requestedAccountIDs)
+    return build_persona_message(client_obj, 0x02, requestedAccountIDs)
+
 
 def handle_SetIgnoreFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     """data: b'\x02\x00\x00\x00\x01\x00\x10\x01\x0c\x00\x00\x00\x01\x00\x10\x01\x01'"""
@@ -151,7 +188,44 @@ def handle_SetIgnoreFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     request = packet.CMRequest
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Client Requested To Un/Block Friend")
 
-    requesting_steamID, requesting_clientID2, blocking_steamID, blocking_clientID2, toBlock = struct.unpack_from('<IIIIB', request.data, 0)
-    result = client_obj.block_friend(blocking_steamID // 2, toBlock)
+    requestingSteamID, blockedSteamID, toBlock = struct.unpack_from('<QQB', request.data, 0)
+    blockedSteamID = SteamID.from_raw(blockedSteamID)
+    result = client_obj.block_friend(blockedSteamID.get_accountID(), toBlock)
 
-    return build_SetIgnoreFriendResponse(cmserver_obj, client_obj, blocking_steamID, blocking_clientID2, result)
+    return build_SetIgnoreFriendResponse(cmserver_obj, client_obj, blockedSteamID, result)
+
+
+def handle_ClientChangeStatus(cmserver_obj, packet: CMPacket, client_obj: Client):
+    client_address = client_obj.ip_port
+    request = packet.CMRequest
+    cmserver_obj.log.info(f"{client_address} Client Change Status Request")
+
+    if packet.is_proto:
+        # Parse protobuf format
+        from steam3.protobufs.steammessages_clientserver_friends_pb2 import CMsgClientChangeStatus
+        proto_msg = CMsgClientChangeStatus()
+        proto_msg.ParseFromString(request.data)
+        userStateFlag = proto_msg.persona_state if proto_msg.HasField('persona_state') else 1
+        pktNickname = proto_msg.player_name if proto_msg.HasField('player_name') else ""
+    else:
+        # Parse binary format
+        userStateFlag = int.from_bytes(request.data[0:1], 'little')
+        pktNickname = request.data[1:].decode('latin-1').rstrip("\x00")
+
+    # Clamp to valid PlayerState range to avoid enum errors
+    max_valid_state = max(ps.value for ps in PlayerState)
+    if userStateFlag > max_valid_state:
+        cmserver_obj.log.warning(f"Received unknown PlayerState {userStateFlag}, clamping to online (1)")
+        userStateFlag = 1  # Default to online
+
+    # Last byte is to say true/false if it is a known nickname
+    if userStateFlag > 0 or userStateFlag is not None:
+        nickname = client_obj.update_status_info(cmserver_obj, PlayerState(userStateFlag), username = pktNickname)
+    else:
+        client_obj.exit_app(cmserver_obj)
+    packet_list = [
+        build_persona_message(client_obj, RequestedPersonaStateFlags_self, [client_obj.accountID], proto=packet.is_proto),
+        build_account_info_response(cmserver_obj, client_obj, pktNickname, proto=packet.is_proto)
+    ]
+
+    return packet_list

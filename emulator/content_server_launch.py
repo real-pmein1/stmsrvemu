@@ -61,7 +61,7 @@ csserver.daemon = False
 csserver.start()
 csserver.join()
 log.info(f"Steam2 Content Server listening on port {config['content_server_port']}")
-utils.launch_neuter_application(False)
+#utils.launch_neuter_application(False) # DEPRECATED
 log.info("...Steam Content Server ready...")
 
 if new_password == 1:

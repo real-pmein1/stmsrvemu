@@ -1,0 +1,47 @@
+enum SOEconItemOrigin
+{
+    SOEconItemOrigin_dropped=0,             // dropped items
+    SOEconItemOrigin_achievementItem=1,     // not tradable
+    SOEconItemOrigin_purchased=2,           // not tradable or usable incrafting
+    SOEconItemOrigin_traded=3,
+    SOEconItemOrigin_crafted=4,             // assumed
+    SOEconItemOrigin_promotion=5,           // not tradable
+    SOEconItemOrigin_foundInCrate=8,
+    SOEconItemOrigin_earned=9,              // earned during duel (assumed)
+    SOEconItemOrigin_minigameAchievement=10,
+    SOEconItemOrigin_giftWrapped=11,
+    SOEconItemOrigin_gamePurchased=13
+};
+
+enum SOEconItemQuality // taken from TF2, may differ with games
+{
+    SOEconItemQuality_normal=0,     // Stock items = standard weapons
+    SOEconItemQuality_unique=6,     // items which can be found through random drops during gameplay, obtained through achievements, crafted, or purchased
+    SOEconItemQuality_rarity1=1,
+    SOEconItemQuality_rarity2=2,
+    SOEconItemQuality_rarity3=4,
+    SOEconItemQuality_rarity4=5,
+    SOEconItemQuality_community=7,
+    SOEconItemQuality_developer=8,
+    SOEconItemQuality_selfmade=9,
+    SOEconItemQuality_customized=10,
+    SOEconItemQuality_vintage=3,
+    SOEconItemQuality_strange=1,
+    SOEconItemQuality_invalid=255
+};
+enum SOEconItemInventoryFlags
+{
+    SOEconItemInventoryFlags_P2_isEquipedPBody=     0x00010000,
+    SOEconItemInventoryFlags_P2_isEquipedAtlas=     0x00020000,
+    SOEconItemInventoryFlags_GC440_isEquipedScout=      0x00010000,
+    SOEconItemInventoryFlags_GC440_isEquipedSniper=     0x00020000,
+    SOEconItemInventoryFlags_GC440_isEquipedSoldier=    0x00040000,
+    SOEconItemInventoryFlags_GC440_isEquipedDemoman=    0x00080000,
+    SOEconItemInventoryFlags_GC440_isEquipedMedic=      0x00100000,
+    SOEconItemInventoryFlags_GC440_isEquipedHeavy=      0x00200000,
+    SOEconItemInventoryFlags_GC440_isEquipedPyro=       0x00400000,
+    SOEconItemInventoryFlags_GC440_isEquipedSpy=        0x00800000,
+    SOEconItemInventoryFlags_GC440_isEquipedEngineer=   0x01000000
+    SOEconItemInventoryFlags_isNewSOEconItemMethod= 0x40000000,
+    SOEconItemInventoryFlags_isInBackpack=          0x80000000
+};

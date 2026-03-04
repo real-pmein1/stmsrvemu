@@ -1,0 +1,136 @@
+0.90 - changelog from 0.81.1:
+
+merged neuter application into emulator
+added skinned neuter based on client theme (green/yellow to 2010, grey/blue from 2010)
+added preconfigured neuter files for much faster neutering (except L4D2 as it breaks)
+added content downloading for Steam 2002 beta 0.6.1.0
+added cache repair for Steam 2002 beta
+added checksums for 2002 storage
+added custom neutering
+added initial ProductInformationDB (PICS Steam3 "appinfo/packageinfo" data) - only PKV so far
+added ability to run all emu services at once
+added new blobs and updated existing ones
+added appinfo neutering
+added support up to SteamUI_1559
+added support for neutering Steam3 clients (2013 onwards)
+added LegacyGameKey server (key server)
+added ability to add keys to key server to supplement inbuilt keys
+added full Linux support
+added email validation to clients that need it (any code is accepted)
+added UFS (Steam Cloud)
+added SDK blob/dat files as a depot storage without requiring the SDK content server
+added support for June 2003 beta client (login only)
+added support for April 2004 client
+added neutering to SDK storages
+added remote administration tool
+added TUI for easy configuration
+added server hot-reloading
+added full Steamworks SDK neutering
+fixed Administration Server
+fixed HLDSUT not being neutered
+fixed Subscribing to default subscription for those clients that attempt it
+fixed Steam Cafe 1.4
+fixes to CM
+fixes to blob loading and runtime changes
+fixes to user/emulator database
+fixes to pkg and storage neuters
+fixes to beta 2003 client content downloads
+fixes to CSER
+fixes to blobmanager
+fixes to content server
+fixes to MariaDB connectivity
+fixes to master server for 2003 clients
+fixes to authentication server
+fixes to harvest server
+updates to auto blob roll system
+updates to CDDB/CCDB/beta CDDB
+updated all 2002 and 2003 storages
+removed excess logging
+QoL changes
+
+0.81.1 (internal release) - changelog from 0.81:
+
+added blob info on first boot
+added firehol ip blacklisting
+added forgot password reset for 2003 clients
+fixes to CM
+fixes to neuter
+QoL changes
+
+0.81 - changelog from 0.80:
+
+added initial protobuf support
+added manual neuter capability
+added TCP CM support
+added VLV signature neutering
+added neuter for Leaknet HL2 (custom app 170)
+fixes and updates to CM
+fixes to CSER
+fixed depot updating (thanks to nicknine for pointing this out)
+fixed live depot swapping
+fixed custom storage neuter
+
+0.80 - changelog from 0.73.2:
+
+converted from python 2.7 to 3.9
+refactored code and is now easier to read and more modular
+consolidated a lot of repeated code
+
+added full cser server packet parsing and collected information saving
+added mysql database to hold all information
+added user_tool.py, a stmserver administration tool
+added an auto-create for all required folders
+added support for Steam 2002 beta
+added FTP server for 2002 beta Client Updates and Steamworks SDK content tool uploading
+added color coded console text
+added exception/error catcher to improve readabilty of errors
+added new masterserver to replace the 3 old masterservers
+added dynamic serverlists for the content directory server
+added harvest server for bugreport files and other memory dump files
+added missing packets to auth server and directory server (not operational, just for collecting packet data)
+added email functions
+added email templates
+added authserver email code (validation code, new user email etc..)
+added valve anti cheat server 1 for beta 1 hl engine to mid 2005 hl engine
+added auto server ip option to ini
+added auto public ip option to ini
+added white/black lists
+added contentserver cellid
+added configurable contentserver region codes
+added location information for emails (country/state) for users own security (to check against who requested something such as changing passwords)
+added name suggestor and name suggestions feature
+added optional built-in name suggestions
+added optional name suggestion additions (prepended and append additions)
+added ability to import sql files by putting the files into files/sql/
+added initial insertion sql files
+added global and versioned folders to pkg_add, this means all files in the steam or steamui /global/ 
+	folder get added to all pkg files, and files in /steam_<version>/ or /steamui_<version>/ only get added to their respective pkgs
+added CM server for steam versions december 2004 to mid 2009
+added VAC banning to CM server, can be set using the user_tool
+added steamui.dll patcher to allow for steamclient.dll neutering
+added resource file neutering
+added new storage/manifest format (v4)
+added warning if firstblob calls for a package version for steam/steamui that is unavailable
+added ability to disable steam3 purchasing, until CM fully supports purchasing
+added automatic packet ip ban engine, it reads packet info from configs directory and compares all incoming packets to revoke malicious/bot activity, permently
+added custom banner url option, allows you to set a custom url for the content server banner
+added ability to connect multiple content and client update server to content directory server
+added all firstblob and secondblob files to the sql database (CCDB and CDDB)
+added fast switch ability for db <-> file blobs
+added retail (2004-early 2006) tracker chat protocol
+added official Steamworks SDK content tool file support
+added XML custom blob support
+added auto subscription id changer, changes subid's if an XML contains a subscription ID that is already in use and the servers warns the admin
+added content server peering
+added auto-neutering for gcf and ncf, based on current active blobs
+added auto-neutering to online blob changes
+
+changed the auth server to use SQL instead of the user py files
+changed http_ip to be used ONLY for neutering.  This is because people may want to host their website somewhere other than where the stmserver is hosted
+    also because apache should only ever listen on a local IP unless there are multiple interfaces with lan/wan access or if you use an external ip for internet access
+
+fixed simultaneous lan/wan neutering
+fixed overwriting user accounts that already exist
+
+removed /user/*.py files for user registry information
+removed http_name

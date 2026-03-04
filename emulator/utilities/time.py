@@ -2,10 +2,10 @@ import struct
 import time
 import traceback
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from future.utils import old_div
 
-from config import read_config
+from config import get_config as read_config
 
 def get_current_datetime():
     # Get the current datetime object
@@ -36,7 +36,7 @@ def add_100yrs(dt_str):
 
 def get_current_datetime_blob():
     # Get the current datetime object
-    current_datetime = datetime.now()
+    current_datetime = datetime.now(timezone.utc)
     # Format the datetime object as "mm/dd/yyyy hr:mn:sec"
     formatted_datetime = current_datetime.strftime("%Y-%m-%d %H_%M_%S")
     return formatted_datetime
@@ -58,7 +58,7 @@ def sub_yrs(dt_str = get_current_datetime_blob(), years = 0, months = 0, days = 
     except ValueError:
         # Handle invalid date format
         # Return the current datetime
-        return (datetime.now()).strftime("%Y-%m-%d %H_%M_%S")
+        return (datetime.now(timezone.utc)).strftime("%Y-%m-%d %H_%M_%S")
 
 
 def steamtime_to_datetime(raw_bytes):
@@ -67,6 +67,15 @@ def steamtime_to_datetime(raw_bytes):
     dt_object = datetime.utcfromtimestamp(unix_time)
     formatted_datetime = dt_object.strftime('%m/%d/%Y %H:%M:%S')
     return formatted_datetime
+
+
+def steamtime_to_datetime_config(raw_bytes):
+    steam_time = struct.unpack("<Q", raw_bytes)[0]
+    unix_time = old_div(steam_time, 1000000) - 62135596800
+    dt_object = datetime.utcfromtimestamp(unix_time)
+    formatted_date = dt_object.strftime('%Y-%m-%d')
+    formatted_time = dt_object.strftime('%H_%M_%S')
+    return formatted_date, formatted_time
 
 
 def datetime_to_steamtime(formatted_datetime):
@@ -146,3 +155,29 @@ def get_expiration_seconds() -> int:
     total_seconds = days * 24 * 3600 + hours * 3600 + minutes * 60 + seconds
 
     return total_seconds
+
+
+def is_30_minutes_or_less(time_string):
+    total_minutes = 0
+
+    # Fast extraction of each time component
+    if 'd' in time_string:
+        days = int(time_string.split('d')[0])
+        total_minutes += days * 24 * 60
+        time_string = time_string.split('d')[1]
+
+    if 'h' in time_string:
+        hours = int(time_string.split('h')[0])
+        total_minutes += hours * 60
+        time_string = time_string.split('h')[1]
+
+    if 'm' in time_string:
+        minutes = int(time_string.split('m')[0])
+        total_minutes += minutes
+        time_string = time_string.split('m')[1]
+
+    if 's' in time_string:
+        seconds = int(time_string.split('s')[0])
+        total_minutes += seconds // 60
+
+    return total_minutes <= 30

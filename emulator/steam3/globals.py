@@ -1,3 +1,6 @@
+
+challenge_map = {}  # key: connectionid or (ip, port), value: original challenge
+
 anonUsersCount = 0
 
 function_status = {

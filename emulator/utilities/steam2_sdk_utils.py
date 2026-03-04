@@ -4,6 +4,9 @@ import struct
 import sys
 import zlib
 import config
+import logging
+import glob
+import time
 
 import globalvars
 from utilities.blobs import SDKBlob
@@ -12,25 +15,21 @@ from utilities.storages import Steam2Storage
 config_var = config.get_config()
 def gen_id_from_filename(filename):
     parts = os.path.basename(filename).split(".")[0].split("_")
-    if len(parts) == 4:
-        appid, appver, crc, _ = parts
-        appid = int(appid)
-        appver = int(appver)
-        id = (appid, appver, crc)
-
-    elif len(parts) == 2:
+    if len(parts) == 2:
+        # Format: appid_version
         appid, appver = parts
-        appid = int(appid)
-        appver = int(appver)
+        return (int(appid), int(appver))
 
-        id = (appid, appver)
+    elif len(parts) >= 4:
+        # Format: appid_version_crc_sha256 (renamed with integrity hashes)
+        appid, appver, crc, sha256 = parts[0:4]
+        return (int(appid), int(appver), crc)
 
     else:
         raise Exception("Nonstandard filename format", filename)
 
-    return id
 
-def find_blob_file(appId, appVersion):
+def find_blob_file_older(appId, appVersion):
     # Implement code to find the blob file for given appId and appVersion
     # Perhaps the blob files are stored in a directory named 'blobs'
     blob_dir = config_var['steam2sdkdir'] # Replace with the actual path to your blob files
@@ -43,8 +42,36 @@ def find_blob_file(appId, appVersion):
                 if file_appId == appId and file_appVersion == appVersion:
                     return os.path.join(blob_dir, filename)
     return None
+
+
+def find_blob_file_old(appId, appVersion):
+    blob_dir = config_var['steam2sdkdir']
+    match = None
+    with os.scandir(blob_dir) as entries:
+        for entry in entries:
+            if entry.name.startswith(f"{str(appId)}_{str(appVersion)}") and entry.name.endswith(".blob"):
+                match = entry.name
+                break
+    if match:
+        return os.path.join(blob_dir, match)
+    else:
+        return None
+
+
+def find_blob_file(appId, appVersion):
+    blob_dir = config_var['steam2sdkdir']
+    exact = os.path.join(blob_dir, f"{appId}_{appVersion}.blob")
+
+    if os.path.exists(exact):
+        return exact
+
+    # fallback only if there may be suffixes
+    pattern = os.path.join(blob_dir, f"{appId}_{appVersion}_*.blob")
+    return next(glob.iglob(pattern), None)
+
+
 def check_for_entry(app_id, version):
-    # Create a tuple for app_id and version to match the dictionary keys
+    # Create a tuple for appID and version to match the dictionary keys
     entry_id = (app_id, version)  # Using tuple instead of string
 
     # Print the contents of known_dats and known_blobs for debugging
@@ -61,7 +88,7 @@ def check_for_entry(app_id, version):
         return globalvars.known_dats[entry_id]
 
     # If not found in either, return None
-    # print(f"No entry found for App ID {app_id} and Version {version}.")
+    # print(f"No entry found for App ID {appID} and Version {version}.")
     return None
 
 
@@ -72,18 +99,20 @@ def scan_directories(blob_directory, dat_directory):
 
     # Scan blob_directory for both blob and dat files
     try:
-        for filename in os.listdir(blob_directory):
-            filepath = os.path.join(blob_directory, filename)
-            if filename.lower().endswith(".blob"):
-                id = Steam2Storage.gen_id_from_filename(filename)
-                if id in globalvars.known_blobs:
-                    raise Exception("Duplicate blob ID?", id)
-                globalvars.known_blobs[id] = filepath
-            elif filename.lower().endswith(".dat"):
-                id = Steam2Storage.gen_id_from_filename(filename)
-                if id in globalvars.known_dats:
-                    raise Exception("Duplicate dat ID?", id)
-                globalvars.known_dats[id] = filepath
+        for entry in os.scandir(blob_directory):
+            if entry.is_file():
+                filepath = entry.path
+                filename = entry.name
+                if filename.lower().endswith(".blob"):
+                    id = Steam2Storage.gen_id_from_filename(filename)
+                    if id in globalvars.known_blobs:
+                        raise Exception("Duplicate blob ID?", id)
+                    globalvars.known_blobs[id] = filepath
+                elif filename.lower().endswith(".dat"):
+                    id = Steam2Storage.gen_id_from_filename(filename)
+                    if id in globalvars.known_dats:
+                        raise Exception("Duplicate dat ID?", id)
+                    globalvars.known_dats[id] = filepath
     except FileNotFoundError:
         pass
         #print(f"Blob directory {blob_directory} not found.")
@@ -132,7 +161,7 @@ def parse_checksums(checksumdata):
 
         numfiles += filecount
         for fileid in range(fileid_start, fileid_start + filecount):
-            fingerprintdata += struct.pack("<I", fileid_start + i)
+            fingerprintdata += struct.pack("<I", fileid_start)
 
             highest_fileid = max(highest_fileid, fileid)
 
@@ -178,104 +207,136 @@ def parse_checksums(checksumdata):
     return filedata, checksums, fingerprintdata
 
 
-def extract_checksumbin(blobname):
+def patch_checksums_for_neutered(chk_bytes: bytearray, cache_dir: str) -> bytearray:
+    """
+    For any chunk replacement files named "<appid>_<fileid>-<chunkid>.data"
+    in cache_dir, recompute that single chunk?s CRC32/Adler32 and patch it
+    into chk_bytes in place.
+    """
+    import glob, os, struct, zlib
+
+    # 1) Build a map of exactly which (fileid,chunkid) have replacements
+    replacements: dict[tuple[int,int], bytes] = {}
+    for path in glob.glob(os.path.join(cache_dir, "*-*.data")):
+        # filename = "<appid>_<fileid>-<chunkid>.data"
+        base = os.path.basename(path).rsplit(".", 1)[0]
+        _, fc = base.split("_", 1)        # "13-7" for fileid=13,chunkid=7
+        fileid_str, chunkid_str = fc.split("-", 1)
+        fid, cid = int(fileid_str), int(chunkid_str)
+        with open(path, "rb") as f:
+            replacements[(fid, cid)] = f.read()
+
+    # 2) Walk the checksums table header to find where each chunk?s 4-byte entry lives
+    off = 16  # skip the 16-byte header
+    num_files = struct.unpack_from("<L", chk_bytes, 8)[0]
+    list_base = 16 + num_files * 8
+
+    for fid in range(num_files):
+        n_blks, first = struct.unpack_from("<LL", chk_bytes, off)
+        for i in range(n_blks):
+            key = (fid, i)
+            if key in replacements:
+                data = replacements[key]
+                # recompute exactly that chunk?s CRC32/Adler32
+                new_crc = (zlib.adler32(data, 0) ^ zlib.crc32(data, 0)) & 0xFFFFFFFF
+                crc_off = list_base + (first + i) * 4
+                struct.pack_into("<I", chk_bytes, crc_off, new_crc)
+        off += 8
+
+    return chk_bytes
+
+
+def extract_checksumbin(appid: int, version: int, out_dir: str, suffix) -> bytes:
+    """
+    Return the fully-merged *.checksums* binary for (appid, version).
+    Also write it to disk when cache_sdk_depot == "true".
+    """
+    blob_dir   = config_var["steam2sdkdir"]
+    branch_id  = gen_id_from_filename(f"{appid}_{version}.blob")
+
+    # ------------------------------------------------------------------ helpers
     def _get_checksums(known_blobs, id, blobcontainers, checksums):
-        blobname = known_blobs[id]
-        blobdata = open(blobname, "rb").read()
-        b = SDKBlob(blobdata)
+        # -- open the correct blob for *this* id
+        new_known_blobs = {}
+        for key, value in known_blobs.items():
+            if key[0] == id[0]:
+                new_known_blobs.update({(key[0], key[1]): value})
+        blob_path  = new_known_blobs[id]
+        blobdata   = open(blob_path, "rb").read()
+        b          = SDKBlob(blobdata)
 
-        # Determine parent version and CRC
-        parentver = (id[1] - 1) & 0xffffffff
-        parentcrc = "%08x" % b.get_i32(12)
+        # -- walk up the parent chain (field 11 = parent version, 12 = parent CRC)
+        parentver  = b.get_i32(11)
+        parentcrc  = "%08x" % b.get_i32(12)
+        if parentver != 0xFFFFFFFF and parentcrc != "00000000":
+            parent_id = (id[0], parentver) if len(id) == 2 else (id[0], parentver, parentcrc)
+            if parent_id not in new_known_blobs:
+                raise Exception("Parent blob does not exist:", parent_id)
+            _get_checksums(new_known_blobs, parent_id, blobcontainers, checksums)
 
-        # Process parent blob if applicable
-        if parentver != 0xffffffff and parentcrc != "00000000":
-            if len(id) == 2:
-                parentid = (id[0], parentver)
-            elif len(id) == 3:
-                parentid = (id[0], parentver, parentcrc)
-            else:
-                raise Exception("Invalid ID format")
-
-            if parentid not in known_blobs:
-                raise Exception("Parent blob does not exist:", parentid)
-
-            _get_checksums(known_blobs, parentid, blobcontainers, checksums)
-
-        # Parse the current blob's checksums
+        # -- merge this blob?s checksums
         _, newchecksums, _ = parse_checksums(b.get_raw(4))
+        for fid, blocks in newchecksums.items():
+            checksums[fid] = blocks
 
-        # Merge the new checksums into the aggregated list
-        for fileid, blocks in newchecksums.items():
-            checksums[fileid] = blocks
-
-        # Build checksum binary data for the current blob
-        if checksums:
-            last_id = max(checksums.keys())
-        else:
-            last_id = -1
-
-        indextable = bytearray()
-        checksumtable = bytearray()
-
-        indexcount = last_id + 1
-        checksumoffset = 0
-
-        for fileid in range(indexcount):
-            if fileid not in checksums:
+        # -- build the checksum.bin chunk for *this* blob
+        last_id = max(checksums) if checksums else -1
+        indextable, checksumtable, checksumoffset = bytearray(), bytearray(), 0
+        for fid in range(last_id + 1):
+            if fid not in checksums:
                 indextable += struct.pack("<II", 0, 0)
             else:
-                numchecksums = len(checksums[fileid])
-                indextable += struct.pack("<II", numchecksums, checksumoffset)
-                checksumoffset += numchecksums
-                for _, checksum in checksums[fileid]:
-                    checksumtable += checksum
+                n = len(checksums[fid])
+                indextable += struct.pack("<II", n, checksumoffset)
+                checksumoffset += n
+                for _, csum in checksums[fid]:
+                    checksumtable += csum
 
-        checksumdata = (
-            b"\x21\x37\x89\x14"
-            + struct.pack("<III", 1, indexcount, checksumoffset)
-            + indextable
-            + checksumtable
-        )
+        checksumdata = (b"\x21\x37\x89\x14" +
+                        struct.pack("<III", 1, last_id + 1, checksumoffset) +
+                        indextable + checksumtable)
 
         signature = b.get_raw(9)
+        blobcontainers[id] = {"checksumbin": checksumdata + signature}
 
-        blobcontainers[id] = {
-            "checksumbin": checksumdata + signature,
-        }
-
-    # Load all known blobs in the directory
-    blobdir = config_var["steam2sdkdir"]
-
+    # ------------------------------------------------------------------ gather all blobs in the dir
     known_blobs = {}
-    for filename in os.listdir(blobdir):
-        if filename.lower().endswith(".blob"):
-            id = gen_id_from_filename(filename)
-            if id in known_blobs:
-                raise Exception("Duplicate blob ID?", id)
-            known_blobs[id] = os.path.join(blobdir, filename)
+    idx = (str(appid), str(version))
+    #for fn in os.listdir(blob_dir):
+    #    if fn.lower().endswith(".blob"):
+    #        idx = gen_id_from_filename(fn)
+    #        #if idx in known_blobs:
+    #        #    raise Exception("Duplicate blob ID?", idx)
+    #        known_blobs[idx] = os.path.join(blob_dir, fn)
+    if os.path.isfile(os.path.join(blob_dir, idx[0] + "_" + idx[1] + ".blob")):
+        i = version
+        while i >= 0:
+            known_blobs[(appid, i)] = os.path.join(blob_dir, idx[0] + "_" + str(i) + ".blob")
+            i -= 1
+    else:
+        with os.scandir(blob_dir) as it:
+            for entry in it:
+                if entry.name.endswith(".blob") and entry.name.count("_") >= 2:
+                    version_int = int(entry.name[entry.name.find('_') + 1 : entry.name.find('_', entry.name.find('_') + 1)])
+                    if entry.name.startswith(idx[0] + "_") and version_int <= version:
+                        known_blobs[(appid, version_int)] = os.path.join(blob_dir, entry.name)
 
-    # Start checksum aggregation with the branch blob
-    branch_id = gen_id_from_filename(blobname)
-    appid, appver = branch_id[:2]
-
-    blobcontainers = {}
-    checksums = {}
-
+    # ------------------------------------------------------------------ recurse and cache
+    blobcontainers, checksums = {}, {}
     _get_checksums(known_blobs, branch_id, blobcontainers, checksums)
 
-    # Cache the checksums if the configuration allows
-    if config_var["cache_sdk_depot"].lower() == "true":
-        checksumfilename = os.path.join("files/cache/", f"{appid}.checksums")
-        with open(checksumfilename, "wb") as of:
-            of.write(blobcontainers[branch_id]["checksumbin"])
+    # out_dir is now always ".../files/cache/<appid>_<version>"
+    """os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir,
+              f"{appid}_{version}{suffix}.checksums"),
+              "wb") as f:
+        f.write(blobcontainers[branch_id]["checksumbin"])"""
 
-    # Return the aggregated checksum binary data
     return bytes(blobcontainers[branch_id]["checksumbin"])
 
 
 # FIXME this needs to reuse the checksum function above, instead of rewriting the method inside itself
-def generate_index_bytes(blobname, dat_directory, output_directory="files/cache/"):
+def generate_index_bytes(blobname, dat_directory, output_directory=os.path.join("files", "cache")):
     """
     Generates the index file from blob data and returns its content as bytes.
 
@@ -415,3 +476,130 @@ def generate_index_bytes(blobname, dat_directory, output_directory="files/cache/
             of.write(indexdata)
 
     return bytes(indexdata)
+
+
+# ---------------------------------------------------------------------------
+#  Build a ?normal? v3-style .data/.index pair from an SDK blob depot
+# ---------------------------------------------------------------------------
+def build_index_and_data_from_checksums(appid: int, version: int,
+                                        out_dir: str) -> bytes:
+    """
+    Write <appid>.data and return the bytes that should be saved as
+    <appid>.index .
+
+    Every chunk is looked up like this:
+      1.  files/cache/<appid>_<ver>/<appid>_<fileid>-<cid>.data  (if exists)
+      2.  original chunk inside the SDK .dat referenced by the blob chain
+
+    The index format is identical to older v3 depots: for each chunk,
+    two uint64 big-endian values (offset, length) pointing into the .data
+    file.  Files that do not exist simply get a (0,0) entry.
+    """
+
+    log = logging.getLogger("SDKDepot")
+    cache_dir = os.path.join("files", "cache", f"{appid}_{version}")
+    data_path = os.path.join(out_dir,   f"{appid}.data")
+
+    # ------------------------------------------------------------ helpers ---
+    def _ensure_dirs():
+        os.makedirs(out_dir,   exist_ok=True)
+        os.makedirs(cache_dir, exist_ok=True)
+
+    def _open_dat_file(path, cache={}):
+        """Return a cached file handle for a .dat path."""
+        if path not in cache:
+            cache[path] = open(path, "rb")
+        return cache[path]
+
+    # ------------------------------------------------------ gather metadata
+    _ensure_dirs()
+    scan_directories(config_var['steam2sdkdir'],  # refresh global maps
+                     config_var['steam2sdkdir'])
+
+    # reuse the full Steam2Storage object just to harvest the metadata
+    tmp_store = Steam2Storage(appid,
+                              config_var['steam2sdkdir'],
+                              version,
+                              islan=False)       # we only read
+
+    file_info = tmp_store.file_data_info                # {fileid: {...}}
+    max_fileid = max(file_info)
+
+    # The SDK checksum list for every file is already in file_info[fileid]['checksums']
+    # where each entry = (compressed_size, adler/crc bytes)
+
+    # --------------------------------------------------------- write data --
+    index_bytes = bytearray()
+    current_off = 0
+
+    with open(data_path, "wb") as data_out:
+        for fileid in range(max_fileid + 1):
+            if fileid not in file_info:
+                # pad with a dummy (0,0) entry so indices line up
+                index_bytes += struct.pack(">QQ", 0, 0)
+                continue
+
+            info = file_info[fileid]
+            dat_path     = info['datfile']
+            file_offset  = info['offset']
+            checksums    = info['checksums']   # list[(compr_size, checksum)]
+            block_sizes  = [c[0] for c in checksums]
+
+            for cid, compr_size in enumerate(block_sizes):
+                # 1. neutered cache file?
+                neutered_path = os.path.join(cache_dir,
+                                             f"{appid}_{fileid}-{cid}.data")
+                if os.path.isfile(neutered_path):
+                    with open(neutered_path, "rb") as cf:
+                        chunk_bytes = cf.read()
+                else:
+                    # 2. original bytes from .dat
+                    fdat = _open_dat_file(dat_path)
+                    fdat.seek(file_offset)
+                    chunk_bytes = fdat.read(compr_size)
+
+                # write out
+                data_out.write(chunk_bytes)
+                index_bytes += struct.pack(">QQ", current_off, len(chunk_bytes))
+                current_off += len(chunk_bytes)
+
+                # advance source pointer if we were reading original .dat
+                file_offset += compr_size
+
+    log.info("Wrote %s (%.2f MiB) and built index for %d files",
+             data_path, current_off / (1024*1024), max_fileid + 1)
+    return bytes(index_bytes)
+
+
+def build_neutered_store(appid: int, version: int, out_dir: str, suffix) -> None:
+    """
+    Materialise the neutered SDK depot for (appid,version) into `out_dir`
+    as <appid>.index , <appid>.data , <appid>.checksums .
+
+    If they already exist we do nothing ? this makes the call idempotent
+    and safe to run inside Storage.__init__().
+    """
+    if (os.path.exists(os.path.join(out_dir, f"{appid}.index")) and
+        os.path.exists(os.path.join(out_dir, f"{appid}.data"))  and
+        os.path.exists(os.path.join(out_dir, f"{appid}.checksums"))):
+        return  # cache already present
+
+    scan_directories(config_var['steam2sdkdir'],          # refresh global maps
+                     config_var['steam2sdkdir'])
+
+    # ---- 1. build a merged .checksums covering the full blob chain ----
+    checksums_bin = extract_checksumbin(appid, version, out_dir, suffix)
+
+    with open(os.path.join(out_dir, f"{appid}_{version}{suffix}.checksums"), "wb") as f:
+        f.write(checksums_bin)
+
+    # ---- 2. reuse the writer that already constructs .index / .data ----
+    # (_get_checksums inside extract_checksumbin returned the bytes for the
+    #  .index but we need them on disk for readindexes())
+    # The helper below is already present in the file and returns the
+    # index bytes after it has written <appid>.data:
+    index_bytes = build_index_and_data_from_checksums(
+                      appid, version, out_dir)
+
+    with open(os.path.join(out_dir, f"{appid}_{version}{suffix}.index"), "wb") as f:
+        f.write(index_bytes)

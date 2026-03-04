@@ -3,12 +3,20 @@ import os
 import threading
 import time
 import sys
-import subprocess
 import platform
 import shutil
+import importlib.util
+
+# Force unbuffered stdout for Linux
+if sys.platform != 'win32':
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+	
 import globalvars
 from utilities.thread_handler import start_server_thread, start_watchdog
 import utilities.encryption as encryption
+from utils import log_blob_information
+from logger import init_test_logging, close_test_logging
 
 try:
     # Delete the mariadb log at launch, this allows people to grab the log if it errors after shutting down, but also
@@ -43,8 +51,7 @@ if encryption.check_file_hashes() is False:
     encryption.generate_and_export_rsa_keys()
 
 encryption.main_key, encryption.network_key = encryption.import_rsa_keys()
-encryption.BERstring = encryption.network_key.public_key().export_key("DER")
-encryption.signed_mainkey_reply = encryption.get_mainkey_reply()
+encryption.init_network_key_reply()  # Precompute network key response for configserver
 
 
 def stmserver_initialization():
@@ -54,7 +61,7 @@ def stmserver_initialization():
     globalvars.current_os = platform.system()
     globalvars.aio_server = True
 
-    from utilities.inputmanager import start_watchescape_thread
+    # from utilities.inputmanager import start_watchescape_thread
     from utilities import auto_swap_blob
 
     if getattr(sys, 'frozen', False):
@@ -88,8 +95,8 @@ def stmserver_initialization():
     from utilities import firstrun
     from utilities.database.setup_mariadb import setup_mariadb
     # from utils import flush_cache, parent_initializer, autoupdate, every
-    from utils import parent_initializer, autoupdate, is_30_minutes_or_less
-    from utilities.time import every
+    from utils import parent_initializer, autoupdate
+    from utilities.time import every, is_30_minutes_or_less
 
     # Check ticket expiration config to ensure it is set to a time higher than 30 minutes
     result = is_30_minutes_or_less(config['ticket_expiration_time_length'])
@@ -99,20 +106,20 @@ def stmserver_initialization():
     autoupdate()
     if config["subtract_time"] != "0":
         auto_swap_blob.swap_blobs()
-    if config["auto_blobs"] == "true":
-        print("Auto-blob rolling activated")
-        threading.Thread(target = lambda:every(60, auto_swap_blob.swap_blobs)).start()
+        if config["auto_blobs"] == "true":
+            print("Auto-blob rolling activated")
+            threading.Thread(target = lambda:every(300, auto_swap_blob.swap_blobs)).start()
 
     # initialize logger, emulator.ini and mariadb if needed
-    if not os.path.exists(config['configsdir'] + '\\' + '.initialized'):
+    if not os.path.exists(os.path.join(config['configsdir'], '.initialized')):
         firstrun.check_initialization()
     config = read_config()
     #if config["uat"] != "1":
     #    clearConsole = lambda:os.system('cls' if os.name in ('nt', 'dos') else 'clear')
     #    clearConsole()
 
-    # start watching for 'esc' keyboard key
-    start_watchescape_thread()
+    # start watching for 'esc' keyboard key - MOVED
+    # start_watchescape_thread()
 
     # setup the built in mysql for the first time if it isnt already setup
     if config["use_builtin_mysql"].lower() == "true":
@@ -129,7 +136,16 @@ from steam3.cmserver_udp import CMServerUDP_27014, CMServerUDP_27017
 from steam3.cmserver_tcp import CMServerTCP_27014, CMServerTCP_27017
 from servers.configserver import configserver
 from servers.contentlistserver import contentlistserver
-from servers.contentserver import contentserver
+
+override_path = os.path.join(os.path.dirname(sys.executable), "servers/contentserver2.py")
+
+if os.path.exists(override_path):
+    spec = importlib.util.spec_from_file_location("contentserver", override_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    contentserver = module.contentserver
+else:
+    from servers.contentserver import contentserver
 from servers.cserserver import CSERServer
 from servers.directoryserver import directoryserver
 from servers.harvestserver import HarvestServer
@@ -139,19 +155,12 @@ from servers.validationserver import validationserver
 from servers.valve_anticheat1 import VAC1Server
 from servers.vttserver import cafeserver, vttserver
 from steamweb.ftp import create_ftp_server
+#from servers.global_tracker_server import GlobalTrackerThread
 from steamweb.steamweb import check_child_pid, steamweb
 from utilities.filesystem_monitor import DirectoryMonitor
 from utilities import filesystem_monitor
-# TODO Finish this before .81
-# from servers.administrationserver import administrationserver
+from servers.administrationserver import administrationserver
 
-
-# TEST LOGGING
-# log.debug("LOG TEST - DEBUG")
-# log.info("LOG TEST - INFO")
-# log.warning("LOG TEST - WARNING")
-# log.error("LOG TEST - ERROR")
-# log.critical("LOG TEST - CRITICAL")
 
 new_password = parent_initializer()
 
@@ -211,39 +220,60 @@ cafe_server = cafeserver(config["cafe_server_port"], config)
 start_server_thread(cafe_server, 'CafeServer', 'Valve CyberCafe Master Server')
 
 if config["enable_steam3_servers"].lower() == "true":
+    # extra_args for CM servers that need master_server reference for restarts
+    cm_extra_args = {'master_server': master_server}
+
     if config["run_all_servers"].lower() == "true":
         cmtcp27014_server = CMServerTCP_27014(27014, config, master_server)
-        start_server_thread(cmtcp27014_server, 'CMTCP27014', 'Valve Connection Manager (CM) 1 TCP Server')
+        start_server_thread(cmtcp27014_server, 'CMTCP27014', 'Valve Connection Manager (CM) 1 TCP Server', cm_extra_args)
         cmudp27014_server = CMServerUDP_27014(27014, config, master_server)
-        start_server_thread(cmudp27014_server, 'CMUDP27014', 'Valve Connection Manager (CM) 1 UDP Server')
+        start_server_thread(cmudp27014_server, 'CMUDP27014', 'Valve Connection Manager (CM) 1 UDP Server', cm_extra_args)
         cmtcp27017_server = CMServerTCP_27017(27017, config, master_server)
-        start_server_thread(cmtcp27017_server, 'CMTCP27017', 'Valve Connection Manager (CM) 2 TCP Server')
+        start_server_thread(cmtcp27017_server, 'CMTCP27017', 'Valve Connection Manager (CM) 2 TCP Server', cm_extra_args)
         cmudp27017_server = CMServerUDP_27017(27017, config, master_server)
-        start_server_thread(cmudp27017_server, 'CMUDP27017', 'Valve Connection Manager (CM) 2 UDP Server')
+        start_server_thread(cmudp27017_server, 'CMUDP27017', 'Valve Connection Manager (CM) 2 UDP Server', cm_extra_args)
     else:
         if globalvars.steamui_ver < 479:
             # 27014 only needs to be active for steamui versions below 479
             cmtcp27014_server = CMServerTCP_27014(27014, config, master_server)
-            start_server_thread(cmtcp27014_server, 'CMTCP27014', 'Valve Connection Manager (CM) 1 TCP Server')
+            start_server_thread(cmtcp27014_server, 'CMTCP27014', 'Valve Connection Manager (CM) 1 TCP Server', cm_extra_args)
             cmudp27014_server = CMServerUDP_27014(27014, config, master_server)
-            start_server_thread(cmudp27014_server, 'CMUDP27014', 'Valve Connection Manager (CM) 1 UDP Server')
+            start_server_thread(cmudp27014_server, 'CMUDP27014', 'Valve Connection Manager (CM) 1 UDP Server', cm_extra_args)
         else:
             cmtcp27017_server = CMServerTCP_27017(27017, config, master_server)
-            start_server_thread(cmtcp27017_server, 'CMTCP27017', 'Valve Connection Manager (CM) 2 TCP Server')
+            start_server_thread(cmtcp27017_server, 'CMTCP27017', 'Valve Connection Manager (CM) 2 TCP Server', cm_extra_args)
             cmudp27017_server = CMServerUDP_27017(27017, config, master_server)
-            start_server_thread(cmudp27017_server, 'CMUDP27017', 'Valve Connection Manager (CM) 2 UDP Server')
+            start_server_thread(cmudp27017_server, 'CMUDP27017', 'Valve Connection Manager (CM) 2 UDP Server', cm_extra_args)
 
 if config["run_all_servers"].lower() == "true":
+    # TODO finish global tracker server
+    #if config.get("global_tracker", "false").lower() == "true":
+    #    gt_thread = GlobalTrackerThread(int(config.get("global_tracker_port", 1300)))
+    #    start_server_thread(gt_thread, 'GlobalTrackerServer', 'Global Tracker Server')
+
     tracker_server = TrackerServer(1200, config)
     start_server_thread(tracker_server, 'TrackerServer', 'Tracker Server')
+
     log.info("Made by ymgve Modified by STMServer Team")
+
     vac_server = VAC1Server(int(config["vac_server_port"]), config)
     start_server_thread(vac_server, 'VAC1Server', 'Valve Anti-Cheat V1 Server')
-    if os.path.isfile("files/secondblob.bin"): # Leave until beta blobs are in the CDDB
-        beta1auth_server = Beta1_AuthServer(5273, config)
-        start_server_thread(beta1auth_server, 'Beta1Server', 'Beta 1 (2002) Client Authentication Server')
-    ftp_server_thread = threading.Thread(target=create_ftp_server, args=("files/temp", "files/beta1_ftp", globalvars.server_ip, int(config['ftp_server_port'])))
-    start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server')
+
+    beta1auth_server = Beta1_AuthServer(5273, config)
+    start_server_thread(beta1auth_server, 'Beta1Server', 'Beta 1 (2002) Client Authentication Server')
+
+    if config['enable_ftp'].lower() == "true":
+        ftp_port = int(config['ftp_server_port'])
+        ftp_server_thread = threading.Thread(
+            target=create_ftp_server,
+            args=(
+                os.path.join("files", "temp"),
+                os.path.join("files", "beta1_ftp"),
+                globalvars.server_ip,
+                ftp_port
+            )
+        )
+        start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server', extra_args={'port': ftp_port})
 else:
     if int(globalvars.steamui_ver) < 120:
         tracker_server = TrackerServer(1200, config)
@@ -258,22 +288,32 @@ else:
             beta1auth_server = Beta1_AuthServer(5273, config)
             start_server_thread(beta1auth_server, 'Beta1Server', 'Beta 1 (2002) Client Authentication Server')
 
-            ftp_server_thread = threading.Thread(target=create_ftp_server, args=("files/temp", "files/beta1_ftp", globalvars.server_ip, int(config['ftp_server_port'])))
-            start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server')
+            if config['enable_ftp'].lower() == "true":
+                ftp_port = int(config['ftp_server_port'])
+                ftp_server_thread = threading.Thread(
+                    target=create_ftp_server,
+                    args=(
+                        os.path.join("files", "temp"),
+                        os.path.join("files", "beta1_ftp"),
+                        globalvars.server_ip,
+                        ftp_port
+                    )
+                )
+                start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server', extra_args={'port': ftp_port})
 
-# TODO Finish this before .81
-# admin_server = administrationserver(config["admin_server_port"], config)
-# start_server_thread(admin_server, 'AdminServer', 'STMServer Administration Server')
+admin_server = administrationserver(config["admin_server_port"], config)
+start_server_thread(admin_server, 'AdminServer', 'STMServer Administration Server')
 
 
-apache_root_exists = True if os.path.isdir(config["apache_root"]) else False
+apache_root_exists = os.path.isdir(config["apache_root"])
 
 if globalvars.use_webserver and config["http_ip"] == "":
     if apache_root_exists:
         steamweb("80", config["server_ip"], config["apache_root"], config["web_root"])
 
         log.info(f"Steam Web Server listening on port 80")
-        find_child_pid_timer = threading.Timer(10.0, check_child_pid()).start()
+        find_child_pid_timer = threading.Timer(1.0, check_child_pid)
+        find_child_pid_timer.start()
     else:
         log.error("Cannot start Steam Web Server: apache folder is missing")
 else:
@@ -288,23 +328,24 @@ if new_password == 1:
     log.info("Make sure to give this password to any servers that may want to add themselves to your network!")
 
 directories_to_watch = {
-os.path.abspath('files/mod_blob'),
+    os.path.abspath(os.path.join('files', 'mod_blob')),
+    os.path.abspath(os.path.join('files', 'configs', 'custom_neuter')),
 }
 # Monitor changes to secondblob.bin/py in the background while server is running
 specific_files_to_watch = {
-    os.path.abspath("files/secondblob.bin"),
-    os.path.abspath("files/secondblob.py"),
+    os.path.abspath(os.path.join("files", "secondblob.bin")),
+    os.path.abspath(os.path.join("files", "secondblob.py")),
     os.path.abspath("emulator.ini"),
-    os.path.abspath('files/mod_blob'),
+    os.path.abspath(os.path.join('files', 'mod_blob')),
 }
 filesystem_monitor.specific_files_to_watch = specific_files_to_watch
 paths_to_monitor = list(specific_files_to_watch) + list(directories_to_watch)
 directory_monitor = DirectoryMonitor(paths = paths_to_monitor, directories_to_watch = directories_to_watch)
 directory_monitor.start()
 
-time.sleep(1)  # This is needed for the following line to show up AFTER the sever initialization information
+time.sleep(2)  # This is needed for the following line to show up AFTER the sever initialization information
 
-if config["log_level"] == "logging.INFO":
+if config["log_level"].split('.')[-1].upper() == "INFO":
     clearConsole = lambda:os.system('cls' if os.name in ('nt', 'dos') else 'clear')
     clearConsole()
     
@@ -312,13 +353,56 @@ print("")
 print(f"Steam 2002-2011 Server Emulator v{globalvars.local_ver}")
 print(("=" * 33) + ("=" * len(globalvars.local_ver)))
 print()
-print(" -== Half-Life 2 20th Anniversary Celebration 2004-2024 ==-")
-print()
+# print(" -== Half-Life 2 20th Anniversary Celebration 2004-2024 ==-")
 
 utils.print_stmserver_ipaddresses()
 
-log.info("...Steam Server ready...")
+# Additional info for Steam versions and datetime of blobs
+log_blob_information()
 
-print("Press Escape to exit...")
-print()
-print()
+# Initialize test logging if enabled (captures all log levels to a single file)
+init_test_logging()
+
+if config["use_emu_console"].lower() == "true":
+    # Start console manager for interactive commands
+    globalvars.start_time = time.time()  # Track server start time for uptime calculation
+    from utilities.console_manager import start_console_manager, get_console_manager, SimpleConsoleManager
+    start_console_manager()
+
+    # Get the console manager to check its type
+    console_mgr = get_console_manager()
+
+    # SimpleConsoleManager.start() is non-blocking (uses daemon thread), so we need to
+    # keep the main thread alive. TUIConsoleManager.start() is blocking, so when it
+    # returns the server is already shutting down.
+    if isinstance(console_mgr, SimpleConsoleManager):
+        try:
+            # Wait for shutdown - let the console manager daemon thread handle input
+            while console_mgr.running and not getattr(globalvars, 'shutdown_requested', False):
+                time.sleep(1)
+        except KeyboardInterrupt:
+            log.info("Shutdown requested via keyboard interrupt")
+        except Exception as e:
+            log.error(f"Error in main loop: {e}")
+        finally:
+            log.info("Server shutting down...")
+            close_test_logging()
+    # For TUI console, start_console_manager() already blocked until exit, cleanup happens there
+else:
+    from utilities.inputmanager import start_watchescape_thread
+    start_watchescape_thread()
+
+    # Keep main thread alive - without this, the script ends and Python shuts down
+    # the interpreter, killing all daemon threads and the ThreadPoolExecutor
+    try:
+        while not getattr(globalvars, 'shutdown_requested', False):
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log.info("Shutdown requested via keyboard interrupt")
+    except Exception as e:
+        log.error(f"Error in main loop: {e}")
+    finally:
+        log.info("Server shutting down...")
+        close_test_logging()
+
+log.info("...Steam Server ready...")

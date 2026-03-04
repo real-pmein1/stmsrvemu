@@ -1,15 +1,25 @@
-import logging
+
+import os
 import os.path
-import struct
 import sys
+import struct
 import zlib
+import logging
 
 from config import get_config
 from utilities import steam2_sdk_utils
+from utilities.steam2_sdk_utils import parse_checksums
 from utilities.blobs import SDKBlob
+from logger import STORAGENEUTER
 
 log = logging.getLogger('GCFCHKSUM')
 config = get_config()
+
+# Set logger level based on config - if storage_neutor is disabled, suppress these logs
+if config.get("storage_neutor", "false").lower() != "true":
+    log.setLevel(logging.CRITICAL + 1)  # Suppress all logging
+else:
+    log.setLevel(STORAGENEUTER)  # Allow STORAGENEUTER level and above
 
 
 class Checksum:
@@ -65,10 +75,15 @@ class Checksum:
 
 class Checksum2: # v3 storage
     def __init__(self, arg, ver, islan, is_extra):
+        if islan:
+            suffix = "_lan"
+        else:
+            suffix = "_wan"
+
         if type(arg) == int:
             appId = arg
             verId = ver
-            with open(self.filename(appId, verId, islan, is_extra), "rb") as f:
+            with open(self.filename(appId, verId, suffix, is_extra), "rb") as f:
                 self.checksumdata = f.read()
         else:
             self.checksumdata = arg
@@ -105,30 +120,57 @@ class Checksum2: # v3 storage
         else:
             return True
 
+    def validate_chunk(self, fileid, chunkid, chunk, filename):
+        """Validate chunk and fix CRC in file if mismatch (used by neuter)."""
+        stored_crc = self.getchecksum(fileid, chunkid)
+        chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
+
+        if stored_crc != chunk_crc:
+            self.fix_crc(fileid, chunkid, chunk, filename)
+            return False
+        return True
+
+    def fix_crc(self, fileid, chunkid, chunk, filename):
+        """Update the checksum in the file for a modified chunk."""
+        chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
+
+        with open(filename, "rb") as f:
+            checksumdata = bytearray(f.read())
+
+        # Calculate position: same logic as getchecksum
+        checksumpointer = fileid * 8 + 16
+        checksumstart = struct.unpack("<L", checksumdata[checksumpointer + 4:checksumpointer + 8])[0]
+        pos = self.checksumliststart + (checksumstart + chunkid) * 4
+
+        # Update the checksum
+        checksumdata[pos:pos + 4] = struct.pack("<I", chunk_crc)
+
+        with open(filename, "wb") as f:
+            f.write(checksumdata)
+
+        # NOTE: Commented out to reduce log verbosity - uncomment for checksum debugging
+        # log.storageneuter(f"Fixed CRC for file {fileid} chunk {chunkid} to {hex(chunk_crc)}")
+
     @classmethod
-    def filename(cls, appId, verId, islan, is_extra):
-        if islan:
-            suffix = "_wan"
-        else:
-            suffix = "_lan"
+    def filename(cls, appId, verId, suffix, is_extra):
         if os.path.isfile("files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + "_" + str(verId) + suffix + ".checksums"):
-            log.debug("Sending files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + "_" + str(verId) + suffix + ".checksums")
+            log.storageneuter("Sending files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + "_" + str(verId) + suffix + ".checksums")
             return os.path.join("files/cache/" + str(appId) + "_" + str(verId) + "/", str(appId) + "_" + str(verId) + suffix + ".checksums")
         elif os.path.isfile("files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + ".checksums"):
-            log.debug("Sending files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + ".checksums")
+            log.storageneuter("Sending files/cache/" + str(appId) + "_" + str(verId) + "/" + str(appId) + ".checksums")
             return os.path.join("files/cache/" + str(appId) + "_" + str(verId) + "/", "%i.checksums" % (appId))
             
         elif os.path.isfile(os.path.join(config["storagedir"], "%i.v3.checksums" % (appId))) and not is_extra:
-            log.debug("Sending " + config["storagedir"] + "%i.v3.checksums" % (appId) + " for version " + str(verId))
+            log.storageneuter("Sending " + config["storagedir"] + "%i.v3.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["storagedir"], "%i.v3.checksums" % (appId))
         elif os.path.isfile(os.path.join(config["storagedir"], "%i.v3e.checksums" % (appId))) and is_extra:
-            log.debug("Sending " + config["storagedir"] + "%i.v3e.checksums" % (appId) + " for version " + str(verId))
+            log.storageneuter("Sending " + config["storagedir"] + "%i.v3e.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["storagedir"], "%i.v3e.checksums" % (appId))
         elif os.path.isfile(os.path.join(config["storagedir"], "%i.checksums" % (appId))) and not is_extra:
-            log.debug("Sending " + config["storagedir"] + "%i.checksums" % (appId) + " for version " + str(verId))
+            log.storageneuter("Sending " + config["storagedir"] + "%i.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["storagedir"], "%i.checksums" % (appId))
         elif os.path.isfile(os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))) and is_extra:
-            log.debug("Sending " + config["v3storagedir2"] + "%i.checksums" % (appId) + " for version " + str(verId))
+            log.storageneuter("Sending " + config["v3storagedir2"] + "%i.checksums" % (appId) + " for version " + str(verId))
             return os.path.join(config["v3storagedir2"], "%i.checksums" % (appId))
         else:
             log.error("Checksums not found for %s %s " % (appId, verId))
@@ -175,13 +217,44 @@ class Checksum3: # v2 storage
         else:
             return True
 
+    def validate_chunk(self, fileid, chunkid, chunk, filename):
+        """Validate chunk and fix CRC in file if mismatch (used by neuter)."""
+        stored_crc = self.getchecksum(fileid, chunkid)
+        chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
+
+        if stored_crc != chunk_crc:
+            self.fix_crc(fileid, chunkid, chunk, filename)
+            return False
+        return True
+
+    def fix_crc(self, fileid, chunkid, chunk, filename):
+        """Update the checksum in the file for a modified chunk."""
+        chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
+
+        with open(filename, "rb") as f:
+            checksumdata = bytearray(f.read())
+
+        # Calculate position: same logic as getchecksum
+        checksumpointer = fileid * 8 + 16
+        checksumstart = struct.unpack("<L", checksumdata[checksumpointer + 4:checksumpointer + 8])[0]
+        pos = self.checksumliststart + (checksumstart + chunkid) * 4
+
+        # Update the checksum
+        checksumdata[pos:pos + 4] = struct.pack("<I", chunk_crc)
+
+        with open(filename, "wb") as f:
+            f.write(checksumdata)
+
+        # NOTE: Commented out to reduce log verbosity - uncomment for checksum debugging
+        # log.storageneuter(f"Fixed CRC for file {fileid} chunk {chunkid} to {hex(chunk_crc)}")
+
     @classmethod
     def filename(cls, appId):
         if os.path.isfile(os.path.join(config["storagedir"], "%i.v2.checksums" % (appId))):
-            log.debug("Sending " + config["storagedir"] + "%i.v2.checksums" % (appId))
+            log.storageneuter("Sending " + config["storagedir"] + "%i.v2.checksums" % (appId))
             return os.path.join(config["storagedir"], "%i.v2.checksums" % (appId))
         else:
-            log.debug("Sending " + config["v2storagedir"] + "%i.checksums" % (appId))
+            log.storageneuter("Sending " + config["v2storagedir"] + "%i.checksums" % (appId))
             return os.path.join(config["v2storagedir"], "%i.checksums" % (appId))
 
 
@@ -226,41 +299,143 @@ class Checksum4: #v4 storage
         else:
             return True
 
+    def validate_chunk(self, fileid, chunkid, chunk, filename):
+        """Validate chunk and fix CRC in file if mismatch (used by neuter)."""
+        stored_crc = self.getchecksum(fileid, chunkid)
+        chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
+
+        if stored_crc != chunk_crc:
+            self.fix_crc(fileid, chunkid, chunk, filename)
+            return False
+        return True
+
+    def fix_crc(self, fileid, chunkid, chunk, filename):
+        """Update the checksum in the file for a modified chunk."""
+        chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
+
+        with open(filename, "rb") as f:
+            checksumdata = bytearray(f.read())
+
+        # Calculate position: same logic as getchecksum
+        checksumpointer = fileid * 8 + 16
+        checksumstart = struct.unpack("<L", checksumdata[checksumpointer + 4:checksumpointer + 8])[0]
+        pos = self.checksumliststart + (checksumstart + chunkid) * 4
+
+        # Update the checksum
+        checksumdata[pos:pos + 4] = struct.pack("<I", chunk_crc)
+
+        with open(filename, "wb") as f:
+            f.write(checksumdata)
+
+        # NOTE: Commented out to reduce log verbosity - uncomment for checksum debugging
+        # log.storageneuter(f"Fixed CRC for file {fileid} chunk {chunkid} to {hex(chunk_crc)}")
+
     @classmethod
     def filename(cls, appId):
         if os.path.isfile(os.path.join(config["storagedir"], "%i.v4.checksums" % (appId))):
-            log.debug("Sending " + config["storagedir"] + "%i.v4.checksums" % (appId))
+            log.storageneuter("Sending " + config["storagedir"] + "%i.v4.checksums" % (appId))
             return os.path.join(config["storagedir"], "%i.v4.checksums" % (appId))
         else:
-            log.debug("Sending " + config["v4storagedir"] + "%i.checksums" % (appId))
+            log.storageneuter("Sending " + config["v4storagedir"] + "%i.checksums" % (appId))
             return os.path.join(config["v4storagedir"], "%i.checksums" % (appId))
 
+
+import os
+import zlib
+import struct
+import logging
+
 class SDKChecksum:
-    def __init__(self, arg):
+    CHUNK_SIZE = 0x8000
+
+    def __init__(self, arg, suffix=None):
+        # ---- Handle (appId, version) + suffix case ----
         if isinstance(arg, tuple):
             appId, version = arg
-            # Find the corresponding blob file
-            blob_filename = self.find_blob_file(appId, version)
-            if not blob_filename:
-                raise Exception(f"Blob file not found for appId: {appId} version: {version}")
-            with open(blob_filename, "rb") as f:
-                blob_data = f.read()
+
+            cache_dir = os.path.join("files", "cache", f"{appId}_{version}")
+            cs_file = os.path.join(cache_dir, f"{appId}_{version}{suffix}.checksums")
+
+            # Decide if we need to regenerate
+            needs_regen = True
+            if os.path.isfile(cs_file):
+                cs_mtime = os.path.getmtime(cs_file)
+                # only consider the matching suffix .data files
+                data_paths = [
+                    os.path.join(cache_dir, fn)
+                    for fn in os.listdir(cache_dir or "")
+                    if fn.startswith(f"{appId}_") and fn.endswith(f"_{suffix}.data")
+                ]
+                if data_paths:
+                    latest_data = max(os.path.getmtime(p) for p in data_paths)
+                    if latest_data <= cs_mtime:
+                        needs_regen = False
+                else:
+                    # no neutered files yet ? existing .checksums is valid
+                    needs_regen = False
+
+            if not needs_regen:
+                # load existing .checksums
+                with open(cs_file, "rb") as f:
+                    raw_cs_data = f.read()
+
+            else:
+                # ---- Pull raw checksum blob ----
+                blob_fname = self.find_blob_file(appId, version)
+                if not blob_fname:
+                    raise Exception(f"Blob file not found for appId: {appId}, version: {version}")
+                with open(blob_fname, "rb") as bf:
+                    blob = bf.read()
+
+
+                b = SDKBlob(blob)
+                raw_cs_data = b.get_raw(4)
+                cs_bytes = bytearray(raw_cs_data)
+
+                # ---- Parse & build offset map ----
+                filedata, checksums_raw, cs_data_offset = parse_checksums(raw_cs_data)
+                self.filedata      = filedata
+                self.checksums_raw = checksums_raw
+                self.build_checksums()
+
+                # ---- Recompute CRCs for each fileId, but only the matching suffix .data files ----
+                for fileid, (num_chunks, chunk_start) in self.checksum_offsets.items():
+                    data_path = os.path.join(cache_dir, f"{appId}_{fileid}{suffix}.data")
+                    if not os.path.isfile(data_path):
+                        continue
+
+                    with open(data_path, "rb") as df:
+                        blob_chunk = df.read()
+                    try:
+                        data = zlib.decompress(blob_chunk)
+                    except zlib.error:
+                        data = blob_chunk
+
+                    total_chunks = (len(data) + self.CHUNK_SIZE - 1) // self.CHUNK_SIZE
+                    for chunkid in range(min(total_chunks, num_chunks)):
+                        start = chunkid * self.CHUNK_SIZE
+                        piece = data[start:start + self.CHUNK_SIZE]
+                        new_crc = (zlib.adler32(piece, 0) ^ zlib.crc32(piece, 0)) & 0xFFFFFFFF
+                        off = cs_data_offset + (chunk_start + chunkid) * 4
+                        cs_bytes[off:off+4] = struct.pack("<I", new_crc)
+
+                # ---- Write updated .checksums back to disk ----
+                os.makedirs(cache_dir, exist_ok=True)
+                new_raw = bytes(cs_bytes)
+                with open(cs_file, "wb") as f:
+                    f.write(new_raw)
+
+                raw_cs_data = new_raw
+
+            # ---- Finally parse into in?memory structures ----
+            self.filedata, self.checksums_raw, _ = parse_checksums(raw_cs_data)
+            self.build_checksums()
+
         else:
-            # Assume raw data is passed
-            blob_data = arg
-
-        # Create a 'Blob' object
-        b = SDKBlob(blob_data)
-
-        # Parse the checksum data from the blob
-        # Assuming checksum data is at index 4
-        checksum_data = b.get_raw(4)
-
-        # Parse the checksums
-        self.filedata, self.checksums_raw, _ = steam2_sdk_utils.parse_checksums(checksum_data)
-
-        # Build the checksum structures
-        self.build_checksums()
+            # raw-data path unchanged (suffix ignored)
+            raw_cs_data = arg
+            self.filedata, self.checksums_raw, _ = parse_checksums(raw_cs_data)
+            self.build_checksums()
 
     def build_checksums(self):
         self.numfiles = max(self.checksums_raw.keys()) + 1 if self.checksums_raw else 0
@@ -268,72 +443,53 @@ class SDKChecksum:
         self.checksum_offsets = {}
         self.checksum_list = []
 
-        current_offset = 0
-        for fileid in range(self.numfiles):
-            if fileid in self.checksums_raw:
-                num_checksums = len(self.checksums_raw[fileid])
-                self.checksum_offsets[fileid] = (num_checksums, current_offset)
-                for _, checksum in self.checksums_raw[fileid]:
-                    # Store checksums as integers for consistency with original Checksum3
-                    checksum_int = struct.unpack("<I", checksum)[0]
-                    self.checksum_list.append(checksum_int)
-                current_offset += num_checksums
-            else:
-                self.checksum_offsets[fileid] = (0, current_offset)
+        offset = 0
+        for fid in range(self.numfiles):
+            chunks = self.checksums_raw.get(fid, [])
+            self.checksum_offsets[fid] = (len(chunks), offset)
+            for _, chk_bytes in chunks:
+                self.checksum_list.append(struct.unpack("<I", chk_bytes)[0])
+            offset += len(chunks)
 
     def numchecksums(self, fileid):
-        if fileid in self.checksum_offsets:
-            num_checksums, _ = self.checksum_offsets[fileid]
-            return num_checksums
-        else:
-            return 0
+        return self.checksum_offsets.get(fileid, (0,0))[0]
 
     def getchecksum(self, fileid, chunkid):
-        if fileid not in self.checksum_offsets:
-            raise Exception(f"FileID {fileid} not found")
-        num_checksums, checksum_start = self.checksum_offsets[fileid]
-        if chunkid >= num_checksums:
+        num, start = self.checksum_offsets.get(fileid, (0,0))
+        if chunkid >= num:
             raise Exception(f"ChunkID {chunkid} out of range for FileID {fileid}")
-        checksum = self.checksum_list[checksum_start + chunkid]
-        return checksum
+        return self.checksum_list[start + chunkid]
 
     def getchecksums_raw(self, fileid):
-        if fileid not in self.checksum_offsets:
-            return b''
-        num_checksums, checksum_start = self.checksum_offsets[fileid]
-        checksums = self.checksum_list[checksum_start:checksum_start + num_checksums]
-        # Convert the list of integers back to bytes
-        return b''.join(struct.pack("<I", c) for c in checksums)
+        num, start = self.checksum_offsets.get(fileid, (0,0))
+        vals = self.checksum_list[start:start+num]
+        return b"".join(struct.pack("<I", v) for v in vals)
 
     def validate(self, fileid, chunkid, chunk):
-        crc = self.getchecksum(fileid, chunkid)
-        crcb = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
-
+        crc  = self.getchecksum(fileid, chunkid)
+        crcb = (zlib.adler32(chunk) ^ zlib.crc32(chunk)) & 0xFFFFFFFF
         if crc != crcb:
-            logging.warning(f"CRC error: {fileid} {hex(crc)} {hex(crcb)}")
+            logging.warning(
+                f"CRC mismatch: file={fileid} chunk={chunkid} "
+                f"stored=0x{crc:08X} got=0x{crcb:08X}"
+            )
             return False
-        else:
-            return True
+        return True
 
     @classmethod
     def find_blob_file(cls, appId, version):
-        # Implement code to find the blob file for given appId
-        # You might need to adjust the paths based on your directory structure
-        blob_dir = config['steam2sdkdir']  # Replace with the actual path to your blob files
-        for filename in os.listdir(blob_dir):
-            if filename.endswith(".blob"):
-                parts = filename.split(".")[0].split("_")
-                if len(parts) >= 1:
-                    file_appId = int(parts[0])
-                    file_version = int(parts[1])
-                    if file_appId == appId and file_version == version:
-                        return os.path.join(blob_dir, filename)
+        blob_dir = config['steam2sdkdir']
+        for fn in os.listdir(blob_dir):
+            if fn.endswith(".blob"):
+                parts = fn.split(".")[0].split("_")
+                if len(parts) >= 2 and int(parts[0]) == appId and int(parts[1]) == version:
+                    return os.path.join(blob_dir, fn)
         return None
 
-    @classmethod
-    def filename(cls, appId):
-        # This method is not used in the new implementation
-        pass
+    def __repr__(self):
+        return f"<SDKChecksum files={self.numfiles} totalChunks={self.totalchecksums}>"
+
+
 
 class Checksums:
     def __init__(self, checksumdata = ""):
@@ -419,7 +575,7 @@ class Checksums:
         f.close()
         stored_crc = self.checksums[fileid][chunkid]
         chunk_crc = (zlib.adler32(chunk, 0) ^ zlib.crc32(chunk, 0)) & 0xffffffff
-        log.debug("Fixing CRC from " + str(stored_crc) + " to " + str(chunk_crc) + " on FileID " + str(fileid))
+        log.storageneuter("Fixing CRC from " + str(stored_crc) + " to " + str(chunk_crc) + " on FileID " + str(fileid))
 
         (dummy, dummy2, numfiles, totalchecksums) = struct.unpack("<LLLL", checksumdata[:16])
 
@@ -438,42 +594,42 @@ class Checksums:
         start = checksumliststart + checksumstart[fileid] * 4
         end = start + numchecksums[fileid] * 4
         checksums_raw[fileid] = checksumdata[start:end]
-        log.debug(len(checksumdata))  # 132844
-        log.debug(len(checksumdata[0:start]))  # 67192
-        log.debug(len(checksumdata[start:start + 4]))  # 4
-        log.debug(len(checksumdata[start + 4:len(checksumdata)]))  # 65648
+        log.storageneuter(len(checksumdata))  # 132844
+        log.storageneuter(len(checksumdata[0:start]))  # 67192
+        log.storageneuter(len(checksumdata[start:start + 4]))  # 4
+        log.storageneuter(len(checksumdata[start + 4:len(checksumdata)]))  # 65648
         checksumdatanew = checksumdata[0:start]
-        log.debug(len(checksumdatanew))  # 67192
+        log.storageneuter(len(checksumdatanew))  # 67192
         checksumdatanew_temp = ""
-        log.debug("Checksum count: " + str(range(numchecksums[fileid])))
+        log.storageneuter("Checksum count: " + str(range(numchecksums[fileid])))
         for i in range(numchecksums[fileid]):
             checksum = struct.unpack("<I", checksumdata[start:start + 4])[0]
-            log.debug(struct.unpack("<I", checksumdata[start:start + 4]))  # 1132535908
-            log.debug("Checksum: " + str(checksum))  # 1132535908
+            log.storageneuter(struct.unpack("<I", checksumdata[start:start + 4]))  # 1132535908
+            log.storageneuter("Checksum: " + str(checksum))  # 1132535908
             if checksum == stored_crc:
-                log.debug("CRC CHANGED!")
+                log.storageneuter("CRC CHANGED!")
                 # print(struct.pack("<i", chunk_crc)) #-1711041001
                 # print(type((checksumdata[start:start+4])[0]))
                 checksumdatanew_temp = struct.pack("<I", chunk_crc)
-                log.debug(struct.unpack("<I", checksumdatanew_temp))
-                log.debug(len(checksumdatanew_temp))
+                log.storageneuter(struct.unpack("<I", checksumdatanew_temp))
+                log.storageneuter(len(checksumdatanew_temp))
                 checksumdatanew += checksumdatanew_temp
-                log.debug(len(checksumdatanew))
+                log.storageneuter(len(checksumdatanew))
             else:
-                log.debug("Stored only")
+                log.storageneuter("Stored only")
                 # print(struct.pack("<i", stored_crc)) #-1711041001
                 # print(type((checksumdata[start:start+4])[0]))
                 checksumdatanew_temp = struct.pack("<I", checksum)
-                log.debug(struct.unpack("<I", checksumdatanew_temp))
-                log.debug(len(checksumdatanew_temp))
+                log.storageneuter(struct.unpack("<I", checksumdatanew_temp))
+                log.storageneuter(len(checksumdatanew_temp))
                 checksumdatanew += checksumdatanew_temp
-                log.debug(len(checksumdatanew))
+                log.storageneuter(len(checksumdatanew))
             # filechecksums.append(checksum)
             start += 4
-        log.debug(len(checksumdatanew))
-        log.debug(len(checksumdata[start:len(checksumdata)]))
+        log.storageneuter(len(checksumdatanew))
+        log.storageneuter(len(checksumdata[start:len(checksumdata)]))
         checksumdatanew += checksumdata[start:len(checksumdata)]
-        log.debug(len(checksumdatanew))
+        log.storageneuter(len(checksumdatanew))
         for i in range(numchecksums[fileid]):
             checksum = struct.unpack("<I", checksumdatanew[start:start + 4])
             #if checksum == chunk_crc:
@@ -482,10 +638,10 @@ class Checksums:
             start += 4
 
         if len(checksumdata) != len(checksumdatanew):
-            log.debug("Old and new checksums are different sizes: " + str(len(checksumdata)) + " to " + str(len(checksumdatanew)))
+            log.storageneuter("Old and new checksums are different sizes: " + str(len(checksumdata)) + " to " + str(len(checksumdatanew)))
             sys.exit()
         else:
-            log.debug("Old and new checksums are correct sizes.")
+            log.storageneuter("Old and new checksums are correct sizes.")
 
         f = open(filename, "wb")
         f.write(checksumdatanew)

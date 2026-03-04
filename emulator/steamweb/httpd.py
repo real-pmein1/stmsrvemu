@@ -3,7 +3,7 @@ import re
 import shutil
 import sys
 
-from config import read_config
+from config import get_config as read_config
 
 config = read_config()
 
@@ -121,10 +121,10 @@ def modify_apache_config(file_path, port, webroot, community_conf_file):
 def modify_php_config():
     # Determine the base directory based on whether the script is frozen or not
     if getattr(sys, 'frozen', False):
-        # If running as a compiled executable
+        # Running as a compiled executable
         base_dir = os.path.dirname(sys.executable)
     else:
-        # If running as a normal script
+        # Running as a normal script
         base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 
     # Construct the new path with 'php' as the last component
@@ -140,7 +140,7 @@ def modify_php_config():
     with open(php_ini_path, 'r') as file:
         lines = file.readlines()
 
-    # Flags to track if each directive is updated or found
+    # Track which directives have been updated/found
     directives = {
         'extension_dir': False,
         'error_log': False,
@@ -150,72 +150,63 @@ def modify_php_config():
         'session.save_path': False
     }
 
-    # Modify existing lines if the directives are found
+    # Update lines that exactly start with the directive (after optional whitespace)
     for i, line in enumerate(lines):
-        if line.lstrip().startswith(';'):
-            continue        
-        if 'extension_dir' in line:
-            php_ext_dir = php_ext_dir.replace("\\", "/")
-            lines[i] = f'extension_dir = "{php_ext_dir}"\n'
-            directives['extension_dir'] = True
+        stripped = line.lstrip()
+        # Skip if the line is empty or commented out
+        if not stripped or stripped.startswith(';'):
             continue
 
-        if 'error_log' in line:
-            php_error_dir = parent_dir.replace("\\", '/')
-            lines[i] = f'error_log = "{php_error_dir}/logs"\n'
-            directives['error_log'] = True
-            continue
+        for directive in directives.keys():
+            # Check that the first character of the stripped line matches the first character of the directive
+            if stripped[0] != directive[0]:
+                continue
 
-        if 'include_path' in line:
-            php_include_dir = php_dir.replace("\\", '/')
-            lines[i] = f'include_path = "{php_include_dir}/PEAR"\n'
-            directives['include_path'] = True
-            continue
+            # Build a regex pattern: start-of-line, optional whitespace, directive, optional whitespace, '='
+            pattern = re.compile(r'^\s*' + re.escape(directive) + r'\s*=')
+            if pattern.match(line) and not directives[directive]:
+                if directive == 'extension_dir':
+                    php_ext_dir_mod = php_ext_dir.replace("\\", "/")
+                    lines[i] = f'extension_dir = "{php_ext_dir_mod}"\n'
+                elif directive == 'error_log':
+                    php_error_dir = parent_dir.replace("\\", '/')
+                    lines[i] = f'error_log = "{php_error_dir}/logs"\n'
+                elif directive == 'include_path':
+                    php_include_dir = php_dir.replace("\\", '/')
+                    lines[i] = f'include_path = "{php_include_dir}/PEAR"\n'
+                elif directive == 'upload_tmp_dir':
+                    php_tmp_dir = php_dir.replace("\\", '/')
+                    lines[i] = f'upload_tmp_dir = "{php_tmp_dir}/tmp"\n'
+                elif directive == 'browscap':
+                    php_browsecap_dir = php_dir.replace("/", '\\')
+                    lines[i] = f'browscap = "{php_browsecap_dir}\\extras\\browscap.ini"\n'
+                elif directive == 'session.save_path':
+                    php_session_save_dir = php_dir.replace("\\", '/')
+                    lines[i] = f'session.save_path = "{php_session_save_dir}/tmp"\n'
+                directives[directive] = True
+                break  # move on to the next line after handling a directive
 
-        if 'upload_tmp_dir' in line:
-            php_tmp_dir = php_dir.replace("\\", '/')
-            lines[i] = f'upload_tmp_dir = "{php_tmp_dir}/tmp"\n'
-            directives['upload_tmp_dir'] = True
-            continue
-
-        if 'browscap' in line:
-            php_browsecap_dir = php_dir.replace("/", '\\')
-            lines[i] = f'browscap = "{php_browsecap_dir}\\extras\\browscap.ini"\n'
-            directives['browscap'] = True
-            continue
-
-        if 'session.save_path' in line:
-            php_session_save_dir = php_dir.replace("\\", '/')
-            lines[i] = f'session.save_path = "{php_session_save_dir}/tmp"\n'
-            directives['session.save_path'] = True
-            continue
-
-    # Append missing directives to the end of the file
+    # Append any directives that weren't found in the file
     if not directives['extension_dir']:
-        php_ext_dir = php_ext_dir.replace("\\", "/")
-        lines.append(f'extension_dir = "{php_ext_dir}"\n')
-
+        php_ext_dir_mod = php_ext_dir.replace("\\", "/")
+        lines.append(f'extension_dir = "{php_ext_dir_mod}"\n')
     if not directives['error_log']:
         php_error_dir = parent_dir.replace("\\", '/')
         lines.append(f'error_log = "{php_error_dir}/logs"\n')
-
     if not directives['include_path']:
         php_include_dir = php_dir.replace("\\", '/')
         lines.append(f'include_path = "{php_include_dir}/PEAR"\n')
-
     if not directives['upload_tmp_dir']:
         php_tmp_dir = php_dir.replace("\\", '/')
         lines.append(f'upload_tmp_dir = "{php_tmp_dir}/tmp"\n')
-
     if not directives['browscap']:
         php_browsecap_dir = php_dir.replace("/", '\\')
         lines.append(f'browscap = "{php_browsecap_dir}\\extras\\browscap.ini"\n')
-
     if not directives['session.save_path']:
         php_session_save_dir = php_dir.replace("\\", '/')
         lines.append(f'session.save_path = "{php_session_save_dir}/tmp"\n')
 
-    # Write the modified contents back to the php.ini file
+    # Write the updated lines back to php.ini
     with open(php_ini_path, 'w') as file:
         file.writelines(lines)
 

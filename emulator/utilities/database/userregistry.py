@@ -47,6 +47,12 @@ class UserRegistry(): # NOTE: this is a subclass of the Auth Database Driver, ma
                 }
         )
 
+    def build_user_secret_registry(self, builder, user_data):
+        
+        passsalt = bytes.fromhex(user_data.AnswerToQuestionSalt)
+        builder.add_entry(b"\x01\x00\x00\x00", user_data.PersonalQuestion.encode('latin-1') + b'\x00')
+        builder.add_entry(b"\x02\x00\x00\x00", passsalt)
+
     def process_subscriptions_billing_info(self, builder, user_id):
         subscriptions_billing_record_data = self.db_driver.select_data(
                 base_dbdriver.AccountSubscriptionsBillingInfoRecord,
@@ -59,8 +65,16 @@ class UserRegistry(): # NOTE: this is a subclass of the Auth Database Driver, ma
     def process_individual_billing_info(self, builder, record):
         subscription_billing_info_typeid = record.SubscriptionID.to_bytes(4, "little")
 
-        if subscription_billing_info_typeid not in globalvars.CDR_DICTIONARY[b'\x02\x00\x00\x00']:
-            return  # Skip processing if the subscription ID is not found
+        # Handle both ContentDescriptionRecord object and raw dict formats
+        if hasattr(globalvars.CDR_DICTIONARY, 'SubscriptionsRecord'):
+            # CDR_DICTIONARY is a ContentDescriptionRecord object
+            subscriptions = globalvars.CDR_DICTIONARY.SubscriptionsRecord
+            if subscription_billing_info_typeid not in subscriptions:
+                return  # Skip processing if the subscription ID is not found
+        else:
+            # CDR_DICTIONARY is a raw dict
+            if subscription_billing_info_typeid not in globalvars.CDR_DICTIONARY[b'\x02\x00\x00\x00']:
+                return  # Skip processing if the subscription ID is not found
 
         payment_receipt_type = record.AccountPaymentType
 
@@ -123,13 +137,14 @@ class UserRegistry(): # NOTE: this is a subclass of the Auth Database Driver, ma
         )
 
         if not subscription_record_variables:  # This will be True for an empty list
-            if clientver in ["b2003"]:
+            if clientver in ["b2003", "r2003", "b2004"]: # THIS IS FOR SUBSCRIBING TO 0 IN ORDER FOR THE CLIENT TO START THE SUB PROCESS
                 # This block will only execute if clientver is "B2003" and subscription_record_variables is empty
                 builder.add_entry(b"\x07\x00\x00\x00", {})
                 return
             else:
                 #log.error(f"[Subscription Info] {self.username} Has No Subscriptions! Should have at least subscription 0!")
-                self.authdb_instance.insert_sub_0(user_id)
+                if clientver not in ['b2003', 'r2003', 'b2004']:
+                    self.authdb_instance.insert_sub_0(user_id)
                 subscription_record_variables = self.db_driver.select_data(
                         base_dbdriver.AccountSubscriptionsRecord,
                         base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == user_id
@@ -138,8 +153,17 @@ class UserRegistry(): # NOTE: this is a subclass of the Auth Database Driver, ma
         for record in subscription_record_variables:
             subscription_id_bytes = record.SubscriptionID.to_bytes(4, "little")
 
-            # Check if the subscription ID exists under b'\x02\x00\x00\x00'
-            if subscription_id_bytes in globalvars.CDR_DICTIONARY[b'\x02\x00\x00\x00']:
+            # Check if the subscription ID exists in CDR
+            # Handle both ContentDescriptionRecord object and raw dict formats
+            subscription_exists = False
+            if hasattr(globalvars.CDR_DICTIONARY, 'SubscriptionsRecord'):
+                # CDR_DICTIONARY is a ContentDescriptionRecord object
+                subscription_exists = subscription_id_bytes in globalvars.CDR_DICTIONARY.SubscriptionsRecord
+            else:
+                # CDR_DICTIONARY is a raw dict
+                subscription_exists = subscription_id_bytes in globalvars.CDR_DICTIONARY[b'\x02\x00\x00\x00']
+                
+            if subscription_exists:
                 builder.add_account_subscription(
                         subscription_id_bytes,
                         utilities.time.datetime_to_steamtime(record.SubscribedDate),
@@ -249,27 +273,46 @@ class UserRegistryBuilder(BlobBuilder):
                 },
             }
         elif payment_receipt_type == b'\x05' :
-            payment_card_info_record = {
-                    b"\x01\x00\x00\x00":payment_receipt_type,
-                    b"\x02\x00\x00\x00":{
-                            b"\x01\x00\x00\x00": card_type,
-                            b"\x02\x00\x00\x00": card_number,  # Everything else is null terminated string
-                            b"\x03\x00\x00\x00": card_holder_name,
-                            b"\x07\x00\x00\x00": billing_address1,
-                            b"\x08\x00\x00\x00": billing_address2,
-                            b"\x09\x00\x00\x00": billing_city,
-                            b"\x0a\x00\x00\x00": billing_zip,
-                            b"\x0b\x00\x00\x00": billing_state,
-                            b"\x0c\x00\x00\x00": billing_country,
-                            b"\x0d\x00\x00\x00": cc_approvalcode,
-                            b"\x0e\x00\x00\x00": price_before_tax,
-                            b"\x0f\x00\x00\x00": tax_amount,
-                            b"\x10\x00\x00\x00": trans_date,
-                            b"\x11\x00\x00\x00": trans_time,
-                            b"\x12\x00\x00\x00": astobbstxnid,
-                            b"\x13\x00\x00\x00": shipping_cost
-                },
-            }
+            if globalvars.steamui_ver in (24, 25):
+                payment_card_info_record = {
+                        b"\x01\x00\x00\x00":payment_receipt_type,
+                        b"\x02\x00\x00\x00":{
+                                b"\x01\x00\x00\x00": card_type,
+                                b"\x02\x00\x00\x00": card_number,  # Everything else is null terminated string
+                                b"\x03\x00\x00\x00": card_holder_name,
+                                b"\x07\x00\x00\x00": billing_address1,
+                                b"\x08\x00\x00\x00": billing_address2,
+                                b"\x09\x00\x00\x00": billing_city,
+                                b"\x0a\x00\x00\x00": billing_zip,
+                                b"\x0b\x00\x00\x00": billing_state,
+                                b"\x0c\x00\x00\x00": billing_country,
+                                b"\x0d\x00\x00\x00": cc_approvalcode,
+                                b"\x0e\x00\x00\x00": price_before_tax,
+                                b"\x0f\x00\x00\x00": tax_amount
+                    },
+                }
+            else:
+                payment_card_info_record = {
+                        b"\x01\x00\x00\x00":payment_receipt_type,
+                        b"\x02\x00\x00\x00":{
+                                b"\x01\x00\x00\x00": card_type,
+                                b"\x02\x00\x00\x00": card_number,  # Everything else is null terminated string
+                                b"\x03\x00\x00\x00": card_holder_name,
+                                b"\x07\x00\x00\x00": billing_address1,
+                                b"\x08\x00\x00\x00": billing_address2,
+                                b"\x09\x00\x00\x00": billing_city,
+                                b"\x0a\x00\x00\x00": billing_zip,
+                                b"\x0b\x00\x00\x00": billing_state,
+                                b"\x0c\x00\x00\x00": billing_country,
+                                b"\x0d\x00\x00\x00": cc_approvalcode,
+                                b"\x0e\x00\x00\x00": price_before_tax,
+                                b"\x0f\x00\x00\x00": tax_amount,
+                                b"\x10\x00\x00\x00": trans_date,
+                                b"\x11\x00\x00\x00": trans_time,
+                                b"\x12\x00\x00\x00": astobbstxnid,
+                                b"\x13\x00\x00\x00": shipping_cost
+                    },
+                }
 
         else :
             log.error(f"Error!!! add_account_subscriptions_billing_info() Incorrect Payment Card TypeID: {payment_receipt_type}")
@@ -277,4 +320,7 @@ class UserRegistryBuilder(BlobBuilder):
 
     def build(self) :
         self.add_entry(b'\x0c\x00\x00\x00', b'\x00\x00')
+        return self.registry
+
+    def build2(self) :
         return self.registry

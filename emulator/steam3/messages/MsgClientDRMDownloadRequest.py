@@ -1,3 +1,4 @@
+from __future__ import annotations
 import struct
 
 
@@ -7,10 +8,8 @@ class MsgClientDRMDownloadRequest:
     Parses and serializes a byte string based on the structure.
     """
 
-    def __init__(self):
-        """
-        Initializes the MsgClientDRMDownloadRequest with default values.
-        """
+    def __init__(self, client_obj=None, data: bytes | None = None):
+        self.client_obj = client_obj
         self.download_flags = 0
         self.download_types_known = 0
         self.guid_drm = b""
@@ -18,9 +17,11 @@ class MsgClientDRMDownloadRequest:
         self.guid_merge = b""
         self.executable_filename = None
         self.absolute_path = None
+        if data:
+            self.deserialize(data)
 
     @classmethod
-    def from_bytes(cls, data):
+    def from_bytes(cls, data: bytes):
         """
         Parses a byte string to populate the message fields.
 
@@ -50,7 +51,7 @@ class MsgClientDRMDownloadRequest:
 
         return instance
 
-    def to_bytes(self):
+    def serialize(self) -> bytes:
         """
         Serializes the message fields into a byte string.
 
@@ -72,6 +73,17 @@ class MsgClientDRMDownloadRequest:
         else:
             return base_data
 
+
+    def to_clientmsg(self):
+        from steam3.cm_packet_utils import CMResponse
+        from steam3.Types.emsg import EMsg
+
+        packet = CMResponse(eMsgID=EMsg.ClientDRMDownloadRequest,
+                            client_obj=self.client_obj)
+        packet.data = self.serialize()
+        packet.length = len(packet.data)
+        return packet
+
     def __str__(self):
         """
         Returns a human-readable string representation of the message.
@@ -89,3 +101,5 @@ class MsgClientDRMDownloadRequest:
             f"  absolute_path={self.absolute_path}\n"
             f")"
         )
+		
+    __repr__ = __str__

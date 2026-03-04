@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import platform
@@ -18,12 +19,14 @@ log = logging.getLogger("MYSQL_SETUP")
 stmconfig = read_config()
 server_ip = stmconfig['server_ip']
 def create_default_config(mariadb_install_path, dbport):
-    if platform.system() == "Windows":
+    if globalvars.IS_WINDOWS:
         config_path = os.path.join(mariadb_install_path, 'my.ini')
+        data_dir = os.path.join('.', 'files', 'mdb', 'data')
+        base_dir = os.path.join('.', 'files', 'mdb')
         default_config = f"""
 [mysqld]
-datadir=\"./files/mdb/data/\"
-basedir=\"./files/mdb/\"
+datadir=\"{data_dir}/\"
+basedir=\"{base_dir}/\"
 port={dbport}
 server-id=1
 key_buffer_size=16M
@@ -47,10 +50,12 @@ general_log_file=\"./../../../logs/mariadb_general.log\"
 """
     else:  # Linux
         config_path = os.path.join(mariadb_install_path, 'my.cnf')
+        data_dir = os.path.join('.', 'files', 'mdb', 'data')
+        base_dir = os.path.join('.', 'files', 'mdb')
         default_config = f"""
 [mysqld]
-datadir=\"./files/mdb/data/\"
-basedir=\"./files/mdb/\"
+datadir=\"{data_dir}/\"
+basedir=\"{base_dir}/\"
 port={dbport}
 server-id=1
 key_buffer_size=16M
@@ -82,10 +87,10 @@ general_log_file=\"./../../../logs/mariadb_general.log\"
 
 def change_root_password(mariadb_install_path, password, dbport):
     sql_command = f"GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' IDENTIFIED BY '{password}' WITH GRANT OPTION;"
-    if platform.system() == "Windows":
+    if globalvars.IS_WINDOWS:
         mysql_path = os.path.join(mariadb_install_path, 'bin', 'mysql.exe')
     else:
-        mysql_path = "files/mdb/bin/mariadb"  # Assuming 'mysql' is in the PATH on Linux
+        mysql_path = os.path.join('files', 'mdb', 'bin', 'mariadb')  # Assuming 'mysql' is in the PATH on Linux
 
     try:
         subprocess.run([mysql_path, '-h', '127.0.0.1', '-P', f'{dbport}', '-u', 'root', '-e', sql_command], check=False)
@@ -105,15 +110,29 @@ def add_new_user_with_permissions(mariadb_install_path, database_name, username,
             f"GRANT ALL PRIVILEGES ON {database_name}.* TO '{username}'@'%';",
             "CREATE DATABASE IF NOT EXISTS ClientConfigurationDB;",
             "CREATE DATABASE IF NOT EXISTS ContentDescriptionDB;",
+            "CREATE DATABASE IF NOT EXISTS BetaContentDescriptionDB;",
+            "CREATE DATABASE IF NOT EXISTS ProductInformationDB;",
             f"GRANT ALL PRIVILEGES ON ClientConfigurationDB.* TO '{username}'@'%';",
             f"GRANT ALL PRIVILEGES ON ContentDescriptionDB.* TO '{username}'@'%';",
+            f"GRANT ALL PRIVILEGES ON BetaContentDescriptionDB.* TO '{username}'@'%';",
+            f"GRANT ALL PRIVILEGES ON ProductInformationDB.* TO '{username}'@'%';",
             "FLUSH PRIVILEGES;"
     ]
 
-    if platform.system() == "Windows":
+    if globalvars.IS_WINDOWS:
         mysql_path = os.path.join(mariadb_install_path, 'bin', 'mysql.exe')
     else:
-        mysql_path = "mysql"  # Assuming 'mysql' is in the PATH on Linux
+        # Find mysql/mariadb client in PATH or common locations
+        mysql_path = shutil.which('mariadb') or shutil.which('mysql')
+        if not mysql_path:
+            # Check common Linux locations
+            for path in ['/usr/bin/mariadb', '/usr/bin/mysql', '/usr/local/bin/mariadb', '/usr/local/bin/mysql']:
+                if os.path.isfile(path):
+                    mysql_path = path
+                    break
+        if not mysql_path:
+            log.error("Could not find mariadb or mysql client. Please ensure MariaDB/MySQL client is installed.")
+            return
 
     try:
         for sql_command in sql_commands:
@@ -124,19 +143,19 @@ def add_new_user_with_permissions(mariadb_install_path, database_name, username,
         exit(1)
 
 def initialize_mariadb(mariadb_install_path):
-    if platform.system() == "Windows":
+    if globalvars.IS_WINDOWS:
         try:
             log.info("Initializing MariaDB data directory...")
             # Construct paths using os.path.join and ensure backslashes are used
-            install_db_path = os.path.join(mariadb_install_path, 'bin', 'mariadb-install-db.exe').replace('\\', '/')
-            data_dir = 'files/mdb/data'.replace('\\', '/')
+            install_db_path = os.path.join(mariadb_install_path, 'bin', 'mariadb-install-db.exe')
+            data_dir = os.path.join('files', 'mdb', 'data')
 
             # Ensure the data directory exists
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir)
 
             # Use the constructed paths in the subprocess call
-            subprocess.call([install_db_path, r'--datadir=files/mdb/data'])
+            subprocess.call([install_db_path, f'--datadir={data_dir}'])
             start_database(mariadb_install_path)
         except subprocess.CalledProcessError as e:
             log.error(f"Failed to initialize MariaDB on Windows: {e}")
@@ -156,18 +175,23 @@ def start_database(mariadb_install_path):
     if globalvars.stop_server:
         sys.exit(0)
     else:
-        log.info("MariaDB data directory initialization successful.")
-        daemon_start_path = os.path.join(mariadb_install_path, 'bin', 'mariadbd.exe').replace('\\', '/')
-        globalvars.mariadb_process = subprocess.Popen([daemon_start_path, '--defaults-file=files/mdb/my.ini'])
-        log.info("MariaDB Initialized.")
+        #if globalvars.mariadb_process is None:
+        log.info("MariaDB data directory initialization successful.", category="database")
+        exe_name = 'mariadbd.exe' if globalvars.IS_WINDOWS else 'mariadbd'
+        # Use absolute path for the executable - Windows subprocess needs proper path resolution
+        daemon_start_path = os.path.abspath(os.path.join(mariadb_install_path, 'bin', exe_name))
+        defaults_file = os.path.abspath(os.path.join('files', 'mdb', 'my.ini'))
+        globalvars.mariadb_process = subprocess.Popen([daemon_start_path, f'--defaults-file={defaults_file}'])
+        globalvars.mariadb_launch_dt = datetime.datetime.now().replace(microsecond=0)
+
         time.sleep(2)  # Sleep for 2 seconds before creating the engine
 
 
 def setup_mariadb(config):
 
     # Paths for the configuration files
-    initialized_flag_path = config['configsdir'] + '/' + ".initialized"
-    mariadb_install_path = "files/mdb/"
+    initialized_flag_path = os.path.join(config['configsdir'], '.initialized')
+    mariadb_install_path = os.path.join('files', 'mdb')
 
     dbport = config['database_port']
     dbhost = config['database_host']
@@ -206,10 +230,46 @@ def setup_mariadb(config):
             pass
 
     # this is a first run, just in case delete the data directory and my.ini so we can create new ones
-    if os.path.exists('files/mdb/data'):
-        shutil.rmtree('files/mdb/data')
+    data_path = os.path.join('files', 'mdb', 'data')
+    if os.path.exists(data_path):
+        # Stop any running MariaDB process before deleting data directory
+        if globalvars.mariadb_process is not None:
+            try:
+                globalvars.mariadb_process.terminate()
+                globalvars.mariadb_process.wait(timeout=10)
+            except Exception as e:
+                log.warning(f"Failed to terminate MariaDB process gracefully: {e}")
+                try:
+                    globalvars.mariadb_process.kill()
+                except:
+                    pass
+            globalvars.mariadb_process = None
+
+        # On Windows, also try to kill any orphaned mariadbd processes
+        if globalvars.IS_WINDOWS:
+            try:
+                subprocess.run(['taskkill', '/F', '/IM', 'mariadbd.exe'],
+                             capture_output=True, check=False)
+                time.sleep(1)  # Give Windows time to release file handles
+            except:
+                pass
+
+        # Retry rmtree with delay for Windows file locking
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                shutil.rmtree(data_path)
+                break
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    log.warning(f"Failed to delete data directory (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(2)
+                else:
+                    log.error(f"Could not delete data directory after {max_retries} attempts: {e}")
+                    raise
+
         try:
-            os.remove('files/mdb/my.ini')
+            os.remove(os.path.join('files', 'mdb', 'my.ini'))
         except:
             pass
 

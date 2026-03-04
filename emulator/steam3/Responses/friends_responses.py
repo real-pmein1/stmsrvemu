@@ -1,15 +1,18 @@
-import socket
-import struct
 
+import struct
 import globalvars
-import utils
+from steam3.Types.wrappers import AccountID
+from steam3.Types.steamid import SteamID
+
+from steam3.messages.responses.MsgClientPersonaState import PersonaStateMessage
+from steam3.messages.responses.MsgClientFriendsList import FriendsListResponse
 from steam3 import database
 
 
-from steam3.Types.community_types import ClanRelationship, FriendRelationship, PersonaStateFlags, PlayerState
+from steam3.Types.community_types import FriendRelationship, PersonaStateFlags, PlayerState, RequestedPersonaStateFlags_inFriendsList_friend, RequestedPersonaStateFlags_inFriendsList_other, RequestedPersonaStateFlags_self
+from steam3.Types.chat_types import ClanRelationship
 from steam3.Types.emsg import EMsg
-from steam3.Types.steam_types import EResult, EType, EInstanceFlag, EUniverse
-from steam3.Types.steamid import SteamID
+from steam3.Types.steam_types import EResult, EUniverse
 from steam3.cm_packet_utils import CMResponse
 
 
@@ -22,7 +25,7 @@ def build_InviteFriendResponse(client_obj, Result = 1):
     return packet
 
 
-def build_friendslist_response(client_obj):
+def build_friendslist_response(client_obj, proto=False):
     """
     Build a chat eMsgID packet with eMsgID 0x02FF for the contact list.
 
@@ -46,27 +49,53 @@ def build_friendslist_response(client_obj):
         return packet
     friend_data = b''
     for friend, relationship in friends:
-        friend_id = friend.accountID  # Friends accountID
-        # print(f"Friends in list accountid: {int(friend_id)}")
-        chat_id = friend_id * 2  # turn the accountID back into what the steam client uses...
+        friendSteamID = SteamID.createSteamIDFromAccountID(friend.accountID) # Friends accountID
+        # print(f"Friends in list accountid: {int(friendSteamID)}")
 
         # Pack and append data
-        friend_data += struct.pack('<I', chat_id)
-        friend_data += struct.pack('<I', clientId2)
+        friend_data += struct.pack('<Q', friendSteamID)
         friend_data += struct.pack('B', relationship)  # relationship
         # print(f"userid: {friend.accountID} {relationship}")
+
     # isIncremental 0x01 or 0x00 are the only valid entries for this byte
-    packet.data = struct.pack('<HB', len(friends), isIncremental)# number of friends in list
+    packet.data = struct.pack('<HB', len(friends), isIncremental)  # number of friends in list
 
     packet.data += friend_data
 
     return packet
 
 
+def build_incremental_friendslist_update(client_obj, friend_accountID, relationship):
+    """
+    Build an incremental friendslist update packet containing just one friend entry.
+
+    This is used to notify clients about friend request changes (new requests, acceptances, etc.)
+    without sending the entire friends list.
+
+    :param client_obj: User object for the client receiving the update.
+    :param friend_accountID: The accountID of the friend whose relationship changed.
+    :param relationship: The new relationship value (FriendRelationship enum).
+    :return: A CMResponse packet with isIncremental=1 containing just the changed entry.
+    """
+    packet = CMResponse(eMsgID=EMsg.ClientFriendsList, client_obj=client_obj)
+    isIncremental = 1  # This is an incremental update
+
+    friendSteamID = SteamID.createSteamIDFromAccountID(friend_accountID)
+
+    # Pack header: friend count (1) + is_incremental (1)
+    packet.data = struct.pack('<HB', 1, isIncremental)
+
+    # Pack the single friend entry
+    packet.data += struct.pack('<Q', friendSteamID.get_integer_format())
+    packet.data += struct.pack('B', int(relationship))
+
+    packet.length = len(packet.data)
+    return packet
+
+
 """def build_contactlist_user_info(client_obj, asked):
     packet = CMResponse(eMsgID=0x02FE, client_obj=client_obj)
 
-    clientId2 = 0x01100001
     # Type indicating "all contact list"
     state_flag = 0x02
     nbInfo = 0
@@ -110,156 +139,123 @@ class friend_obj_empty:
         pass
 
 
-def build_persona_message(client_obj, state_flag, steamid_list):
-    """This packet seems to only hold a MAXIMUM of 10 users per packet"""
-    from steam3.ClientManager import Client_Manager
+def build_persona_message(clientOBJ, stateFlags, accountIDList, proto=False):
+    """
+    Build a persona state message using the new PersonaStateMessage class.
 
-    packet = CMResponse(eMsgID = EMsg.ClientPersonaState, client_obj = client_obj)
+    This packet holds a maximum of 10 users per packet. Only the fields corresponding
+    to the supported flags are populated:
+      - 0x1: PersonaState (persona_state, game_id, game_server_ip, game_server_port)
+      - 0x2: Player name (player_name)
+      - 0x4: Query Port (query_port)
+      - 0x8: SteamID source (steam_id_source)
+      - 0x10: Presence (ip_address_cm and avatar_hash)
+      - 0x40: Last Seen (last_logoff, last_logon)
+      - 0x80: Clan Info (clan_rank)
+      - 0x100: Extra Info (game_extra_info, game_id_real)
+      - 0x200: Game Data Blob (metadata)
 
-    # Preparing packet data
-    data = bytearray()
-    clientId2 = 0x01100001
-    rank = None
-    data.extend(struct.pack('<HI',
-                            len(steamid_list), int(state_flag)))
+    :param clientOBJ: The client object.
+    :param stateFlags: The bitmask flag indicating which fields to include.
+    :param accountIDList: A list of accountID values.
+    :param proto: Whether to use protobuf format (True) or binary format (False).
+    :return: A CMResponse/CMProtoResponse packet with the serialized PersonaStateMessage.
 
-    for steamid in steamid_list:
-        friend_obj = Client_Manager.clients_by_steamid.get(steamid)
-        if friend_obj is None:
+    NOTE: Flags 1 and 2 should ALWAYS be present!
+    """
+    from steam3.ClientManager import Client_Manager  # assumed import
+    import logging
+    log = logging.getLogger("PersonaMessage")
+    # Create a new PersonaStateMessage instance
+    psm = PersonaStateMessage(clientOBJ)
+    psm.status_flags = stateFlags
+    rank = None  # This will be set if clan info is available.
+
+    log.debug(f"build_persona_message: for client {clientOBJ.accountID}, accountIDList={accountIDList}")
+
+    for accountID in accountIDList:
+        # Convert to int for consistent dictionary lookup
+        accountID_int = int(accountID) if hasattr(accountID, '__int__') else accountID
+        friend_obj = Client_Manager.get_client_by_accountID(accountID_int)
+        log.debug(f"  Looking up accountID {accountID_int}: friend_obj={friend_obj}, client_state={getattr(friend_obj, 'client_state', 'N/A') if friend_obj else 'None'}")
+        if int(accountID) == int(clientOBJ.accountID):
+            # it's you - use the real object so you have .steamID, etc.
+            friend_obj = clientOBJ
+            log.debug(f"    -> Using self (clientOBJ)")
+        elif friend_obj is None:
+            log.debug(f"    -> Friend NOT found in clientsByAccountID, creating empty object with offline state")
             friend_obj = friend_obj_empty()
             friend_obj.client_state = 0
             friend_obj.appID = 0
             friend_obj.app_ip_port = [0, 0]
+            friend_obj.steamID = SteamID.createSteamIDFromAccountID(accountID_int)
+        else:
+            log.debug(f"    -> Friend found! client_state={friend_obj.client_state}")
+        friend_data = {}
+        # Use accountID * 2 as the friend_id, as in the original build_persona_message.
+        friendSteamID = friend_obj.steamID #SteamID().create_normal_user_steamID(accountID, EUniverse.PUBLIC)
+        friend_data['friend_id'] = friendSteamID.get_integer_format()
 
-        data += struct.pack('<II',
-                            steamid * 2,
-                            clientId2)
+        if stateFlags & PersonaStateFlags.status:
+            # Explicitly convert to int to ensure proper serialization
+            persona_state_val = int(friend_obj.client_state) if friend_obj.client_state is not None else 0
+            friend_data['persona_state'] = persona_state_val
+            friend_data['game_id'] = friend_obj.appID
+            friend_data['game_server_ip'] = friend_obj.app_ip_port[0]
+            friend_data['game_server_port'] = friend_obj.app_ip_port[1]
+            log.debug(f"    -> Setting persona_state={persona_state_val} for friend {accountID_int}")
 
-        if state_flag & PersonaStateFlags.status:
-            data += (struct.pack('<BIIH',
-                                 friend_obj.client_state,
-                                 friend_obj.appID,
-                                 friend_obj.app_ip_port[0],
-                                 friend_obj.app_ip_port[1]))
+        if stateFlags & PersonaStateFlags.playerName:
+            friend_data['player_name'] = clientOBJ.get_friends_nickname(accountID)
 
-        if state_flag & PersonaStateFlags.playerName:
-            # print("Player Name: string (playername)")
-            name = client_obj.get_friends_nickname(steamid)
-            data += name.encode('latin-1') + b'\x00'
+        if stateFlags & PersonaStateFlags.queryPort:
+            friend_data['query_port'] = 0xFFFF
 
-        if state_flag & PersonaStateFlags.queryPort:
-            # This always seems to be 0xFFFF, no matter what the client is doing.
-            # print("Query Port: 2 byte int")
-            resetPortMask = 0xFFFF
-            data += struct.pack('<H',
-                                resetPortMask)
+        if stateFlags & PersonaStateFlags.sourceId:
+            client_clans_id, rank = clientOBJ.get_main_clan(accountID, ClanRelationship.member)
+            friend_data['steam_id_source'] = client_clans_id if client_clans_id else 0
 
-        if state_flag & PersonaStateFlags.sourceId:
-            # print("Source ID: steamID 64 bit, gameserver or clan/chatroom id")
-            #TODO grab sourceID from client_obj if they are in a clan
-            client_clans_id, rank = client_obj.get_main_clan(steamid, ClanRelationship.member)
-            if client_clans_id:
-                sourceID = SteamID()
-                sourceID.set_type(EType.CLAN)
-                sourceID.set_instance(EInstanceFlag.ALL)  #clans should always be 0
-                sourceID.set_universe(EUniverse.PUBLIC)
-                sourceID.set_accountID(client_clans_id)
-                sourceID._update_steamid()
-                data += sourceID.get_raw_bytes_format()
-
-                target_slice = slice(2, 6)
-                current_flags = int.from_bytes(data[target_slice], byteorder='little')
-
-                if not current_flags & PersonaStateFlags.clanInfo:
-                    current_flags |= PersonaStateFlags.clanInfo
-
-                # Write back the updated flags into the buffer
-                data[target_slice.start:target_slice.stop] = current_flags.to_bytes(4, byteorder='little')
-            else:
-                data += struct.pack('<Q', 0)
-
-        if state_flag & PersonaStateFlags.presence:
-            # FIXME TINserver does not include the cmserver IP, but IDA shows it is infact used in 2007/2008
-
-            # Commenting this out fixed the ip being part of the interpreted avatar hash.
-            # NOTE: sometime after mid-2009, this is no longer part of the presence section
-            data += struct.pack('>I',0)  # utils.ip_to_int(globalvars.server_ip))
-
-            avatarID = client_obj.get_friend_avatarID(steamid)
+        if stateFlags & PersonaStateFlags.presence:
+            friend_data['ip_address_cm'] = 0  # default IP (could be replaced with globalvars.server_ip if needed)
+            avatarID = clientOBJ.get_friend_avatarID(accountID)
             if avatarID is None:
-                avatarID = b'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb'  # Default ? Avatar
-                data += avatarID + b'\x00'
+                friend_data['avatar_hash'] = b'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb'
             else:
-                # Try db provided hash, then ask forgiveness.
                 try:
-                    avatar_bytes = bytes.fromhex(avatarID.decode('latin-1'))
-                    data += avatar_bytes + b'\x00'
+                    friend_data['avatar_hash'] = bytes.fromhex(avatarID.decode('latin-1'))
                 except Exception as e:
-                    print(f"Error decoding avatarID: {e}")
-                    # Ensure avatarID is null-terminated even in case of decoding failure
-                    #avatarID += b'\x00'
-                    data += avatarID + b'\x00'
+                    friend_data['avatar_hash'] = avatarID
 
-        if state_flag & PersonaStateFlags.chatMetadata:
-            #print("Metadata size: unsigned 4 bytes")
-            #print("Metadata") # messageobject
-            data += b'\x00' # Do not know what is supposed to go here...
+        if stateFlags & PersonaStateFlags.chatMetadata:
+            # If client_obj offers metadata for friends, use it; otherwise default to empty.
+            friend_data['metadata_blob'] = (clientOBJ.get_friend_metadata_blob(accountID)
+                                            if hasattr(clientOBJ, "get_friend_metadata_blob")
+                                            else b'')
 
-        if state_flag & PersonaStateFlags.lastSeen:
-            last_login, last_logoff = client_obj.get_friend_lastseen(steamid)
-            data += last_logoff
-            data += last_login
-            # TODO At some point, this also includes the 'last online' field
-        if state_flag & PersonaStateFlags.clanInfo:
-            # Clan Rank
-            if rank:
-                data += struct.pack('<I', rank)
-            else:
-                data += struct.pack('<I', 0)
-        if state_flag & PersonaStateFlags.extraInfo:
-            #print("Game extra info (game name): 64-byte string")
-            data += database.get_app_name(friend_obj.appID)
-            # set to the currently playing APPID
-            #print("Game/AppID: 64 bit int")
-            data += struct.pack('<Q', friend_obj.appID)
-        if state_flag & PersonaStateFlags.gameDataBlob:
-            print("Game data blob size (or count?): 4 bytes")
-            data += struct.pack('<I', 0)
-            data += b'\x00'
-        if state_flag & PersonaStateFlags.clanTag:
-            # TODO I have not seen this flag in use in any packet captures
-            #  According to Steamcooker's code, this is always a null byte for players
-            #  But set for clans
-            data += b'\x00'
-        if state_flag & PersonaStateFlags.facebook:
-            # NOTE: this is deprecated in later steam clients
-            # TODO grab this information from community_profile for the user in question
-            data += b'\x00'
-            data += struct.pack('<Q', 0)
-        if state_flag & PersonaStateFlags.richPresence:
-            # print("Rich presence: 0x00")
-            # TODO grab from rich presence, put in key/value format
-            data += b'\x00'
-        if state_flag & PersonaStateFlags.broadcastId:
-            # TODO grab streaming ID from DB
-            data += struct.pack('<Q', 0)
-        if state_flag & PersonaStateFlags.gameLobbyId:
-            # TODO grab streaming ID from DB
-            data += struct.pack('<Q', 0)
-        if state_flag & PersonaStateFlags.watchingBroadcast:
-            # TODO grab broadcast info from DB
-            data += struct.pack('<I', 0)  # accountid
-            data += struct.pack('<I', 0)  # appid
-            data += struct.pack('<I', 0)  # viewer count
-            data += b'\x00' # broadcast/stream title
+        if stateFlags & PersonaStateFlags.lastSeen:
+            last_login, last_logoff = clientOBJ.get_friend_lastseen(accountID)
+            friend_data['last_logoff'] = last_logoff
+            friend_data['last_logon'] = last_login
 
-    packet.length = len(data)
-    packet.data = bytes(data)
+        if stateFlags & PersonaStateFlags.clanInfo:
+            friend_data['clan_rank'] = rank if rank else 0
 
-    return packet
+        if stateFlags & PersonaStateFlags.extraInfo:
+            friend_data['game_extra_info'] = database.get_app_name(friend_obj.appID)
+            friend_data['game_id_real'] = friend_obj.appID
+
+        if stateFlags & PersonaStateFlags.gameDataBlob:
+            friend_data['metadata'] = b''
+
+        psm.friends.append(friend_data)
+
+    if proto:
+        return psm.to_protobuf()
+    else:
+        return psm.to_clientmsg()
 
 
-def build_AddFriendResponse(cmserver_obj, client_obj, isold, request, requester_userid, searchStr, jobID):
+def build_AddFriendResponse(cmserver_obj, client_obj, isold, request, searchStr, jobID, proto=False):
     from steam3.ClientManager import Client_Manager
 
     if isold:
@@ -268,9 +264,9 @@ def build_AddFriendResponse(cmserver_obj, client_obj, isold, request, requester_
         packet = CMResponse(eMsgID = 0x0318, client_obj = client_obj)
 
     packet_data = bytearray(struct.pack('<Q', jobID))
-    friends_userid = database.find_user_by_name(searchStr)
-
-    if friends_userid is None:
+    friendsAccountID = database.find_user_by_name(searchStr)
+    cmserver_obj.log.debug(f"[build_AddFriendResponse] found accountid: {friendsAccountID}")
+    if friendsAccountID is None:
         if request.eMsgID == 0x02C9:  # old style
             packet_data += struct.pack('IIH', 0, 0, EResult.Invalid)  # 10 null bytes to signify no user found
         else:  # new style
@@ -279,12 +275,10 @@ def build_AddFriendResponse(cmserver_obj, client_obj, isold, request, requester_
         packet.length = len(packet.data)
         return packet
 
-    chatId = friends_userid * 2  # the id of the user requesting to add a user to their list
-    clientId2 = 0x01100001
-    packet_data += struct.pack('<I', chatId)
-    packet_data += struct.pack('<I', clientId2)
-
-    if friends_userid == requester_userid:
+    friendsSteamID = SteamID.createSteamIDFromAccountID(friendsAccountID)
+    packet_data += struct.pack('<Q', friendsSteamID.get_integer_format())
+    cmserver_obj.log.debug(f"[build_AddFriendResponse] found account steamid: {friendsSteamID}")
+    if friendsAccountID == client_obj.accountID:
         if request.eMsgID == 0x02C9:  # old style
             packet_data += struct.pack('H', EResult.Invalid)  # if we find ourself we send 2 null bytes
         else:  # new style
@@ -293,7 +287,7 @@ def build_AddFriendResponse(cmserver_obj, client_obj, isold, request, requester_
         packet.length = len(packet.data)
         return packet
 
-    result = client_obj.add_friend(friends_userid)
+    result = client_obj.add_friend(friendsAccountID)
 
     if not result:  # error adding friend to list, perhaps already there?
         packet_data += struct.pack('IIH', 0, 0, 0)  # 10 null bytes to signify no user found
@@ -305,23 +299,70 @@ def build_AddFriendResponse(cmserver_obj, client_obj, isold, request, requester_
     packet_data += struct.pack('<I', addFriend_eResult)
     packet_data += searchStr.encode('latin-1') + b'\x00'  # Append the name and a null terminator to the packed data
 
-    friends_clientobj = Client_Manager.clients_by_steamid.get(friends_userid)
+    friends_clientobj = Client_Manager.get_client_by_accountID(AccountID(friendsAccountID))
+    cmserver_obj.log.debug(f"[build_AddFriendResponse] found account clientobj: {friends_clientobj}")
 
-    if friends_clientobj:  # make sure they are online..
-        cmserver_obj.sendReply(friends_clientobj, [build_friendslist_response(friends_clientobj)])  # send friend an updated list
-        cmserver_obj.sendReply(friends_clientobj, [build_persona_message(friends_clientobj, client_obj.client_state, [client_obj.steamID])])
-        cmserver_obj.sendReply(client_obj, [build_persona_message(client_obj, friends_clientobj.client_state, [friends_userid])])
+    if friends_clientobj and friends_clientobj.objCMServer:  # Recipient is online and has a valid CM server
+        # Refresh requestee's friends list from DB (the after_insert trigger created their entry)
+        friends_clientobj.get_friends_list_from_db()
+
+        # Check if recipient uses newer protocol (> 65550) - auto-accept friend request
+        if friends_clientobj.protocol_version and friends_clientobj.protocol_version > 65550 and globalvars.config['auto_friend_later_clients'].lower() == "true":
+            # Auto-accept: Update both sides to "friend" relationship
+            client_obj.add_friend(friendsAccountID, FriendRelationship.friend)
+            friends_clientobj.get_friends_list_from_db()  # Refresh after relationship update
+            client_obj.get_friends_list_from_db()
+
+            # Send FULL friends list to recipient (auto-accepted)
+            friends_clientobj.objCMServer.sendReply(friends_clientobj, [build_friendslist_response(friends_clientobj)])
+            # Send recipient persona info for all their friends including the new one
+            for friend_entry, _ in friends_clientobj.friends_list:
+                friends_clientobj.objCMServer.sendReply(friends_clientobj, [build_persona_message(
+                    friends_clientobj, RequestedPersonaStateFlags_inFriendsList_friend, [friend_entry.accountID]
+                )])
+
+            # Send FULL friends list to requester
+            cmserver_obj.sendReply(client_obj, [build_friendslist_response(client_obj)])
+            # Send requester persona info for all their friends including the new one
+            for friend_entry, _ in client_obj.friends_list:
+                cmserver_obj.sendReply(client_obj, [build_persona_message(
+                    client_obj, RequestedPersonaStateFlags_inFriendsList_friend, [friend_entry.accountID]
+                )])
+        else:
+            # Older protocol recipient - send friend request notification
+            # Send recipient an INCREMENTAL update with the new friend request (relationship=2 requestRecipient)
+            # This triggers the friend request dialog in older clients
+            # IMPORTANT: Use the recipient's CM server to send, not the requester's!
+            # This ensures proper delivery when clients are on different connection types (UDP vs TCP)
+            friends_clientobj.objCMServer.sendReply(friends_clientobj, [build_incremental_friendslist_update(
+                friends_clientobj, client_obj.accountID, FriendRelationship.requestRecipient
+            )])
+            friends_clientobj.objCMServer.sendReply(friends_clientobj, [build_persona_message(
+                friends_clientobj, RequestedPersonaStateFlags_inFriendsList_other, [client_obj.accountID]
+            )])
+
+            # Send requester an INCREMENTAL update showing they sent a request (relationship=4 requestInitiator)
+            cmserver_obj.sendReply(client_obj, [build_incremental_friendslist_update(
+                client_obj, friendsAccountID, FriendRelationship.requestInitiator
+            )])
+            cmserver_obj.sendReply(client_obj, [build_persona_message(
+                client_obj, RequestedPersonaStateFlags_inFriendsList_other, [friendsAccountID]
+            )])
     else:
-        cmserver_obj.sendReply(client_obj, [build_persona_message(client_obj, PlayerState.offline, [friends_userid])])
-
-    cmserver_obj.sendReply(client_obj, [build_friendslist_response(client_obj)])
+        # Friend is offline - send requester incremental update and friend's persona state (offline)
+        cmserver_obj.sendReply(client_obj, [build_incremental_friendslist_update(
+            client_obj, friendsAccountID, FriendRelationship.requestInitiator
+        )])
+        cmserver_obj.sendReply(client_obj, [build_persona_message(
+            client_obj, RequestedPersonaStateFlags_inFriendsList_other, [friendsAccountID]
+        )])
 
     packet.data = bytes(packet_data)
 
     return packet
 
 
-def build_AcceptFriendResponse(cmserver_obj, client_obj, request, friends_userid, jobID):
+def build_AcceptFriendResponse(cmserver_obj, client_obj, request, friendsAccountID, jobID, proto=False):
     from steam3.ClientManager import Client_Manager
 
     if request.eMsgID == 0x02C9:  # Old style add friend packet
@@ -329,14 +370,12 @@ def build_AcceptFriendResponse(cmserver_obj, client_obj, request, friends_userid
     else:  # new style add friend packet
         packet = CMResponse(eMsgID=0x0318, client_obj=client_obj)
 
-    clientId2 = 0x01100001
     packet_data = bytearray(struct.pack('<Q', jobID))
 
-    chatId = friends_userid * 2  # the id of the user requesting to add a user to their list
-    packet_data += struct.pack('<I', chatId)
-    packet_data += struct.pack('<I', clientId2)
+    requesterSteamID = SteamID.createSteamIDFromAccountID(friendsAccountID)  # the id of the user requesting to add a user to their list
+    packet_data += struct.pack('<Q', requesterSteamID)
 
-    if friends_userid == client_obj.steamID:
+    if friendsAccountID == client_obj.accountID:
         if request.eMsgID == 0x02C9:  # old style
             packet_data += struct.pack('H', EResult.Invalid)  # if we find ourself we send 2 null bytes
         else:  # new style
@@ -345,22 +384,48 @@ def build_AcceptFriendResponse(cmserver_obj, client_obj, request, friends_userid
         packet.length = len(packet.data)
         return packet
 
-    result = client_obj.add_friend(friends_userid, FriendRelationship.friend)
+    # Update acceptor's relationship to "friend"
+    # Note: add_friend() also updates the inverse entry (requester's side) in the database
+    result = client_obj.add_friend(friendsAccountID, FriendRelationship.friend)
 
     addFriend_eResult = EResult.OK
     packet_data += struct.pack('<I', addFriend_eResult)
-    searchStr = client_obj.get_friends_nickname(friends_userid)  # Get the friend's nickname
+    searchStr = client_obj.get_friends_nickname(friendsAccountID)  # Get the friend's nickname
     packet_data += searchStr.encode('latin-1') + b'\x00'  # Append the name and a null terminator to the packed data
 
-    friends_clientobj = Client_Manager.clients_by_steamid.get(friends_userid)
-    if friends_clientobj:  # make sure they are online..
-        cmserver_obj.sendReply(friends_clientobj, [build_friendslist_response(friends_clientobj)])  # send friend an updated list
-        #cmserver_obj.sendReply(friends_clientobj, [build_contactlist_user_info(friends_clientobj, [friends_clientobj.steamID * 2])])
-        cmserver_obj.sendReply(friends_clientobj, [build_persona_message(client_obj, PersonaStateFlags.status | PersonaStateFlags.playerName | PersonaStateFlags.sourceId |PersonaStateFlags.lastSeen | PersonaStateFlags.presence, [client_obj.steamID])])
-        cmserver_obj.sendReply(client_obj, [build_persona_message(friends_clientobj, PersonaStateFlags.status | PersonaStateFlags.playerName | PersonaStateFlags.sourceId |PersonaStateFlags.lastSeen | PersonaStateFlags.presence, [friends_userid])])
+    # Refresh acceptor's friends list from DB
+    client_obj.get_friends_list_from_db()
 
-    cmserver_obj.sendReply(client_obj, [build_friendslist_response(client_obj)])
-    #cmserver_obj.sendReply(client_obj, [build_contactlist_user_info(client_obj, [friends_userid * 2])])
+    friends_clientobj = Client_Manager.get_client_by_accountID(friendsAccountID)
+    if friends_clientobj and friends_clientobj.objCMServer:  # Original requester is online and has valid CM server
+        # Refresh requester's friendslist from DB so their in-memory list is updated
+        friends_clientobj.get_friends_list_from_db()
+
+        # Send FULL friends list to requester (original friend request sender)
+        # IMPORTANT: Use the requester's CM server to send, not the acceptor's!
+        # This ensures proper delivery when clients are on different connection types (UDP vs TCP)
+        friends_clientobj.objCMServer.sendReply(friends_clientobj, [build_friendslist_response(friends_clientobj)])
+        # Send requester persona info for all their friends including the new one
+        for friend_entry, _ in friends_clientobj.friends_list:
+            friends_clientobj.objCMServer.sendReply(friends_clientobj, [build_persona_message(
+                friends_clientobj, RequestedPersonaStateFlags_inFriendsList_friend, [friend_entry.accountID]
+            )])
+
+        # Send FULL friends list to acceptor
+        cmserver_obj.sendReply(client_obj, [build_friendslist_response(client_obj)])
+        # Send acceptor persona info for all their friends including the new one
+        for friend_entry, _ in client_obj.friends_list:
+            cmserver_obj.sendReply(client_obj, [build_persona_message(
+                client_obj, RequestedPersonaStateFlags_inFriendsList_friend, [friend_entry.accountID]
+            )])
+    else:
+        # Requester is offline - send FULL friends list to acceptor only
+        cmserver_obj.sendReply(client_obj, [build_friendslist_response(client_obj)])
+        # Send acceptor persona info for all their friends
+        for friend_entry, _ in client_obj.friends_list:
+            cmserver_obj.sendReply(client_obj, [build_persona_message(
+                client_obj, RequestedPersonaStateFlags_inFriendsList_friend, [friend_entry.accountID]
+            )])
 
     packet.data = bytes(packet_data)
 
@@ -368,31 +433,36 @@ def build_AcceptFriendResponse(cmserver_obj, client_obj, request, friends_userid
 
 
 def send_statuschange_to_friends(client_obj, cmserver_obj, Client_Manager, user_state):
-    if client_obj and client_obj.friends_list:
-        for friend_entry, friend_relationship in client_obj.get_friends_list_from_db():
-            # Access friendsaccountID attribute from the FriendsList object
-            friend_steamid = int(friend_entry.accountID)
-            # Check if friend_steamid is in clients_by_steamid
-            #for friendid in Client_Manager.clients_by_steamid:
-            #print(f"currently online: {friendid}")
+    if not client_obj:
+        return -1
 
-            #print(f"friend accountid: {friend_steamid}")
-            if friend_steamid in Client_Manager.clients_by_steamid:
-                client_friend = Client_Manager.clients_by_steamid.get(friend_steamid)
-                if client_friend:
-                    reply_packet = build_persona_message(client_friend,  PersonaStateFlags.status | PersonaStateFlags.playerName | PersonaStateFlags.sourceId | PersonaStateFlags.lastSeen | PersonaStateFlags.presence, [client_obj.steamID])
-                    cmserver_obj.sendReply(client_friend, [reply_packet])
+    # Notify online friends about the user's status change
+    if client_obj.friends_list:
+        for friend_entry, friend_relationship in client_obj.get_friends_list_from_db():
+            # Access friendsaccountID attribute from the FriendsList tuple
+            friendsAccountID = AccountID(friend_entry.accountID)
+            # Check if friends are online currently:
+            client_friend = Client_Manager.get_client_by_accountID(friendsAccountID)
+            if client_friend and client_friend.objCMServer:
+                # Use the friend's proto preference for their message
+                reply_packet = build_persona_message(client_friend, RequestedPersonaStateFlags_inFriendsList_friend, [client_obj.accountID], proto=client_friend.is_proto)
+                # IMPORTANT: Use the friend's CM server to send, not the user's!
+                # This ensures proper delivery when clients are on different connection types (UDP vs TCP)
+                client_friend.objCMServer.sendReply(client_friend, [reply_packet])
 
     if client_obj.username is None:
         client_obj.username = "[Unset]"
 
+    # Always send the user their own updated persona state (regardless of friends list)
+    # This ensures the client UI shows the correct status after login or status change
     if user_state != PlayerState.offline:
-        reply_packet = build_persona_message(client_obj, PersonaStateFlags.status | PersonaStateFlags.playerName | PersonaStateFlags.sourceId |PersonaStateFlags.lastSeen | PersonaStateFlags.presence, [client_obj.steamID])
+        # Use the client's proto preference for their message
+        reply_packet = build_persona_message(client_obj, RequestedPersonaStateFlags_self, [client_obj.accountID], proto=client_obj.is_proto)
         cmserver_obj.sendReply(client_obj, [reply_packet])
 
     return -1
 
-def build_SetIgnoreFriendResponse(cmserver_obj, client_obj, friends_steamID, friends_clientID2, status):
+def build_SetIgnoreFriendResponse(cmserver_obj, client_obj, friendSteamID, status):
     """
     struct MsgClientSetIgnoreFriendResponse_t
     {
@@ -403,20 +473,18 @@ def build_SetIgnoreFriendResponse(cmserver_obj, client_obj, friends_steamID, fri
     from steam3.ClientManager import Client_Manager
     packet = CMResponse(eMsgID = EMsg.ClientSetIgnoreFriendResponse, client_obj = client_obj)
 
-    packet.data = struct.pack('<III',
-                              friends_steamID,
-                              friends_clientID2,
+    packet.data = struct.pack('<QI',
+                              friendSteamID,
                               status)
 
     cmserver_obj.sendReply(client_obj, [packet])
     if status:
         cmserver_obj.sendReply(client_obj, [build_friendslist_response(client_obj)])
 
-        friends_accountID = (friends_steamID // 2)
-
-        if friends_accountID in Client_Manager.clients_by_steamid:
-            client_friend = Client_Manager.clients_by_steamid.get(friends_accountID)
-            if client_friend:
-                cmserver_obj.sendReply(client_friend, [build_friendslist_response(client_friend)])
+        friendAccountID = int(friendSteamID.get_accountID())
+        friendOBJ = Client_Manager.get_client_by_accountID(friendAccountID)
+        if friendOBJ and friendOBJ.objCMServer:
+            # IMPORTANT: Use the friend's CM server to send, not the requester's!
+            friendOBJ.objCMServer.sendReply(friendOBJ, [build_friendslist_response(friendOBJ)])
 
     return -1

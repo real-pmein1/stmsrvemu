@@ -5,59 +5,6 @@ import sys
 import zlib
 
 
-def package_unpack(infilename, outpath):
-    if not os.path.exists(outpath):
-        os.makedirs(outpath)
-
-    infile = open(infilename, "rb")
-    package = infile.read()
-    infile.close()
-
-    header = package[-9:]
-
-    (pkg_ver, compress_level, numfiles) = struct.unpack("<BLL", package[-9:])
-
-    index = len(package) - (9 + 16)
-
-    for i in range(numfiles):
-
-        (unpacked_size, packed_size, file_start, filename_len) = struct.unpack("<LLLL", package[index:index + 16])
-
-        filename = package[index - filename_len:index - 1]
-
-        (filepath, basename) = os.path.split(filename)
-
-        index = index - (filename_len + 16)
-
-        file = ""
-
-        while packed_size > 0:
-            compressed_len = struct.unpack("<L", package[file_start:file_start + 4])[0]
-
-            compressed_start = file_start + 4
-            compressed_end = compressed_start + compressed_len
-
-            compressed_data = package[compressed_start:compressed_end]
-
-            file += zlib.decompress(compressed_data)
-
-            file_start = compressed_end
-            packed_size = packed_size - compressed_len
-
-        outsubpath = os.path.join(outpath, filepath)
-
-        if not os.path.exists(outsubpath):
-            os.makedirs(outsubpath)
-
-        outfullfilename = os.path.join(outpath, filename)
-
-        outfile = open(outfullfilename, "wb")
-        outfile.write(file)
-        outfile.close()
-
-        # print filename, "written"
-
-
 def package_unpack2(infilename, outpath, version, pkg_name):
     if not os.path.exists(outpath):
         os.makedirs(outpath)
@@ -226,6 +173,20 @@ class Package(object):
         self.file_unpacked_sizes[filename] = len(filedata)
         if filename not in self.filenames:
             self.filenames.append(filename)
+
+    def remove_file(self, filename):
+        """Remove a file from the package."""
+        if isinstance(filename, str):
+            filename = filename.encode('latin-1')
+
+        if filename in self.filenames:
+            self.filenames.remove(filename)
+            if filename in self.file_chunks:
+                del self.file_chunks[filename]
+            if filename in self.file_unpacked_sizes:
+                del self.file_unpacked_sizes[filename]
+            return True
+        return False
 
     def pack(self):
         datasection = []

@@ -1,22 +1,40 @@
+"""
+MsgClientClanState - Binary format for clan state updates (EMsg 822)
+
+Binary format (after SimpleClientMsgHdr):
+  - uint64 m_ulClanID (8 bytes) - Clan Steam ID
+  - uint32 m_unStatusFlags (4 bytes) - ClanStateFlags bitmask
+  - uint8 m_ubClanAccountFlags (1 bytes) - ClanAccountFlags bitmask
+
+Variable data based on status flags:
+  - If flag & 0x01 (name): null-terminated clan name + 20 bytes avatar SHA1
+  - If flag & 0x02 (userCounts): 4 x uint32 (members, online, in_chat, in_game)
+  - If flag & 0x0C (events/announcements): uint32 count + event data
+    Each event: uint64 gid, uint32 time, null-terminated headline, uint64 game_id, uint8 just_posted
+"""
+
 import struct
 from io import BytesIO
 from enum import IntFlag
 
-from steam3.Types.community_types import ClanStateFlags
+from steam3.Types.community_types import ClanStateFlags, ClanAccountFlags
 
 
 class MsgClientClanState:
     def __init__(self):
-        self.steam_id_clan = None
-        self.clan_state_flags = 0
-        self.m_bLarge = False
+        self.steam_id_clan = 0
+        self.clan_state_flags = 0  # ClanStateFlags: name=0x01, userCounts=0x02, announcements=0x04, events=0x08
+        self.clan_account_flags = 0  # ClanAccountFlags: public=0x01, large=0x02, locked=0x04, disabled=0x08
+        # Convenience properties derived from clan_account_flags
         self.m_bPublic = False
+        self.m_bLarge = False
         self.m_bLocked = False
         self.m_bDisabled = False
-        self.name_info = {}
-        self.user_counts = {}
-        self.announcements = []
-        self.events = []
+        # Data fields
+        self.name_info = {}  # {"clan_name": str, "avatar_sha": bytes(20)}
+        self.user_counts = {}  # {"members": int, "online": int, "in_chat": int, "in_game": int}
+        self.announcements = []  # List of event dicts
+        self.events = []  # List of event dicts
 
     def __str__(self):
         """
@@ -67,36 +85,33 @@ class MsgClientClanState:
         # Read Steam ID (8 bytes)
         self.steam_id_clan = struct.unpack('<Q', stream.read(8))[0]
 
-        # Read clan account flags (4 bytes)
+        # Read status flags (4 bytes) - determines what data follows
         self.clan_state_flags = struct.unpack('<I', stream.read(4))[0]
 
-        # Read the single byte for public and large clan flags
-        account_flags = struct.unpack('<B', stream.read(1))[0]
-        self.m_bPublic = bool(account_flags & 1)  # Bit 0: Public
-        self.m_bLarge = bool(account_flags & 2)  # Bit 1: Large
-        self.m_bLocked = bool(account_flags & 4)  # Bit 2: Locked
-        self.m_bDisabled = bool(account_flags & 8)  # Bit 3: Disabled
+        # Read account flags (1 byte) - public/large/locked/disabled
+        self.clan_account_flags = struct.unpack('<B', stream.read(1))[0]
+        self.m_bPublic = bool(self.clan_account_flags & ClanAccountFlags.public)
+        self.m_bLarge = bool(self.clan_account_flags & ClanAccountFlags.large)
+        self.m_bLocked = bool(self.clan_account_flags & ClanAccountFlags.locked)
+        self.m_bDisabled = bool(self.clan_account_flags & ClanAccountFlags.disabled)
 
-        # Parse Name Info if NAME_INFO flag is set
+        # Parse Name Info if name flag is set
         if self.clan_state_flags & ClanStateFlags.name:
             self.name_info = self._parse_name_info(stream)
 
-        # Parse User Counts if USER_COUNTS flag is set
+        # Parse User Counts if userCounts flag is set
         if self.clan_state_flags & ClanStateFlags.userCounts:
             self.user_counts = self._parse_user_counts(stream)
 
-        # Parse Announcements if ANNOUNCEMENTS flag is set
-        if self.clan_state_flags & ClanStateFlags.announcements:
-            self.announcements = self._parse_announcements(stream)
-
-        # Parse Events if EVENTS flag is set
-        if self.clan_state_flags & ClanStateFlags.events:
-            self.events = self._parse_events(stream)
-
-        # Check for leftover bytes
-        remaining_bytes = stream.read()
-        if remaining_bytes:
-            print(f"Warning: Unparsed bytes left: {remaining_bytes.hex()}")
+        # Parse Events/Announcements if either flag is set (they share format)
+        # Flag 0x04 = announcements, Flag 0x08 = events
+        if self.clan_state_flags & (ClanStateFlags.announcements | ClanStateFlags.events):
+            event_list = self._parse_events(stream)
+            # Distribute to announcements or events based on flag
+            if self.clan_state_flags & ClanStateFlags.announcements:
+                self.announcements = event_list
+            if self.clan_state_flags & ClanStateFlags.events:
+                self.events = event_list
 
     def serialize(self):
         """
@@ -148,7 +163,7 @@ class MsgClientClanState:
 
     def _parse_name_info(self, stream):
         """
-        Parse Name Info including clan name and avatar.
+        Parse Name Info including clan name and avatar SHA1 hash.
         """
         # Parse clan name as a null-terminated string
         clan_name = b""
@@ -157,39 +172,43 @@ class MsgClientClanState:
             if char == b"\x00" or not char:
                 break
             clan_name += char
-        clan_name = clan_name.decode("utf-8")
+        clan_name = clan_name.decode("utf-8", errors="replace")
 
-        # Parse avatar ID (up to 20 bytes, stopping at first null)
-        avatar_raw = stream.read(20)
-        avatar_end = avatar_raw.find(b"\x00")
-        avatar_id = avatar_raw[:avatar_end].decode("utf-8") if avatar_end != -1 else avatar_raw.decode("utf-8")
+        # Parse avatar SHA1 hash (always 20 bytes, raw binary)
+        avatar_sha = stream.read(20)
 
-        return {"clan_name":clan_name, "avatar_id":avatar_id}
+        return {"clan_name": clan_name, "avatar_sha": avatar_sha}
 
     def _parse_user_counts(self, stream):
         """
-        Parse user counts: members, online, in chat, in game.
+        Parse user counts: members, online, in_chat, in_game.
         """
         members = struct.unpack('<I', stream.read(4))[0]
         online = struct.unpack('<I', stream.read(4))[0]
         in_chat = struct.unpack('<I', stream.read(4))[0]
         in_game = struct.unpack('<I', stream.read(4))[0]
-        return {"members":members, "online":online, "in_chat":in_chat, "in_game":in_game}
+        return {"members": members, "online": online, "in_chat": in_chat, "in_game": in_game}
 
     def _parse_announcements(self, stream):
         """
-        Parse announcements. Assume each announcement is a null-terminated string.
+        Parse announcements. Same format as events (not currently used - deserialize uses _parse_events for both).
+        Each announcement: uint64 gid, uint32 time, null-terminated headline, uint64 game_id, uint8 just_posted
         """
         num_announcements = struct.unpack('<I', stream.read(4))[0]
         announcements = []
         for _ in range(num_announcements):
-            announcement = b""
+            event_id = struct.unpack('<Q', stream.read(8))[0]
+            event_time = struct.unpack('<I', stream.read(4))[0]
+            headline = b""
             while True:
                 char = stream.read(1)
                 if char == b"\x00" or not char:
                     break
-                announcement += char
-            announcements.append(announcement.decode("utf-8"))
+                headline += char
+            headline = headline.decode("utf-8")
+            game_id = struct.unpack('<Q', stream.read(8))[0]
+            just_posted = struct.unpack('<?', stream.read(1))[0]
+            announcements.append({"event_id": event_id, "event_time": event_time, "headline": headline, "game_id": game_id, "just_posted": just_posted})
         return announcements
 
     def _parse_events(self, stream):
@@ -215,12 +234,17 @@ class MsgClientClanState:
 
     def _serialize_name_info(self, buffer):
         """
-        Serialize Name Info including clan name and avatar.
+        Serialize Name Info including clan name and avatar SHA1 hash.
         """
         clan_name = self.name_info.get("clan_name", "").encode("utf-8") + b"\x00"
-        avatar_id = self.name_info.get("avatar_id", "").encode("utf-8").ljust(20, b"\x00")
+        # Avatar SHA is always exactly 20 raw bytes (SHA1 hash)
+        avatar_sha = self.name_info.get("avatar_sha", b"\x00" * 20)
+        if len(avatar_sha) < 20:
+            avatar_sha = avatar_sha + b"\x00" * (20 - len(avatar_sha))
+        elif len(avatar_sha) > 20:
+            avatar_sha = avatar_sha[:20]
         buffer.write(clan_name)
-        buffer.write(avatar_id)
+        buffer.write(avatar_sha)
 
     def _serialize_user_counts(self, buffer):
         """
@@ -233,11 +257,16 @@ class MsgClientClanState:
 
     def _serialize_announcements(self, buffer):
         """
-        Serialize announcements. Assume each announcement is a null-terminated string.
+        Serialize announcements. Same format as events:
+        uint32 count, then for each: uint64 gid, uint32 time, null-term headline, uint64 game_id, uint8 just_posted
         """
         buffer.write(struct.pack('<I', len(self.announcements)))
         for announcement in self.announcements:
-            buffer.write(announcement.encode("utf-8") + b"\x00")
+            buffer.write(struct.pack('<Q', announcement.get("event_id", 0)))
+            buffer.write(struct.pack('<I', announcement.get("event_time", 0)))
+            buffer.write(announcement.get("headline", "").encode("utf-8") + b"\x00")
+            buffer.write(struct.pack('<Q', announcement.get("game_id", 0)))
+            buffer.write(struct.pack('<?', announcement.get("just_posted", False)))
 
     def _serialize_events(self, buffer):
         """

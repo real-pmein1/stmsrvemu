@@ -1,16 +1,17 @@
+import os
 import random
 import struct
 
 import globalvars
-from config import read_config
+from config import get_config as read_config
 
 config = read_config()
 
 
 def load_modifiers_from_files():
     file_paths = {
-            config['configsdir'] + '/' + "suggestion_prepend.txt":[],
-            config['configsdir'] + '/' + "suggestion_append.txt": []
+        os.path.join(config['configsdir'], "suggestion_prepend.txt"): [],
+        os.path.join(config['configsdir'], "suggestion_append.txt"): []
     }
 
     for file_path, modifiers_list in file_paths.items():
@@ -33,17 +34,19 @@ def load_modifiers_from_files():
                 "stormy", "wild", "ancient", "legendary", "ghost", "frosty", "the_phallic_",
                 "hard", "crunchy", "ugly", "sloppy_", "re", "slow", "chronic_", "creamy",
                 "dubious_", "hide_the_kids_", "geriatric", "sleezy_", "pedo", "easy_",
-                "crossdressing_", "manic", "fat_", "cystic"
+                "crossdressing_", "manic", "fat_", "cystic", "juicy", "anemic", "DR_",
+                "filthy", "tubby"
         ]
         globalvars.appended_modifiers += [
                 "erific", "dream", "_the_womanizer", "transvestinator",
                 "_the_unlikable", "_the_terrible", "orama", "ler", "ing",
                 "son", "_jr", "iffer", "ny", "y", "ji", "man", "zilla",
-                "inator", "osaures", "ton", "ious", "zen", "wick", "core",
-                "leigh", "wood", "smith", "max", "dex", "ley", "nator",
+                "inator", "osaur", "ton", "ious", "zen", "wick", "core",
+                "leigh", "wood", "smith", "max", "dex", "ley", "inator",
                 "able", "stein", "knight", "_the_cog", "s_boner", "_the_pipelayer",
                 "erbator", "_the_diddler", "s_johnson", "_is_a_nazi", "8--D",
-                "phile", "_is_pregnant"
+                "ophile", "_is_pregnant", "_likes_men", "aholic", "ified", "tastic",
+                "_SR", "_JR", "tacular", "oloid"
         ]
 
     globalvars.prepended_modifiers += list(file_paths.keys())[0]

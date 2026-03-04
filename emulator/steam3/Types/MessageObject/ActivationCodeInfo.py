@@ -1,36 +1,58 @@
 from steam3.Types.MessageObject import MessageObject
-from steam3.Types.keyvalue_class import KVS_TYPE_INT, KVS_TYPE_INT64, KVS_TYPE_STRING
+from steam3.Types.keyvaluesystem import KVS_TYPE_INT, KVS_TYPE_INT64, KVS_TYPE_STRING
 
 
 class ActivationCodeInfo(MessageObject):
     def __init__(self, input_stream=None):
-        super().__init__()
-        if input_stream is not None:
-            self.parse(input_stream)
+        super().__init__(input_stream)
 
     def get_GameCode(self):
-        return self.getValue("GameCode", 0)
+        try:
+            return self.getValue("GameCode", 0)
+        except:
+            return []
 
     def get_SalesTerritoryCode(self):
-        return self.getValue("SalesTerritoryCode", 0)
+        try:
+            return self.getValue("SalesTerritoryCode", 0)
+        except:
+            return []
 
     def get_Key(self):
-        return self.getValue("Key", "")
+        try:
+            return self.getValue("Key", "")
+        except:
+            return []
 
     def get_PackageID(self):
-        return self.getValue("PackageID", 0)
+        try:
+            return self.getValue("PackageID", 0)
+        except:
+            return []
 
     def get_MaxUseCount(self):
-        return self.getValue("MaxUseCount", 0)
+        try:
+            return self.getValue("MaxUseCount", 0)
+        except:
+            return []
 
     def get_Class(self):
-        return self.getValue("Class", 0)
+        try:
+            return self.getValue("Class", 0)
+        except:
+            return []
 
     def get_SerialNumber(self):
-        return self.getValue("SerialNumber", 0)
+        try:
+            return self.getValue("SerialNumber", 0)
+        except:
+            return []
 
     def get_InstanceName(self):
-        return self.getValue("InstanceName", "")
+        try:
+            return self.getValue("InstanceName", "")
+        except:
+            return []
 
     def set_GameCode(self, value):
         self.setValue("GameCode", value, KVS_TYPE_INT)

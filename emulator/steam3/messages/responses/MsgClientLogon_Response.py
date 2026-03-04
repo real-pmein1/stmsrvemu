@@ -2,6 +2,7 @@ import struct
 import socket
 
 import globalvars
+from steam3.Types.steamid import SteamID
 from steam3.cm_packet_utils import CMProtoResponse, CMResponse
 from steam3.Types.emsg import EMsg
 from steam3.protobufs.steammessages_clientserver_login_pb2 import CMsgClientLogonResponse
@@ -15,8 +16,7 @@ class LogonResponse:
         self.eresult = 0
         self.out_of_game_heartbeat_rate_sec = 9
         self.in_game_heartbeat_rate_sec = 9
-        self.steam_id = 0
-        self.client_id = 0
+        self.steamID: SteamID = SteamID()
         self.public_ip = 0
         self.server_time = 0
         self.account_flags = 0
@@ -36,7 +36,7 @@ class LogonResponse:
                 30 if self.is_anon else self.out_of_game_heartbeat_rate_sec
         )
         logon_response.heartbeat_seconds = self.in_game_heartbeat_rate_sec
-        logon_response.client_supplied_steamid = self.steam_id * 2
+        logon_response.client_supplied_steamid = self.steamID.get_integer_format()
         logon_response.deprecated_public_ip = self.public_ip
         logon_response.rtime32_server_time = self.server_time
         logon_response.account_flags = 0 if self.is_anon else self.account_flags
@@ -58,12 +58,11 @@ class LogonResponse:
         """
         packet = CMResponse(eMsgID = EMsg.ClientLogOnResponse, client_obj = self.client_obj)
         packet.data = struct.pack(
-                'I I I I I I',
+                'I I I Q I',
                 self.eresult,
                 self.out_of_game_heartbeat_rate_sec if not self.is_anon else 30,
                 self.in_game_heartbeat_rate_sec,
-                self.steam_id * 2,
-                self.client_id,
+                self.steamID.get_integer_format(),
                 self.public_ip,
         )
 

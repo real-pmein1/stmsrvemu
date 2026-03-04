@@ -1,15 +1,23 @@
 import struct
 
 from steam3.ClientManager.client import Client
+from steam3.Responses.statistics_responses import build_GetUserStatsResponse, build_GetUserStats_response, build_StoreUserStats_response, build_StatsUpdated_notification
+from steam3.Types.GameID import GameID
 from steam3.Types.Objects import hwsurvey
 from steam3.Types.community_types import PlayerState
 from steam3.Types.keyvalue_class import KeyValueClass
+from steam3.Types.steam_types import EResult
 from steam3.cm_packet_utils import CMPacket
 from steam3.messages.MsgClientConnectionStats import MsgClientConnectionStats
 from steam3.messages.MsgClientGamesPlayedWithDataBlob import MsgClientGamesPlayed_WithDataBlob
 from steam3.messages.MsgClientNoUDPConnectivity import MsgClientNoUDPConnectivity
+from steam3.messages.MsgClientStat2 import MsgClientStat2
+from steam3.messages.MSGClientGetUserStats import MSGClientGetUserStats
+from steam3.messages.MSGClientStoreUserStats import MSGClientStoreUserStats
+from steam3.Managers.StatsManager import StatsManager
 from steam3.utilities import reverse_bytes
 from steam3.Responses.general_responses import build_GeneralAck
+from utilities.database import statistics_db
 
 
 def handle_ConnectionStats(cmserver_obj, packet: CMPacket, client_obj: Client):
@@ -18,14 +26,19 @@ def handle_ConnectionStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Connection Stats Request")
     data = request.data
 
-    # TODO store stats somewhere, add check for newer versions with more information
     try:
         stats = MsgClientConnectionStats(data)
-        print(stats)
-    except:
+        statistics_db.log_event('connection_stats', stats.__dict__)
+    except Exception:
         try:
             attempts, successes, failures, dropped = struct.unpack_from('IIIIIII', data, 0)
             cmserver_obj.log.debug(f"Attempts: {attempts}, Successes: {successes}, Failures: {failures}, Dropped: {dropped}")
+            statistics_db.log_event('connection_stats', {
+                'attempts': attempts,
+                'successes': successes,
+                'failures': failures,
+                'dropped': dropped
+            })
         except Exception as e:
             cmserver_obj.log.error(f"connection stats: {e}")
             pass
@@ -35,12 +48,6 @@ def handle_ConnectionStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     return -1
 
 
-#packetid: 742
-#b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
-#or
-# b'\x01\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x00 \xcd\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00 \x00\x00 \x00\x00 \x00\x00\x00\x00 \x00'
-# from launching tf2 dedicated server on steamui 484:
-# handle_GamesPlayedStats error: b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x006\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 def handle_GamesPlayedStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
@@ -49,16 +56,21 @@ def handle_GamesPlayedStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     first_part = '<QQIHHI'
     game_count, = struct.unpack_from('<I', data, 0)
     if game_count > 0:
-        # FIXME make it loop if more than 1 game is listen in the packet
-        try:
-            game_count, steamid, gameid, server_ip, server_port, issecure, token_size = struct.unpack_from(first_part, data, 4)
-            size_body = struct.calcsize(first_part)
-            token = data[size_body:] # FIXME can either be a 4 byte int or variable length blob, depending if gameid is a mod or not
-            cmserver_obj.log.debug(f"game_count: {game_count}, steamid: {steamid}, gameid: {gameid}, server_ip: {server_ip}, server_port: {server_port}, issecure: {issecure}, token: {token}")
-            client_obj.update_status_info(cmserver_obj, PlayerState.online, gameid, server_ip, server_port, steamid)
-        except:
-            cmserver_obj.log.error(f"handle_GamesPlayedStats error: {data}")
-            pass
+        offset = 4
+        for _ in range(game_count):
+            try:
+                steamid, gameid, server_ip, server_port, issecure, token_size = struct.unpack_from(first_part, data, offset)
+                offset += struct.calcsize(first_part)
+                token = data[offset:offset + token_size]
+                offset += token_size
+                cmserver_obj.log.debug(
+                    f"steamid: {steamid}, gameid: {gameid}, server_ip: {server_ip}, server_port: {server_port}, token: {token}"
+                )
+                client_obj.update_status_info(cmserver_obj, PlayerState.online, gameid, server_ip, server_port, steamid)
+                statistics_db.record_gameplay(gameid, steamid)
+            except Exception:
+                cmserver_obj.log.error(f"handle_GamesPlayedStats error: {data}")
+                break
     else:
         client_obj.exit_app(cmserver_obj)
 
@@ -73,13 +85,16 @@ def handle_GamesPlayedStats_deprecated(cmserver_obj, packet: CMPacket, client_ob
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Games Played Stats Request")
     data = request.data
     start, = struct.unpack_from('<I', data, 0)
-    # FIXME make it loop if more than 1 game is listen in the packet
     if start:
-        # If 'start' is non-zero, unpack the remaining DWORDs
-        appNB, unknown1, appID, unknown2 = struct.unpack_from('<IIII', data, 4)
-
-        # TODO figure out the unknowns!
-        print(f"number of apps: {appNB}, appId: {appID}, unknown1: {unknown1}, unknown2: {unknown2}")
+        offset = 4
+        for _ in range(start):
+            try:
+                appNB, unknown1, appID, unknown2 = struct.unpack_from('<IIII', data, offset)
+                offset += struct.calcsize('<IIII')
+                cmserver_obj.log.debug(f"appId: {appID}, unknown1: {unknown1}, unknown2: {unknown2}")
+                statistics_db.record_gameplay(appID, client_obj.steamID)
+            except Exception:
+                break
 
     build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
@@ -95,28 +110,37 @@ def handle_GamesPlayedStats2(cmserver_obj, packet: CMPacket, client_obj: Client)
     game_count, = struct.unpack_from('<I', data, 0)
     # TODO processID is only in 2009+ clients i think... could be that it ISNT used in gamesplayedstats (the non-deprecated version)
     if game_count > 0:
-        try:
-            steamid, gameid, server_ip, server_port, issecure, processID, token_size = struct.unpack_from(first_part, data, 4)
-            size_body = struct.calcsize(first_part)
-            token = data[size_body:] # FIXME can either be a 4 byte int or variable length blob, depending if gameid is a mod or not
-            cmserver_obj.log.debug(f"game_count: {game_count}, steamid: {steamid}, gameid: {gameid}, server_ip: {server_ip}, server_port: {server_port}, issecure: {issecure}, processID: {processID}, toke: {token}")
-
-            client_obj.update_status_info(cmserver_obj, PlayerState.online, gameid, server_ip, server_port, steamid)
-        except:
-            cmserver_obj.log.error(f"handle_GamesPlayedStats2 error: {data}")
-            pass
+        offset = 4
+        for _ in range(game_count):
+            try:
+                steamid, gameid, server_ip, server_port, issecure, processID, token_size = struct.unpack_from(first_part, data, offset)
+                offset += struct.calcsize(first_part)
+                token = data[offset:offset + token_size]
+                offset += token_size
+                cmserver_obj.log.debug(
+                    f"steamid: {steamid}, gameid: {gameid}, server_ip: {server_ip}, server_port: {server_port}, processID: {processID}, token: {token}"
+                )
+                client_obj.update_status_info(cmserver_obj, PlayerState.online, gameid, server_ip, server_port, steamid)
+                statistics_db.record_gameplay(gameid, steamid)
+                if processID:
+                    statistics_db.log_event('gamesplayed2', {
+                        'steamid': steamid,
+                        'gameid': gameid,
+                        'server_ip': server_ip,
+                        'server_port': server_port,
+                        'process_id': processID,
+                    })
+            except Exception:
+                cmserver_obj.log.error(f"handle_GamesPlayedStats2 error: {data}")
+                break
     else:
         client_obj.exit_app()
 
     build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
 
     return -1
-#packetid: 738
-# \xe2\x02\x00\x00
-# \x10\x00\x00\x00
-# \x01\x00\x10\x01
-# \x00\x00\x00\x00
-# b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00F\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+
+
 def handle_GamesPlayedStats3(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
@@ -130,7 +154,7 @@ def handle_GamesPlayedStats3(cmserver_obj, packet: CMPacket, client_obj: Client)
     if start:
         # Unpack the following DWORDs and WORDs according to their offsets.
         GSSteamID, appId, serverIp, serverPort, issecure, token_size = struct.unpack_from('<QQIHHI', data, 4)
-        if data > 32 and token_size != 0:
+        if len(data) > 32 and token_size != 0:
             token_or_blob = data[32:]
         packedIp = struct.pack("!I", serverIp)
 
@@ -148,16 +172,26 @@ def handle_GamesPlayedStats3(cmserver_obj, packet: CMPacket, client_obj: Client)
 
 def handle_AppUsageEvent(cmserver_obj, packet: CMPacket, client_obj):
     client_address = client_obj.ip_port
-    # Unpack the first 8 bytes of eMsgID.data to get type and app
     request = packet.CMRequest
-    usage_type, app = struct.unpack_from('<II', request.data, 0)
-    message = request.data[13:].decode('latin-1')  # Assuming message encoding is Latin-1
-    b = f"type:{usage_type} app:{app} message:{message}\n"
+
+    try:
+        # Structure: int usage_type, uint64 game_id, bool offline, zero terminated string
+        usage_type, game_id, offline = struct.unpack_from('<IQB', request.data, 0)
+        message = request.data[13:].split(b"\x00", 1)[0].decode("latin-1")
+    except struct.error as e:
+        cmserver_obj.log.error(f"app usage event parse error: {e} {request.data}")
+        return -1
+
+    b = f"type:{usage_type} game:{game_id} offline:{offline} message:{message}\n"
     if usage_type == 1:
         cmserver_obj.log.info(f"{b}User is launching app")
-        client_obj.update_status_info(cmserver_obj, PlayerState.online, app)
+        client_obj.update_status_info(cmserver_obj, PlayerState.online, game_id)
+
     elif usage_type == 2:
-        cmserver_obj.log.info(f"{b}User is launching trial or tool app") # FIXME this also triggers for 'tools' like dedicated servers
+        if 'dedicated' in message.lower():
+            cmserver_obj.log.info(f"{b}User is starting a dedicated server")
+        else:
+            cmserver_obj.log.info(f"{b}User is launching trial or tool app")
     elif usage_type == 3:
         cmserver_obj.log.info(f"{b}User is playing media")
     elif usage_type == 4:
@@ -173,14 +207,10 @@ def handle_AppUsageEvent(cmserver_obj, packet: CMPacket, client_obj):
     else:
         cmserver_obj.log.info(f"{b}Unknown user action")
 
-    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
+    #build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     return -1
 
-# packetid: 842
-# b'\x01\x00\x00\x002\x00\x00\x00\x00event\x00\x01msg\x00conflict_deniedops_presell\x00\x02sec\x00\x02\x00\x00\x00\x08\x08'
-# b'\x01\x00\x00\x00%\x00\x00\x00\x00event\x00\x01msg\x00ej_corner_152\x00\x02sec\x00\x00\x00\x00\x00\x08\x08'
-# survey:
-#data: b'\x02\x00\x00\x00\xa1\x05\x00\x00\x00WizardData\x00\x02NetSpeed\x00\x00\x00\x00\x00\x05NetSpeedLabel\x00\x0b\x00\x00\x00D\x00o\x00n\x00\'\x00t\x00 \x00K\x00n\x00o\x00w\x00\x00\x00\x02Microphone\x00\xff\xff\xff\xff\x05MicrophoneLabel\x00\x0b\x00\x00\x00D\x00o\x00n\x00\'\x00t\x00 \x00k\x00n\x00o\x00w\x00\x00\x00\x01CPUVendor\x00GenuineIntel\x00\x02CPUSpeed\x00\xb8\x0b\x00\x00\x02LogicalProcessors\x00\x08\x00\x00\x00\x02PhysicalProcessors\x00\x08\x00\x00\x00\x02HyperThreading\x00\x00\x00\x00\x00\x02FCMOV\x00\x01\x00\x00\x00\x02SSE2\x00\x01\x00\x00\x00\x02SSE3\x00\x01\x00\x00\x00\x02SSE4\x00\x01\x00\x00\x00\x02SSE4a\x00\x00\x00\x00\x00\x02SSE41\x00\x01\x00\x00\x00\x02SSE42\x00\x01\x00\x00\x00\x01OSVersion\x00Windows\x00\x02Is64BitOS\x00\x01\x00\x00\x00\x02OSType\x00\x00\x00\x00\x00\x02NTFS\x00\x01\x00\x00\x00\x01AdapterDescription\x00NVIDIA GeForce RTX 3050\x00\x01DriverVersion\x0030.0.15.1179\x00\x01DriverDate\x002022-2-10\x00\x02VRAMSize\x00\xff\x1f\x00\x00\x02BitDepth\x00 \x00\x00\x00\x02RefreshRate\x00\xa5\x00\x00\x00\x02NumMonitors\x00\x02\x00\x00\x00\x02NumDisplayDevices\x00\x02\x00\x00\x00\x02MonitorWidthInPixels\x00\x00\n\x00\x00\x02MonitorHeightInPixels\x00\xa0\x05\x00\x00\x02DesktopWidthInPixels\x008\x0e\x00\x00\x02DesktopHeightInPixels\x00\x80\x07\x00\x00\x02MonitorWidthInMillimeters\x00\xb9\x02\x00\x00\x02MonitorHeightInMillimeters\x00\x88\x01\x00\x00\x02MonitorDiagonalInMillimeters\x00\x1f\x03\x00\x00\x01VideoCard\x00NVIDIA GeForce RTX 3050\x00\x01DXVideoCardDriver\x00nvldumd.dll\x00\x01DXVideoCardVersion\x0030.0.15.1179\x00\x02DXVendorID\x00\xde\x10\x00\x00\x02DXDeviceID\x00\x07%\x00\x00\x01MSAAModes\x002x 4x 8x \x00\x02MultiGPU\x00\x00\x00\x00\x00\x02NumSLIGPUs\x00\x01\x00\x00\x00\x02DisplayType\x00\x00\x00\x00\x00\x02BusType\x00\x03\x00\x00\x00\x02BusRate\x00\x08\x00\x00\x00\x02dell_oem\x00\x00\x00\x00\x00\x01AudioDeviceDescription\x00Speakers (Realtek(R) Audio)\x00\x02RAM\x00\xb9\x7f\x00\x00\x02LanguageId\x00\x00\x00\x00\x00\x02DriveType\x00\x02\x00\x00\x00\x02TotalHD\x00\x82\xab*\x01\x02FreeHD\x00\x17i\x08\x00\x02SteamHDUsage\x00/\x00\x00\x00\x01OSInstallDate\x001969-12-31\x00\x01GameController\x00None\x00\x02NonSteamApp_firefox\x00\x00\x00\x00\x00\x02NonSteamApp_openoffice\x00\x00\x00\x00\x00\x02NonSteamApp_wfw\x00\x00\x00\x00\x00\x02NonSteamApp_za\x00\x00\x00\x00\x00\x02NonSteamApp_f4m\x00\x00\x00\x00\x00\x02NonSteamApp_cog\x00\x00\x00\x00\x00\x02NonSteamApp_pd\x00\x00\x00\x00\x00\x02NonSteamApp_vmf\x00\x00\x00\x00\x00\x02NonSteamApp_grl\x00\x00\x00\x00\x00\x02NonSteamApp_fv\x00\x00\x00\x00\x00\x07machineid\x00\xb0dU"B\xfe\xc2H\x02version\x00\x10\x00\x00\x00\x02country\x00US\x00\x00\x00ownership\x00\x08\x08\x08',
+
 def handle_ClientSteamUsageEvent(cmserver_obj, packet: CMPacket, client_obj: Client):
     """enum SteamUsageEvent
 {
@@ -211,6 +241,22 @@ def handle_ClientSteamUsageEvent(cmserver_obj, packet: CMPacket, client_obj: Cli
             kv_parser.parse(keyvalue_bin)
             cmserver_obj.log.info(f"Parsed Data: {kv_parser.data}")
 
+            survey_data = {}
+            for key, value in kv_parser.data.items():
+                if key in ("SubKeyStart", "SubKeyEnd"):
+                    continue
+                if isinstance(value, tuple):
+                    survey_data[key] = value[0]
+                else:
+                    survey_data[key] = value
+
+            country_val = survey_data.get("country")
+            if isinstance(country_val, int):
+                country_bytes = country_val.to_bytes(4, "little")
+                survey_data["country"] = country_bytes.split(b"\x00", 1)[0].decode("ascii", errors="ignore")
+
+            statistics_db.record_s3surveydata(survey_data)
+
             # Acknowledge the packet (assuming build_GeneralAck is defined)
             build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
         else:
@@ -220,15 +266,16 @@ def handle_ClientSteamUsageEvent(cmserver_obj, packet: CMPacket, client_obj: Cli
 
     return -1
 
+
 def handle_GamesPlayedWithDataBlob(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Games Played (with blob) info")
     request = packet.CMRequest
     data = request.data
     try:
-        # TODO DO SOMETHING WITH THIS INFORMATION!
         deserializer = MsgClientGamesPlayed_WithDataBlob(data)
-        print(deserializer)
+        payload = {k: v for k, v in deserializer.__dict__.items() if k != "buffer"}
+        statistics_db.log_event("games_played_blob", payload)
     except Exception as e:
         cmserver_obj.log.error(f"games played with game blob: {e}")
         pass
@@ -236,22 +283,25 @@ def handle_GamesPlayedWithDataBlob(cmserver_obj, packet: CMPacket, client_obj: C
 
 
 def handle_GetUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
+    """Handles the ClientGetUserStats packet."""
     client_address = client_obj.ip_port
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved User Stats Info")
     request = packet.CMRequest
 
-    # TODO This is supposed to have a key/value type of packet info
-    # TODO this looks like it holds acheivement info and MUCH more info than that
     try:
-        appId, version, crc = struct.unpack_from('<QII', request.data)
-        cmserver_obj.log.debug(f"appId: {appId}, version: {version}, crc: {crc}")
+        # Unpack: 8 bytes gameID, 4 bytes stats_crc, 4 bytes local_schema_version.
+        gameID_int, stats_crc, local_schema_version = struct.unpack_from('<QII', request.data)
+        steamid_raw = request.data[16:]
+        cmserver_obj.log.debug(f"appId: {gameID_int}, version: {local_schema_version}, crc: {stats_crc}")
+        result = EResult.OK
     except Exception as e:
-        cmserver_obj.log.error(f"get user status: {e}")
-        pass
+        cmserver_obj.log.error(f"get user status error: {e}")
+        result = EResult.Fail
+        gameID_int = 0
+        steamid_raw = b"\x00"
+        local_schema_version = 0
 
-    build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
-
-    return -1
+    return build_GetUserStatsResponse(client_obj, result, gameID_int, steamid_raw, local_schema_version)
 
 
 def handle_NoUDPConnectivity(cmserver_obj, packet, client_obj):
@@ -259,10 +309,149 @@ def handle_NoUDPConnectivity(cmserver_obj, packet, client_obj):
     cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved No UDP Connectivity Info")
     request = packet.CMRequest
 
-    # FIXME store this information somewhere!
     message = MsgClientNoUDPConnectivity(request.data)
-    print(message)
+    statistics_db.log_event('connection_stats', message.__dict__)
 
     """We do nothing, this is just the client telling us that NO UDP connectivity was possible..?"""
+    #build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
+    return -1
+
+
+def handle_ClientStat2(cmserver_obj, packet, client_obj):
+    client_address = client_obj.ip_port
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Stats 2 Info")
+    request = packet.CMRequest
+
+    message = MsgClientStat2()
+    message.parse(request.data)
+    statistics_db.log_event('client_stat2', message.__dict__)
+
     build_GeneralAck(client_obj,packet,client_address,cmserver_obj)
     return -1
+
+
+# Global stats manager instance
+_stats_manager = None
+
+def get_stats_manager():
+    """Get or create the global stats manager instance"""
+    global _stats_manager
+    if _stats_manager is None:
+        _stats_manager = StatsManager()
+    return _stats_manager
+
+
+def handle_ClientGetUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
+    """Handle ClientGetUserStats packet (EMsg 818)"""
+    client_address = client_obj.ip_port
+    request = packet.CMRequest
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received ClientGetUserStats")
+    
+    try:
+        # Parse the request
+        msg = MSGClientGetUserStats(client_obj, request.data)
+        
+        # Get the target steam ID (0 means requesting own stats)
+        target_steamid = msg.steamGlobalId if msg.steamGlobalId != 0 else client_obj.steamID
+        
+        cmserver_obj.log.debug(f"GetUserStats: gameID={msg.gameID}, target_steamid={target_steamid}, "
+                              f"local_version={msg.schemaLocalVersion}, crc={msg.statsCrc}")
+        
+        # Get stats manager and retrieve user stats
+        stats_manager = get_stats_manager()
+        try:
+            user_stats = stats_manager.get_user_stats(target_steamid, msg.gameID)
+        except Exception as e:
+            cmserver_obj.log.error(f"Error getting user stats: {e}")
+            user_stats = None
+        
+        if user_stats:
+            # Always attach schema as raw binary data (don't parse it)
+            # Compute current CRC
+            try:
+                user_stats.computeCrc()
+                result = EResult.OK
+            except Exception as e:
+                cmserver_obj.log.error(f"Error computing CRC: {e}")
+                result = EResult.Fail
+        else:
+            result = EResult.Fail
+        
+        # Get raw schema data to attach to response
+        schema_data = stats_manager.get_raw_schema_data(msg.gameID)
+        
+        # Build and send response with schema data
+        response = build_GetUserStats_response(client_obj, result, msg.gameID, user_stats, schema_data)
+
+    except Exception as e:
+        cmserver_obj.log.error(f"Error handling ClientGetUserStats: {e}")
+        # Send failure response
+        response = build_GetUserStats_response(client_obj, EResult.Fail, 0, None, b"")
+        return response
+    
+    return response
+
+
+def handle_ClientStoreUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
+    """Handle ClientStoreUserStats packet (EMsg 820)"""
+    client_address = client_obj.ip_port
+    request = packet.CMRequest
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received ClientStoreUserStats")
+    
+    try:
+        # Parse the request
+        msg = MSGClientStoreUserStats(client_obj, request.data)
+        
+        cmserver_obj.log.debug(f"StoreUserStats: gameID={msg.gameID}, statsCount={len(msg.stats)}, "
+                              f"explicitReset={msg.explicitReset}")
+        
+        # Get stats manager and update user stats
+        stats_manager = get_stats_manager()
+        failed_validation_stats = {}
+        
+        result = stats_manager.update_user_stats(
+            client_obj.steamID,
+            msg.gameID, 
+            msg.stats, 
+            msg.explicitReset, 
+            failed_validation_stats
+        )
+        
+        # Get updated CRC
+        stats_crc = stats_manager.get_stats_crc(client_obj.steamID, msg.gameID)
+        
+        # Build and send response
+        response = build_StoreUserStats_response(
+            client_obj, result, msg.gameID, stats_crc, failed_validation_stats
+        )
+
+        # If successful, notify any connected game servers
+        if result != EResult.Fail:
+            # Find game servers this player is connected to
+            from steam3.Types.wrappers import GameID
+            game_id_obj = GameID(msg.gameID)
+            app_id = game_id_obj.getAppId()
+            
+            # TODO: Get list of servers player is connected to
+            # For now, we'll skip the notification as we need the server connection tracking
+            
+            cmserver_obj.log.debug(f"Successfully stored stats for steamid {client_obj.steamID}, "
+                                  f"gameID {msg.gameID}, new CRC: {stats_crc}")
+        
+    except Exception as e:
+        cmserver_obj.log.error(f"Error handling ClientStoreUserStats: {e}")
+        # Send failure response
+        response = build_StoreUserStats_response(client_obj, EResult.Fail, 0, 0, {})
+        return response
+    
+    return response
+
+
+def handle_ClientStoreUserStats2(cmserver_obj, packet: CMPacket, client_obj: Client):
+    """Handle ClientStoreUserStats2 packet (EMsg 5466) - newer version"""
+    client_address = client_obj.ip_port
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received ClientStoreUserStats2")
+    
+    # For now, treat it the same as the original StoreUserStats
+    # The format might be slightly different but the logic should be similar
+    return handle_ClientStoreUserStats(cmserver_obj, packet, client_obj)

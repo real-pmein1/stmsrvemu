@@ -97,7 +97,7 @@ class ClientLogOnWithCredentials_Deprecated:
         ticket = self.data[offset:offset + self.ticket_length]
         offset += self.ticket_length
 
-        self.ticket = ticket_utils.Steam2Ticket(ticket[4:])
+        self.ticket = ticket_utils.Steam2Ticket(ticket[4:], cmTicket = True)
 
         email_end = self.data.find(b'\x00', offset)
         self.email = self.data[offset:email_end].decode('ascii')
@@ -111,7 +111,7 @@ class ClientLogOnWithCredentials_Deprecated:
         self.account_creation_time = uint32_to_time(int.to_bytes(self.account_creation_time, length = 4, byteorder = "little"))
         offset += 4
 
-        self.unknown1, = struct.unpack_from('<I', self.data, offset)
+        self.unknown1, = struct.unpack_from('<I', self.data, offset)  # This is ALWAYS 0!
         offset += 4
 
         if self.protocol < 65555: # missing machineID 02/2009 49/770

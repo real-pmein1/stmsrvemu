@@ -4,11 +4,13 @@ import time
 
 import globalvars
 import utilities.time
-import utils
 from utilities import blobs
 from utilities.database import base_dbdriver, dbengine
+from utilities.beta1_keyvalidation import validateBeta1Key
+from config import get_config
 
 log = logging.getLogger("BETA1DB")
+config = get_config()
 
 
 def k(n):
@@ -35,19 +37,89 @@ class beta1_dbdriver:
         # Create a session for ORM operations
         self.session = self.db_driver.get_session()
 
+    def insert_user(self, username, createtime, accountkey, salt, _hash, user_id: int = None):
+        # decode once
+        username_str   = username.decode('latin-1')
+        accountkey_str = accountkey.decode('latin-1')
+        salt_str       = salt.decode('latin-1')
+        hash_str       = _hash.decode('latin-1')
 
-    def insert_user(self, username, createtime, accountkey, salt, _hash):
-        username = username.decode('latin-1')
-        existing_user = self.session.query(self.Users_table).filter_by(username=username).first()
+        # SPECIAL-KEY FLOW?
+        if self.config.get('force_beta1_specialkey', '').lower() == 'true':
+            # 1) Lookup existing user by username
+            user = (
+                self.session
+                    .query(self.Users_table)
+                    .filter_by(username=username_str)
+                    .first()
+            )
+            # not found, or they've already filled in any of these ? cannot proceed
+            if not user or user.createtime or user.salt or user.hash:
+                return -3
 
-        if existing_user:
-            print(f"Username '{username}' already exists. User not inserted.")
-            return False
-        else:
-            user = base_dbdriver.Beta1_User(username=username, createtime=createtime, accountkey=accountkey.decode('latin-1'), salt=salt.decode('latin-1'), hash=_hash.decode('latin-1'))
-            self.session.add(user)
+            # 2) Validate the special key
+            if validateBeta1Key(user.id, accountkey):
+                # 3) update the record
+                user.accountkey = accountkey_str
+                user.salt       = salt_str
+                user.hash       = hash_str
+                user.createtime = createtime
+                try:
+                    self.session.commit()
+                    return True
+                except Exception:
+                    self.session.rollback()
+                    return False
+            else:
+                return -4
+
+        # ??????????????????????????????
+        # NORMAL INSERT-NEW-USER FLOW
+        # ??????????????????????????????
+
+        # 1) If an explicit ID was given, make sure it isn't already used
+        if user_id is not None:
+            existing_by_id = (
+                self.session
+                    .query(self.Users_table)
+                    .filter_by(id=user_id)
+                    .first()
+            )
+            if existing_by_id:
+                print(f"ID `{user_id}` is already taken. User not inserted.")
+                return -2
+
+        # 2) Make sure the username isn't already taken
+        existing_by_name = (
+            self.session
+                .query(self.Users_table)
+                .filter_by(username=username_str)
+                .first()
+        )
+        if existing_by_name:
+            print(f"Username '{username_str}' already exists. User not inserted.")
+            return -1
+
+        # 3) Build and insert the new user
+        user_kwargs = {
+            'username':   username_str,
+            'createtime': createtime,
+            'accountkey': accountkey_str,
+            'salt':       salt_str,
+            'hash':       hash_str,
+        }
+        if user_id is not None:
+            user_kwargs['id'] = user_id
+
+        new_user = base_dbdriver.Beta1_User(**user_kwargs)
+        self.session.add(new_user)
+        try:
             self.session.commit()
             return True
+        except Exception as e:
+            self.session.rollback()
+            print(f"Failed to insert user: {e}")
+            return False
 
     def insert_subscription(self, username, subid, subtime):
         username = username.decode('latin-1') if isinstance(username, bytes) else username

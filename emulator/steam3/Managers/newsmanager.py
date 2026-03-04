@@ -12,10 +12,15 @@ class NewsManager:
 
     def create_appnews(self, appid: int, newsid: int) -> None:
         """
-        Packs the newstype, appid, and newsid into a byte buffer and adds it to the news entries.
+        Packs the app news entry (type 0 / k_EAppNews).
+
+        Structure (9 bytes total):
+        - eNewsUpdateType (uint8): 0
+        - m_uNewsID (uint32): News ID
+        - m_uAppID (uint32): Application ID
         """
         newstype = 0
-        buffer = struct.pack('BII', newstype, appid, newsid)
+        buffer = struct.pack('<BII', newstype, newsid, appid)
         self.news_entries.append(buffer)
 
     def create_adnews_2005(self, news_str: str) -> None:
@@ -34,29 +39,51 @@ class NewsManager:
 
     def create_steamnews(self, newsID: int, haveSubID: int, notHaveSubID: int, haveAppID: int, notHaveAppID: int, haveAppIDInstalled: int, havePlayedAppID: int, isAd: bool) -> None:
         """
-        Packs isAd, newsID, haveSubID, notHaveSubID, haveAppID, notHaveAppID, haveAppIDInstalled, havePlayedAppID into a byte buffer
-        and adds it to the news entries.
+        Packs the Steam news entry (type 1 = k_ESteamAds or type 2 = k_ESteamNews).
+
+        Structure (29 bytes total):
+        - eNewsUpdateType (uint8): 1 (ad) or 2 (news)
+        - m_uNewsID (uint32): News ID
+        - m_uHaveSubID (uint32): Show only if user has this subscription
+        - m_uNotHaveSubID (uint32): Show only if user doesn't have this subscription
+        - m_uHaveAppID (uint32): Show only if user owns this app
+        - m_uNotHaveAppID (uint32): Show only if user doesn't own this app
+        - m_uHaveAppIDInstalled (uint32): Show only if user has this app installed
+        - m_uHavePlayedAppID (uint32): Show only if user has played this app
         """
         ad_byte = 1 if isAd else 2
-        buffer = struct.pack('BIIIIIII', ad_byte, newsID, haveSubID, notHaveSubID, haveAppID, notHaveAppID, haveAppIDInstalled, havePlayedAppID)
+        buffer = struct.pack('<BIIIIIII', ad_byte, newsID, haveSubID, notHaveSubID, haveAppID, notHaveAppID, haveAppIDInstalled, havePlayedAppID)
         self.news_entries.append(buffer)
 
-    def create_clientupdatenews(self, bootstrapVersion: int, clientVersion: int, shouldReloadCDDB: bool) -> None:
+    def create_clientupdatenews(self, newsID: int, bootstrapVersion: int, clientVersion: int, shouldReloadCDDB: bool) -> None:
         """
-        Packs the number 4 as a byte, followed by bootstrapVersion and clientVersion (32-bit unsigned ints), and shouldReloadCDDB (boolean as a byte) into a byte buffer
-        and adds it to the news entries.
+        Packs the client update news entry (type 4 / k_EClientUpdate).
+
+        Structure (14 bytes total):
+        - eNewsUpdateType (uint8): 4
+        - m_uNewsID (uint32): News ID
+        - m_unCurrentBootstrapperVersion (uint32): Steam/bootstrapper version
+        - m_unCurrentClientVersion (uint32): SteamUI/client version
+        - m_bReloadCDDB (uint8): Whether to reload CDR (1 = yes, 0 = no)
+
+        When m_bReloadCDDB is set, client will fetch fresh CDR.
         """
         reload_byte = 1 if shouldReloadCDDB else 0
-        buffer = struct.pack('BIIB', 4, bootstrapVersion, clientVersion, reload_byte)
+        buffer = struct.pack('<BIIIB', 4, newsID, bootstrapVersion, clientVersion, reload_byte)
         self.news_entries.append(buffer)
 
     def serialize(self) -> bytes:
         """
-        Serializes the news entries by appending all the different byte buffers and returning the news count packed as a 32-bit integer
-        followed by the full news buffer.
+        Serializes the news entries by prepending the news count as uint16 (m_usNumNewsUpdates)
+        followed by all news entry byte buffers.
+
+        Packet structure:
+        - m_usNumNewsUpdates (uint16): Number of news entries
+        - News entries: Variable-length data based on entry types
         """
         news_count = len(self.news_entries)
-        news_count_buffer = struct.pack('I', news_count)
+        # IDA analysis confirms m_usNumNewsUpdates is uint16 (2 bytes)
+        news_count_buffer = struct.pack('<H', news_count)
         full_news_buffer = b''.join(self.news_entries)
         return news_count_buffer + full_news_buffer
 

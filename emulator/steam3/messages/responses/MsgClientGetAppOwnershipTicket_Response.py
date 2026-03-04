@@ -43,8 +43,15 @@ class GetAppOwnershipTicketResponse:
         :return: A byte string.
         """
         packet = CMResponse(eMsgID = EMsg.ClientGetAppOwnershipTicketResponse, client_obj = self.client_obj)
-        # Structure: eresult (4 bytes), app_id (4 bytes), ticket_length (4 bytes), ticket (variable length)
-        packet.data = struct.pack('<I I I I', self.eresult, self.app_id, len(self.ticket) - self.signature_length, self.signature_length)
+        
+        # Calculate ticket data length (excluding signature)
+        ticket_data_length = len(self.ticket) - self.signature_length
+        
+        # Structure expected by client: [result][appId][ticketLength][signatureLength][ticket_data]
+        # Based on C++ deSerialize: result, appId, ticketLength, signatureLength
+        
+		#packet.data = struct.pack('<B', 1) # is this only for pre 2008?
+        packet.data = struct.pack('<I I I I', self.eresult, self.app_id, ticket_data_length, self.signature_length)
         packet.data += self.ticket
         packet.length = len(packet.data)
         return packet

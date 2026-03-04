@@ -4,12 +4,15 @@ import socket
 import struct
 import time
 
-import ipcalc
 from Crypto.Hash import SHA
+
+import ipcalc
 
 import globalvars
 import utils
 from utilities import blobs, cdr_manipulator, encryption
+from servers.managers.dirlistmanager import manager as dirmanager
+from servers.managers import serverlist_utilities
 from utilities.database import ccdb
 from utilities.networkhandler import TCPNetworkHandler
 
@@ -28,7 +31,7 @@ class configserver(TCPNetworkHandler):
 
         clientid = str(client_address) + ": "
 
-        if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)): # or globalvars.public_ip == str(client_address[0]):
+        if str(client_address[0]) in globalvars.server_network:
             islan = True
         else:
             islan = False
@@ -86,12 +89,13 @@ class configserver(TCPNetworkHandler):
                         new_frstblob = blobs.blob_serialize(modified_firstblob)
                         client_socket.send_withlen(new_frstblob, False)
                     else:
-                        if globalvars.steamui_ver < 61:  # guessing steamui version when steam client interface v2 changed to v3
-                            globalvars.tgt_version = "1"
-                            self.log.debug(clientid + "TGT version set to 1")
-                        else:
+                        # steamui_ver is a string for record_ver 0 (beta v1 2002), integer otherwise
+                        if isinstance(globalvars.steamui_ver, int) and globalvars.steamui_ver >= 61:
                             globalvars.tgt_version = "2"  # config file states 2 as default
                             self.log.debug(clientid + "TGT version set to 2")
+                        else:
+                            globalvars.tgt_version = "1"  # old beta clients or steamui_ver < 61
+                            self.log.debug(clientid + "TGT version set to 1")
 
                         if isinstance(firstblob, dict):
                             firstblob = blobs.blob_serialize(firstblob)
@@ -100,29 +104,8 @@ class configserver(TCPNetworkHandler):
                 # SEND NET KEY
                 elif command == b"\x04":
                     self.log.info(clientid + "Sending network key")
-                    # This is cheating. I've just cut'n'pasted the hex from the network_key. FIXME
-                    # client_socket.send(encryption.signed_mainkey_reply)
-                    # Convert the integer n to a hexadecimal string (without "0x" prefix)
-                    network_key_n_hex = hex(encryption.network_key.n)[2:]
-
-                    # Ensure the length of the hex string is even
-                    if len(network_key_n_hex) % 2 != 0:
-                        network_key_n_hex = "0" + network_key_n_hex
-
-                    # Convert the hex string to binary (byte string)
-                    network_key_n_bytes = binascii.a2b_hex(network_key_n_hex)
-
-                    # Construct the BER string
-                    BERstring = (
-                            binascii.a2b_hex("30819d300d06092a864886f70d010101050003818b0030818702818100")
-                            + network_key_n_bytes
-                            + b"\x02\x01\x11"
-                    )
-                    signature = encryption.rsa_sign_message(encryption.main_key, BERstring)
-
-                    reply = struct.pack(">H", len(BERstring)) + BERstring + struct.pack(">H", len(signature)) + signature
-
-                    client_socket.send(reply)
+                    # Use precomputed network key reply (computed once at startup)
+                    client_socket.send(encryption.network_key_reply)
                 # GETCURRENTAUTHFAILSAFEMODE
                 elif command == b"\x05":
                     self.log.info(clientid + "confserver command 5, GetCurrentAuthFailSafeMode, sending zero reply")
@@ -137,11 +120,17 @@ class configserver(TCPNetworkHandler):
                     self.log.debug(clientid + "Sending GetCurrentContentFailSafeMode")
 
                     # client_socket.send(binascii.a2b_hex("0001312d000000012c"))
-                    # TODO Grab IP from Directory Server
-                    if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)):
-                        bin_ip = utils.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
+                    if globalvars.aio_server:
+                        server_list = dirmanager.get_server_list("CSDServer", islan, single=1)
                     else:
-                        bin_ip = utils.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
+                        server_list = serverlist_utilities.request_server_list("CSDServer", single=1)
+                    if server_list:
+                        bin_ip = utils.encodeIP(server_list[0])
+                    else:
+                        if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)):
+                            bin_ip = utils.encodeIP((self.config["server_ip"], self.config["content_server_port"]))
+                        else:
+                            bin_ip = utils.encodeIP((self.config["public_ip"], self.config["content_server_port"]))
 
                     reply = struct.pack(">H", 1) + bin_ip
 

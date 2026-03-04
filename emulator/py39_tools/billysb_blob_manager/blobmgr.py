@@ -4,19 +4,21 @@ import re
 import sys
 from datetime import datetime
 import struct
+import zlib
+import traceback
 from tkinter import filedialog
-import libs.PySimpleGUI as psg
+import PySimpleGUI as psg
 import configparser
 from pathlib import Path
 from shutil import copystat
 from threading import Thread
-from time import sleep
+from time import sleep, monotonic
 from os import path, mkdir, utime, remove as osremove
 from json import dumps as jsondump
 from json import loads as jsonload
 from bisect import bisect_right
 
-from libs.PySimpleGUI import WIN_CLOSED
+from PySimpleGUI import WIN_CLOSED
 from pyperclip import copy as clipboardcopy
 from GenerateDB import FinalFileReaderv0, FinalFileReaderv1
 
@@ -25,6 +27,33 @@ from blobreader import ReadBlob, ReadBytes
 import pymysql
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
+
+
+# Ensure repository root (contains `utilities`, `config.py`, etc.) is importable.
+# Includes source and PyInstaller-frozen execution paths.
+SCRIPT_DIR = Path(__file__).resolve().parent
+repo_candidates = [Path.cwd(), SCRIPT_DIR, SCRIPT_DIR.parent, SCRIPT_DIR.parent.parent]
+
+if getattr(sys, 'frozen', False):
+    exe_dir = Path(sys.executable).resolve().parent
+    repo_candidates.append(exe_dir)
+    repo_candidates.extend(list(exe_dir.parents)[:6])
+
+if hasattr(sys, '_MEIPASS'):
+    repo_candidates.append(Path(getattr(sys, '_MEIPASS')))
+
+seen_candidates = set()
+for candidate in repo_candidates:
+    resolved = candidate.resolve()
+    resolved_str = str(resolved)
+    if resolved_str in seen_candidates:
+        continue
+    seen_candidates.add(resolved_str)
+
+    if (resolved / 'utilities').is_dir():
+        if resolved_str not in sys.path:
+            sys.path.insert(0, resolved_str)
+        break
 
 
 # Function to strip comments from the config values
@@ -115,8 +144,19 @@ class BlobManager(object):
         self.FilesFolder = './files/'
         self.BlobsFolder = f'{self.FilesFolder}blobs/'
         self.CacheFolder = f'{self.FilesFolder}cache/'
+        self.ExportLoggingEnabled = any(arg.lower() == '-logging' for arg in sys.argv[1:])
+        self.ExportLogPath = Path('./blobmgr_export.log')
+        if self.ExportLoggingEnabled:
+            try:
+                with open(self.ExportLogPath, 'a', encoding = 'utf-8') as f:
+                    f.write(f"\n=== BlobMgr export session started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            except Exception:
+                pass
         self.row = None
         self.multiple_rows = None
+        self._header_resize_in_progress = False
+        self._header_resize_dragged = False
+        self._last_header_resize_at = 0.0
 
         # Table Header and Content.
         self.Rows = []
@@ -187,7 +227,7 @@ class BlobManager(object):
                 'label_extract_success':     'SUCCESSFULLY EXTRACTED SELECTED BLOBS.',
                 'label_swap_success':        'SUCCESSFULLY INSTALLED SELECTED BLOBS.',
                 'label_swapping':            'INSTALLING SELECTED BLOB, ONE SECOND.',
-                'label_extract_failure':     'FAILED TO EXTRACT PACKED BLOBS.',
+                'label_extract_failure':     'FAILED TO EXPORT SELECTED BLOBS.',
                 'label_swap_error1':         'NO FIRSTBLOBS! SWAP ABORTED.',
                 'label_swap_error2':         'FAILED TO DETECT FIRSTBLOB! SWAP ABORTED.',
                 'label_swap_error3':         'FAILED! COULD NOT WRITE/READ FILE. SWAP ABORTED',
@@ -196,10 +236,10 @@ class BlobManager(object):
                 'label_error_text2':         'Failed to preserve file dates of copied blobs.',
                 'label_error_text3':         'The extraction destination must be a folder.',
                 'label_error_generic':       'An error occured while performing the selected action\r\nPlease show BillySB a screenshot of the error below.\r\n',
-                'label_menu1_item1':         '&Extract',
+                'label_menu1_item1':         '&Export',
                 'label_menu1_item2_1':       '!&Packed',
                 'label_menu1_item2_2':       '&Packed',
-                'label_menu1_item3':         'Extract',
+                'label_menu1_item3':         'Export Blob',
                 'label_menu1_item4':         'Close',
         }
 
@@ -261,10 +301,10 @@ class BlobManager(object):
             else:
                 if 'config' in self.emulator_config:
                     db_config = self.emulator_config['config']
-                    self.database_host = db_config.get('database_host', '192.168.3.180')
-                    self.database_port = db_config.getint('database_port', 3388)
+                    self.database_host = db_config.get('database_host', '127.0.0.1')
+                    self.database_port = db_config.getint('database_port', 3306)
                     self.database_username = db_config.get('database_username', 'stmserver')
-                    self.database_password = db_config.get('database_password', 'lLHRN7W6')
+                    self.database_password = db_config.get('database_password', 'stmserver')
                 else:
                     psg.PopupError('Missing [config] section in emulator.ini', title = 'Error')
                     exit(2)
@@ -382,7 +422,7 @@ class BlobManager(object):
                 selected_row_colors = ('#ffffff', '#958831'),
                 header_background_color = '#4c5844',
                 header_text_color = '#ffffff',
-                col_widths = [10, 30, 10],
+                col_widths = [3, 6, 8, 14, 40],
                 enable_events = True,
                 expand_x = True,
                 expand_y = True,
@@ -390,10 +430,7 @@ class BlobManager(object):
                 right_click_menu = [
                         self.GetLocale('label_menu1_item1'),
                         [
-                                self.GetLocale('label_menu1_item2_1'),
-                                [
-                                        self.GetLocale('label_menu1_item3'),
-                                ],
+                                self.GetLocale('label_menu1_item3'),
                                 self.GetLocale('label_menu1_item4'),
                         ]
                 ],
@@ -418,20 +455,21 @@ class BlobManager(object):
                 [tbl1],
                 [psg.Text(f"{self.GetLocale('label_selected')} {self.GetLocale('label_selected_none')}", key = '-SELECTTEXT-', font = ('Verdana underline', 9), justification = 'center', enable_events = True)],
         ]
-        loader.close()
         if self.load_from_database:
             blob_base = "Database Blobs"
         else:
             blob_base = "File Based Blobs"
 
         self.window = psg.Window(
-                f"Billy {self.GetLocale('label_blobmgr')} - {self.GetLocale('label_version')} 1.13 --- {blob_base}",
+                f"Billy {self.GetLocale('label_blobmgr')} - {self.GetLocale('label_version')} 1.14 --- {blob_base}",
                 layout,
                 size = (1000, 500),
                 finalize = True,
                 resizable = True,
                 return_keyboard_events = True
         )
+        #self.window.hide()
+        self.window.TKroot.withdraw()
         # Access the Treeview widget directly
         treeview = self.window['-LIST-'].Widget  # Access the underlying Treeview widget
 
@@ -448,25 +486,55 @@ class BlobManager(object):
 
         print(packages_dir)
 
+        pkgs_list = list(enumerate(treeview.get_children()))
+        total_count = len(pkgs_list)
+        next_progress_update = 5
+        loader['-STATUS-'].update(value = 'Checking package files...')
+        loader['-PBAR-'].update(current_count = 75)
+        loader.bring_to_front()
+        steam_pkgs = set()
+        steamui_pkgs = set()
 
         # Iterate over the existing Treeview items and apply tags based on criteria
-        for idx, item_id in enumerate(treeview.get_children()):
+        for idx, item_id in pkgs_list: #enumerate(treeview.get_children()):
             row = self.Rows[idx]
             steam_version = row[1]
             steamui_version = row[2]
-            steam_pkg_path = f'{packages_dir}/steam_{steam_version}.pkg'
-            steamui_pkg_path = f'{packages_dir}/steamui_{steamui_version}.pkg'
+            blob_filename = row[-1] if len(row) > 5 else None
+            #print(steam_version, steamui_version)
+            steam_pkg_path, steamui_pkg_path = self._resolve_package_paths(packages_dir, steam_version, steamui_version, blob_filename)
+            steam_pkg_key = steam_pkg_path.lower()
+            steamui_pkg_key = steamui_pkg_path.lower()
 
             # Determine tags based on file existence
             tags = []
-            if not os.path.exists(steam_pkg_path):
-                tags.append('missing_steam')
-            if not os.path.exists(steamui_pkg_path):
-                tags.append('missing_steamui')
+            if steam_pkg_key not in steam_pkgs:
+                if not os.path.exists(steam_pkg_path):
+                    tags.append('missing_steam')
+                else:
+                    steam_pkgs.add(steam_pkg_key)
+            if steamui_pkg_key not in steamui_pkgs:
+                if not os.path.exists(steamui_pkg_path):
+                    tags.append('missing_steamui')
+                else:
+                    steamui_pkgs.add(steamui_pkg_key)
 
             if tags:
                 treeview.item(item_id, tags = tags)
 
+            # Throttle loader updates to every 5% completion for startup responsiveness.
+            if total_count > 0:
+                phase_percent = int(((idx + 1) * 100) / total_count)
+                if phase_percent >= next_progress_update or phase_percent == 100:
+                    overall_percent = 75 + int((phase_percent * 25) / 100)
+                    loader['-STATUS-'].update(value = f'Checking package files... {phase_percent}%')
+                    loader['-PBAR-'].update(current_count = overall_percent)
+                    next_progress_update = ((phase_percent // 5) + 1) * 5
+
+        loader['-PBAR-'].update(current_count = 100)
+        loader.close()
+
+        self.window.TKroot.deiconify()
         # Refresh the window to apply the changes
         self.window.refresh()
         self.window.bind('<Control-f>', 'CTRL+F')
@@ -476,31 +544,27 @@ class BlobManager(object):
 
         self.window['-LIST-'].bind("<Double-Button-1>", " Double")
         self.window['-SELECTTEXT-'].bind("<Double-Button-1>", " Double")
+        treeview.bind('<ButtonPress-1>', self._on_treeview_button_press, add = '+')
+        treeview.bind('<B1-Motion>', self._on_treeview_drag, add = '+')
+        treeview.bind('<ButtonRelease-1>', self._on_treeview_button_release, add = '+')
         thread = Thread(target = self.WindowRefresher)
         thread.daemon = True
         thread.start()
         # Refresh window even when main thread is blocked.
-        # Resize headers
-        max_col_width = 45
+        # Apply fixed startup column widths (non-dynamic) to match legacy layout.
         char_width = psg.Text.char_width_in_pixels(('Verdana', 9))  # Get character width in pixel
         table = self.window['-LIST-']
         table_widget = table.Widget
         table.expand(expand_x = True, expand_y = True)  # Expand table in both directions of 'x' and 'y'
-        for cid in self.TopRow:
-            table_widget.column(cid, stretch = True)
-
-        # Update column widths based on content
-        col_widths = [min([max(map(lambda x:len(str(x)), columns)) + 2, max_col_width]) * char_width for columns in zip(*self.Rows)]
-
+        fixed_char_widths = [3, 6, 8, 14, 40]
         table_widget.pack_forget()
-        for cid, width in zip(self.TopRow, col_widths):  # Set width for each column
-            # print(cid, width)
-            if cid == 'Date':
-                table_widget.column(cid, width = round(width / 1.7))
-            elif cid == 'Custom':
-                table_widget.column(cid, width = round(width))
-            else:
-                table_widget.column(cid, width = width)
+        for idx, cid in enumerate(self.TopRow):
+            if idx >= len(fixed_char_widths):
+                break
+            min_chars = max(fixed_char_widths[idx], len(str(cid)) + 1)
+            width_px = round(min_chars * char_width)
+            is_description = (idx == len(self.TopRow) - 1)
+            table_widget.column(cid, width = width_px, minwidth = width_px, stretch = is_description)
         table_widget.pack(side = 'left', fill = 'both', expand = True)
 
         self.LastSelected = None
@@ -508,15 +572,6 @@ class BlobManager(object):
 
         if self.PackReader is not None:
             self.window['-STATEMSG-'].Update(value = f'{self.GetLocale("label_use_preprocessed")} ({self.VersionPak})')
-            self.window['-LIST-'].set_right_click_menu([
-                    self.GetLocale('label_menu1_item1'),
-                    [
-                            self.GetLocale('label_menu1_item2_2'),
-                            [
-                                    self.GetLocale('label_menu1_item3'),
-                            ],
-                            self.GetLocale('label_menu1_item4'),
-                    ]])
         self.sort_state = {header:False for header in self.TopRow}  # Initialize sort state for each column
 
         self.last_message_row = None  # Initialize the tracking attribute
@@ -572,25 +627,21 @@ class BlobManager(object):
         if self.load_from_database:
             try:
                 if self.steam_datetime:
-                    # Ensure both FirstBlobDates and SecondBlobDates are sorted in reverse order by timestamp
-                    self.FirstBlobDates.sort(reverse = True)
-                    self.SecondBlobDates.sort(reverse = True)
-
                     # Reset the matching blobs
                     matching_firstblob = None
                     matching_secondblob = None
 
-                    # Find the matching firstblob based on the steam_date and steam_time from emulator.ini
-                    for timestamp, filename in self.FirstBlobDates:
-                        if timestamp <= self.steam_datetime.timestamp():
-                            matching_firstblob = filename
-                            break  # Stop after finding the most recent match
+                    target_ts = self.steam_datetime.timestamp()
 
-                    # Find the matching secondblob based on the steam_date and steam_time from emulator.ini
-                    for timestamp, filename in self.SecondBlobDates:
-                        if timestamp <= self.steam_datetime.timestamp():
+                    # Find the matching secondblob (most recent <= target timestamp).
+                    for timestamp, filename in reversed(self.SecondBlobDates):
+                        if timestamp <= target_ts:
                             matching_secondblob = filename
                             break  # Stop after finding the most recent match
+
+                    # Firstblob must be resolved from the chosen secondblob timestamp, not independently from target_ts.
+                    if matching_secondblob:
+                        matching_firstblob = self._resolve_first_blob_for_second(matching_secondblob)
 
                     # Update the -IFB- and -ISB- text elements in the window with the matched blob filenames
                     if matching_firstblob:
@@ -610,6 +661,29 @@ class BlobManager(object):
         while True:
             sleep(self.WindowRefreshTime)
             self.window.refresh()
+
+    def _on_treeview_button_press(self, event):
+        try:
+            treeview = self.window['-LIST-'].Widget
+            region = treeview.identify_region(event.x, event.y)
+            self._header_resize_in_progress = (region == 'separator')
+            self._header_resize_dragged = False
+        except Exception:
+            self._header_resize_in_progress = False
+            self._header_resize_dragged = False
+
+    def _on_treeview_drag(self, event):
+        if self._header_resize_in_progress:
+            self._header_resize_dragged = True
+
+    def _on_treeview_button_release(self, event):
+        if self._header_resize_in_progress and self._header_resize_dragged:
+            self._last_header_resize_at = monotonic()
+        self._header_resize_in_progress = False
+        self._header_resize_dragged = False
+
+    def _should_ignore_header_sort_click(self):
+        return (monotonic() - self._last_header_resize_at) < 0.35
 
     def set_heading_color(self, element, pressed_color, highlight_color, disabled_color):
         print('Hacking table colours.')
@@ -636,12 +710,97 @@ class BlobManager(object):
         else:
             return True
 
+    def _normalize_version_value(self, value):
+        return str(value).strip()
+
+    def _steamui_display_value(self, steamui_value):
+        value = self._normalize_version_value(steamui_value)
+        if value in ('06001000', '6001000'):
+            return '0.6.0.0/1.0.0.0'
+        if value in ('06101100', '6101100'):
+            return '0.6.1.0/1.1.0.0'
+        return value
+
+    def _steamui_raw_value(self, steamui_value):
+        value = self._normalize_version_value(steamui_value)
+        if value == '0.6.0.0/1.0.0.0':
+            return '06001000'
+        if value == '0.6.1.0/1.1.0.0':
+            return '06101100'
+        if value == '6001000':
+            return '06001000'
+        if value == '6101100':
+            return '06101100'
+        return value
+
+    def _canonical_blob_filename(self, blob_filename):
+        if blob_filename is None:
+            return ''
+        return str(blob_filename).split(' - ', 1)[0].strip()
+
+    def _is_beta2_platform_blob(self, blob_filename):
+        canonical = self._canonical_blob_filename(blob_filename)
+        return canonical in {
+                'secondblob.bin.2003-01-13 23_03_03',
+                'secondblob.bin.2003-01-20 03_39_01',
+                'secondblob.bin.2003-06-10 05_01_47',
+        }
+
+    def _resolve_package_paths(self, packages_dir, steam_version, steamui_version, blob_filename = None):
+        steam_value = self._normalize_version_value(steam_version)
+        steamui_raw = self._steamui_raw_value(steamui_version)
+
+        # Early 2002 beta package layout: files live in packagedir/betav1/steam_{0|1}.pkg
+        beta_pkg_name = None
+        if steamui_raw == '06001000':
+            beta_pkg_name = 'steam_0.pkg'
+        elif steamui_raw == '06101100':
+            beta_pkg_name = 'steam_1.pkg'
+
+        if beta_pkg_name is not None:
+            beta_pkg_path = f'{packages_dir}/betav1/{beta_pkg_name}'
+            steam_pkg_path = beta_pkg_path
+            steamui_pkg_path = beta_pkg_path
+        elif self._is_beta2_platform_blob(blob_filename):
+            # For specific beta2 blobs, both checks are resolved strictly in packagedir/betav2.
+            # Steam uses steam_<version>.pkg and SteamUI uses PLATFORM_1.pkg.
+            steam_pkg_path = f'{packages_dir}/betav2/steam_{steam_value}.pkg'
+            steamui_pkg_path = f'{packages_dir}/betav2/PLATFORM_1.pkg'
+        else:
+            steam_pkg_path = f'{packages_dir}/steam_{steam_value}.pkg'
+            steamui_pkg_path = f'{packages_dir}/steamui_{steamui_raw}.pkg'
+
+        return steam_pkg_path, steamui_pkg_path
+
     def GetLocale(self, variable):
         try:
             return self.config[self.Lang][variable]
         except:
             print(f'MISSING LANGUAGE STRING: {self.Lang}_{variable}')
             return f'{self.Lang}_{variable}'
+
+    def LogExport(self, message):
+        if not self.ExportLoggingEnabled:
+            return
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        line = f"[{timestamp}] {message}"
+        print(line)
+        try:
+            with open(self.ExportLogPath, 'a', encoding = 'utf-8') as f:
+                f.write(line + '\n')
+        except Exception:
+            pass
+
+    def LogExportException(self, context, ex):
+        if not self.ExportLoggingEnabled:
+            return
+        self.LogExport(f"{context}: {ex}")
+        try:
+            trace = traceback.format_exc()
+            with open(self.ExportLogPath, 'a', encoding = 'utf-8') as f:
+                f.write(trace + '\n')
+        except Exception:
+            pass
 
     def GetFirstBlobTo_Unpacked(self, SecondTarget):
         # Find SecondBlobDate from precomputed list
@@ -660,6 +819,165 @@ class BlobManager(object):
             return FirstTarget
         else:
             return False
+
+    def _extract_datetime_token(self, filename, prefix):
+        if not filename.startswith(prefix):
+            raise ValueError(f"Unexpected blob filename format: {filename}")
+        token = filename[len(prefix):].split(' - ', 1)[0].strip()
+        if ' (' in token:
+            token = token.split(' (', 1)[0].strip()
+        datetime.strptime(token, '%Y-%m-%d %H_%M_%S')
+        return token
+
+    def _timestamp_for_blob_name(self, filename, is_first_blob):
+        source = self.FirstBlobDates if is_first_blob else self.SecondBlobDates
+        for ts, name in source:
+            if name == filename:
+                return ts
+        return None
+
+    def _resolve_first_blob_for_second(self, second_blob_name):
+        second_ts = self._timestamp_for_blob_name(second_blob_name, is_first_blob = False)
+        if second_ts is None:
+            try:
+                dt_token = self._extract_datetime_token(second_blob_name, 'secondblob.bin.')
+                second_ts = datetime.strptime(dt_token, '%Y-%m-%d %H_%M_%S').timestamp()
+            except Exception:
+                second_ts = None
+
+        if second_ts is None:
+            self.LogExport(f"Failed to resolve secondblob timestamp for '{second_blob_name}'")
+            return False
+
+        idx = bisect_right(self.FirstBlobTimestamps, second_ts) - 1
+        if idx >= 0:
+            return self.FirstBlobDates[idx][1]
+        self.LogExport(f"No firstblob <= secondblob timestamp for '{second_blob_name}'")
+        return False
+
+    def _build_first_blob_from_database(self, first_blob_name):
+        try:
+            from utilities.database.ccdb import construct_blob_from_ccdb
+            from utilities import blobs as util_blobs
+        except Exception as ex:
+            self.LogExportException("Import error while loading firstblob DB builders", ex)
+            raise RuntimeError("Unable to load DB firstblob builder modules. Check dependencies (mariadb).") from ex
+
+        first_token = self._extract_datetime_token(first_blob_name, 'firstblob.bin.')
+        self.LogExport(f"Building firstblob from DB using timestamp '{first_token}'")
+        blob_dict = construct_blob_from_ccdb(
+                self.database_host,
+                self.database_port,
+                self.database_username,
+                self.database_password,
+                first_token
+        )
+        if not blob_dict:
+            raise RuntimeError(f"Could not assemble firstblob from database for {first_blob_name}")
+        data = util_blobs.blob_serialize(blob_dict)
+        self.LogExport(f"Built firstblob '{first_blob_name}' ({len(data)} bytes)")
+        return data
+
+    def _build_second_blob_from_database(self, second_blob_name):
+        try:
+            from utilities import cdr_manipulator
+            from utilities import blobs as util_blobs
+        except Exception as ex:
+            self.LogExportException("Import error while loading secondblob DB builders", ex)
+            raise RuntimeError("Unable to load DB secondblob builder modules. Check dependencies (mariadb).") from ex
+
+        second_token = self._extract_datetime_token(second_blob_name, 'secondblob.bin.')
+        cddb = "BetaContentDescriptionDB" if second_token < "2003-09-09 18_50_46" else "ContentDescriptionDB"
+        self.LogExport(f"Building secondblob from DB '{cddb}' using timestamp '{second_token}'")
+        blob_dict = cdr_manipulator.construct_blob_from_cddb(
+                self.database_host,
+                self.database_port,
+                self.database_username,
+                self.database_password,
+                cddb,
+                second_token,
+                self.CacheFolder
+        )
+        if not blob_dict:
+            raise RuntimeError(f"Could not assemble secondblob from database for {second_blob_name}")
+
+        # Export uses legacy uncompressed 0x0150 blob format to match historic blob files.
+        data = util_blobs.blob_serialize(blob_dict)
+        self.LogExport(f"Built secondblob '{second_blob_name}' ({len(data)} bytes uncompressed)")
+        return data
+
+    def _get_export_filename(self, blob_name):
+        # Database/file listings may append human-readable descriptions after " - ".
+        # Export should keep only the canonical blob filename portion.
+        return blob_name.split(' - ', 1)[0].strip()
+
+    def _write_export_pair(self, export_path, first_name, second_name, first_data, second_data, first_ts = None, second_ts = None):
+        first_export_name = self._get_export_filename(first_name)
+        second_export_name = self._get_export_filename(second_name)
+
+        first_path = export_path / first_export_name
+        second_path = export_path / second_export_name
+
+        with open(second_path, 'wb') as f:
+            f.write(second_data)
+        with open(first_path, 'wb') as f:
+            f.write(first_data)
+
+        if first_ts is not None:
+            try:
+                utime(first_path, (first_ts, first_ts))
+            except Exception:
+                pass
+        if second_ts is not None:
+            try:
+                utime(second_path, (second_ts, second_ts))
+            except Exception:
+                pass
+
+        self.LogExport(
+                f"Wrote export pair: '{first_export_name}' ({len(first_data)} bytes), "
+                f"'{second_export_name}' ({len(second_data)} bytes) -> {export_path}"
+        )
+
+    def ExportBlobPair(self, second_blob_name, export_path):
+        self.LogExport(f"Starting export for '{second_blob_name}' (DB mode: {self.load_from_database})")
+        first_blob_name = self._resolve_first_blob_for_second(second_blob_name)
+        if not first_blob_name:
+            raise RuntimeError(f"Unable to resolve firstblob for {second_blob_name}")
+
+        first_ts = self._timestamp_for_blob_name(first_blob_name, is_first_blob = True)
+        second_ts = self._timestamp_for_blob_name(second_blob_name, is_first_blob = False)
+
+        if self.load_from_database:
+            first_data = self._build_first_blob_from_database(first_blob_name)
+            second_data = self._build_second_blob_from_database(second_blob_name)
+            self._write_export_pair(export_path, first_blob_name, second_blob_name, first_data, second_data, first_ts, second_ts)
+            return first_blob_name
+
+        if self.PackReader is not None:
+            first_data = self.PackReader.ReadFirst(first_blob_name)
+            second_data = self.PackReader.ReadSecond(second_blob_name)
+            self._write_export_pair(export_path, first_blob_name, second_blob_name, first_data, second_data, first_ts, second_ts)
+            return first_blob_name
+
+        first_source = Path(f'{self.BlobsFolder}{first_blob_name}')
+        second_source = Path(f'{self.BlobsFolder}{second_blob_name}')
+        self.LogExport(f"Reading file blobs from '{first_source}' and '{second_source}'")
+        first_export_name = self._get_export_filename(first_blob_name)
+        second_export_name = self._get_export_filename(second_blob_name)
+        second_dest = export_path / second_export_name
+        first_dest = export_path / first_export_name
+
+        with open(second_dest, 'wb') as f:
+            with open(second_source, 'rb') as src:
+                f.write(src.read())
+        with open(first_dest, 'wb') as f:
+            with open(first_source, 'rb') as src:
+                f.write(src.read())
+
+        copystat(second_source, second_dest)
+        copystat(first_source, first_dest)
+        return first_blob_name
 
     def PopulateRows(self):
         CurrentYear = None  # On slow drives we should start from a offset year.
@@ -683,8 +1001,8 @@ class BlobManager(object):
                         # Parse datetime from filename
                         date_obj = datetime.strptime(date_str, '%Y-%m-%d %H_%M_%S')
                         # Format the date and time separately
-                        date_part = date_obj.strftime('%m/%d/%Y')
-                        time_part = date_obj.strftime('%I:%M:%S %p')
+                        date_part = date_obj.strftime('%Y/%m/%d')
+                        time_part = date_obj.strftime('%H:%M:%S')
 
                         # Combine with a larger space between date and time
                         date_display = f"{date_part}   {time_part}"  #
@@ -748,7 +1066,7 @@ class BlobManager(object):
                         date_str = parts[0]
                         # Parse datetime from filename
                         date_obj = datetime.strptime(date_str, '%Y-%m-%d %H_%M_%S')
-                        date_display = date_obj.strftime('%m/%d/%Y %I:%M:%S %p')
+                        date_display = date_obj.strftime('%Y/%m/%d %H:%M:%S')
 
                         description = parts[1] if len(parts) > 1 else ""
                         # Check if custom
@@ -778,8 +1096,19 @@ class BlobManager(object):
         print('Read FirstBlob information for table data..')
 
         for i in range(len(self.Rows)):
-            Current = self.SecondBlobs[i]
-            SecondBlobDate = self.SecondBlobDates[i][0]
+            current_second = self.Rows[i][-1]
+            SecondBlobDate = self._timestamp_for_blob_name(current_second, is_first_blob = False)
+            if SecondBlobDate is None:
+                try:
+                    second_token = self._extract_datetime_token(current_second, 'secondblob.bin.')
+                    SecondBlobDate = datetime.strptime(second_token, '%Y-%m-%d %H_%M_%S').timestamp()
+                except Exception:
+                    SecondBlobDate = None
+
+            if SecondBlobDate is None:
+                self.Rows[i][1] = 'Unknown'
+                self.Rows[i][2] = 'Unknown'
+                continue
 
             # Find the insertion point for SecondBlobDate in the sorted FirstBlobTimestamps
             idx = bisect_right(self.FirstBlobTimestamps, SecondBlobDate) - 1
@@ -816,8 +1145,8 @@ class BlobManager(object):
                 self.Rows[i][1] = 'Unknown'
                 self.Rows[i][2] = 'Unknown'
             else:
-                self.Rows[i][1] = str(Info[0])
-                self.Rows[i][2] = str(Info[1])
+                self.Rows[i][1] = self._normalize_version_value(Info[0])
+                self.Rows[i][2] = self._steamui_display_value(Info[1])
 
         print('Done!')
 
@@ -830,33 +1159,17 @@ class BlobManager(object):
                 # Assuming second blob filename is stored in the last column of the row
                 second_blob = selected_row[-1]  # Extract secondblob filename from the row
 
-                # Extract the date from the Date column in the selected row
-                date_str = selected_row[3]  # Date is in MM/DD/YYYY HH:MM AM/PM format
-                date_obj = datetime.strptime(date_str, '%m/%d/%Y %I:%M:%S %p')
-                second_blob_timestamp = date_obj.timestamp()  # Convert to timestamp
+                # Resolve firstblob using strict rule: most recent firstblob <= selected secondblob timestamp.
+                first_blob_filename = self._resolve_first_blob_for_second(second_blob)
+                if not first_blob_filename:
+                    self.window['-STATEMSG-'].Update(value = self.GetLocale('label_swap_error2'))
+                    return
 
-                # Print second_blob information for debugging
-                # print(f"Selected second_blob: {second_blob}")
-                # print(f"Second blob timestamp: {second_blob_timestamp} ({date_obj})")
-
-                # Find the first_blob with the closest timestamp (before or after the second_blob timestamp)
-                closest_first_blob = None
-                smallest_diff = float('inf')  # Initialize with a large value
-
-                for timestamp, filename in self.FirstBlobDates:
-                    diff = abs(timestamp - second_blob_timestamp)
-                    # print(f"Checking first_blob: {filename} with timestamp: {timestamp} ({datetime.fromtimestamp(timestamp)}) - Difference: {diff}")
-
-                    if diff < smallest_diff:
-                        closest_first_blob = filename
-                        smallest_diff = diff
-                        # print(f"Found closer first_blob: {filename} with difference: {diff}")
-
-                # If no matching firstblob is found, fallback to 'Unknown'
-                first_blob_filename = closest_first_blob if closest_first_blob else 'Unknown'
-
-                # Print final selected first blob for debugging
-                # print(f"Final selected first_blob: {first_blob_filename}")
+                second_blob_timestamp = self._timestamp_for_blob_name(second_blob, is_first_blob = False)
+                if second_blob_timestamp is None:
+                    second_token = self._extract_datetime_token(second_blob, 'secondblob.bin.')
+                    second_blob_timestamp = datetime.strptime(second_token, '%Y-%m-%d %H_%M_%S').timestamp()
+                date_obj = datetime.fromtimestamp(second_blob_timestamp)
 
                 # Modify steam_date and steam_time in emulator.ini if necessary
                 emulator_ini_path = Path('emulator.ini')
@@ -920,10 +1233,8 @@ class BlobManager(object):
 
             # Required variables
             SecondTarget = self.Rows[self.row][-1]
-            try:
-                idx_second = self.SecondBlobs.index(SecondTarget)
-                SecondBlobDate = self.SecondBlobDates[idx_second][0]
-            except ValueError:
+            SecondBlobDate = self._timestamp_for_blob_name(SecondTarget, is_first_blob = False)
+            if SecondBlobDate is None:
                 self.window['-STATEMSG-'].Update(value = self.GetLocale('label_swap_error2'))
                 return
 
@@ -1019,7 +1330,7 @@ class BlobManager(object):
             # Fetch filename, steam_pkg, steamui_pkg from configurations table
             configurations_query = text("""
                 SELECT filename, steam_pkg, steamui_pkg, ccr_blobdatetime 
-                FROM clientconfigurationdb.configurations
+                FROM ClientConfigurationDB.configurations
             """)
             configurations_result = self.connection.execute(configurations_query).fetchall()
 
@@ -1057,8 +1368,21 @@ class BlobManager(object):
         # Fetch data from filename table (secondblob.bin)
         try:
             filename_query = text("""
-                SELECT filename, blob_datetime, comments, is_custom 
-                FROM contentdescriptiondb.filename
+                SELECT 
+                    filename, 
+                    blob_datetime, 
+                    comments, 
+                    is_custom 
+                FROM 
+                    BetaContentDescriptionDB.filename
+                UNION
+                SELECT 
+                    filename, 
+                    blob_datetime, 
+                    comments, 
+                    is_custom 
+                FROM 
+                    ContentDescriptionDB.filename;
             """)
             filename_result = self.connection.execute(filename_query).fetchall()
 
@@ -1098,8 +1422,8 @@ class BlobManager(object):
                             steamui_version = configurations_dict[matched_fname]['steamui_pkg']
                             self.SecondBlobDates.append((timestamp, filename))
                         # Format date for display
-                        date_part = date_obj.strftime('%m/%d/%Y')
-                        time_part = date_obj.strftime('%I:%M:%S %p')
+                        date_part = date_obj.strftime('%Y/%m/%d')
+                        time_part = date_obj.strftime('%H:%M:%S')
 
                         # Combine with a larger space between date and time
                         date_display = f"{date_part}   {time_part}"
@@ -1108,11 +1432,13 @@ class BlobManager(object):
                 else:
                     print(f"Filename does not start with 'secondblob.bin.': {filename}")
                 if steam_version != "7" and steamui_version != "16":
+                    steam_version_display = self._normalize_version_value(steam_version)
+                    steamui_version_display = self._steamui_display_value(steamui_version)
                     # Append the processed row to self.Rows
                     new_row = [
                             'Yes' if is_custom else 'No',  # Custom label
-                            steam_version,  # Steam version
-                            steamui_version,  # SteamUI version
+                            steam_version_display,  # Steam version
+                            steamui_version_display,  # SteamUI version
                             date_display,  # Date
                             comments,  # Description
                             filename
@@ -1148,7 +1474,7 @@ class BlobManager(object):
             def date_key(x):
                 try:
                     # Parse the date string into a datetime object for sorting
-                    date_obj = datetime.strptime(x[col_index], '%m/%d/%Y %I:%M:%S %p')
+                    date_obj = datetime.strptime(x[col_index], '%Y/%m/%d %H:%M:%S')
                     return date_obj.timestamp()  # Return the timestamp for correct date sorting
                 except ValueError:
                     return 0  # Return 0 for invalid dates
@@ -1163,7 +1489,7 @@ class BlobManager(object):
                     has_description = 0 if x[4].strip() else 1
                     try:
                         # Parse the date string back to a datetime object
-                        date_obj = datetime.strptime(x[3], '%m/%d/%Y %I:%M:%S %p')
+                        date_obj = datetime.strptime(x[3], '%Y/%m/%d %H:%M:%S')
                         date_ts = date_obj.timestamp()
                     except ValueError:
                         date_ts = 0  # Assign a default timestamp if parsing fails
@@ -1175,7 +1501,7 @@ class BlobManager(object):
                 def description_desc_key(x):
                     try:
                         # Parse the date string back to a datetime object
-                        date_obj = datetime.strptime(x[3], '%m/%d/%Y %I:%M:%S %p')
+                        date_obj = datetime.strptime(x[3], '%Y/%m/%d %H:%M:%S')
                         date_ts = date_obj.timestamp()
                     except ValueError:
                         date_ts = 0  # Assign a default timestamp if parsing fails
@@ -1204,14 +1530,14 @@ Manager = BlobManager()
 # Date validation function (only accepts mm/dd/yyyy or yyyy)
 def validate_date(date_str):
     # Match mm/dd/yyyy or yyyy
-    date_pattern = r"^\d{4}$|^\d{1,2}/\d{1,2}/\d{4}$"
+    date_pattern = r"^\d{4}/\d{2}/\d{2}$"
     if re.match(date_pattern, date_str):
         try:
             # If it's just a year, it's valid
             if len(date_str) == 4:
                 return True
             # If it's in mm/dd/yyyy format, try to parse it
-            datetime.strptime(date_str, "%m/%d/%Y")
+            datetime.strptime(date_str, "%Y/%m/%d")
             return True
         except ValueError:
             return False
@@ -1234,7 +1560,7 @@ def search_date_func(search_date_str, start_index):
         if len(search_date_str) == 4:  # Year format
             search_year = search_date_str
         else:  # Full date format
-            search_date = datetime.strptime(search_date_str, "%m/%d/%Y").strftime("%m/%d/%Y")
+            search_date = datetime.strptime(search_date_str, "%Y/%m/%d").strftime("%Y/%m/%d")
     except ValueError:
         return False  # Invalid date format
 
@@ -1246,7 +1572,7 @@ def search_date_func(search_date_str, start_index):
 
         # Normalize the table date by stripping time and formatting as mm/dd/yyyy
         try:
-            table_date = datetime.strptime(date_str.split(" ")[0], "%m/%d/%Y").strftime("%m/%d/%Y")
+            table_date = datetime.strptime(date_str.split(" ")[0], "%Y/%m/%d").strftime("%Y/%m/%d")
         except ValueError:
             continue  # Skip rows with invalid or incorrectly formatted dates
 
@@ -1262,8 +1588,8 @@ def search_date_func(search_date_str, start_index):
 
         # Find the closest date if no exact match
         if len(search_date_str) != 4:  # Only for full date search
-            search_date_obj = datetime.strptime(search_date_str, "%m/%d/%Y")
-            table_date_obj = datetime.strptime(table_date, "%m/%d/%Y")
+            search_date_obj = datetime.strptime(search_date_str, "%Y/%m/%d")
+            table_date_obj = datetime.strptime(table_date, "%Y/%m/%d")
             diff = (table_date_obj - search_date_obj).days
             if diff > 0 and (closest_diff is None or diff < closest_diff):
                 closest_diff = diff
@@ -1317,7 +1643,7 @@ def open_search_dialog():
         [psg.Button('Search', key='-SEARCH_DESC-'), psg.Button('Cancel', key='-CANCEL-DESC-BTN-')],
     ]
     tab2_layout = [
-        [psg.Text('Type a date to search (formats: mm/dd/yyyy or yyyy):')],
+        [psg.Text('Type a date to search (formats: yyyy/mm/dd or yyyy):')],
         [psg.Input(key='-SEARCH_DATE-')],
         [psg.Button('Search', key='-SEARCH_DATE_BTN-'), psg.Button('Cancel', key='-CANCEL-DATE-BTN-')],
     ]
@@ -1379,7 +1705,7 @@ def open_search_dialog():
                         no_more_matches_found = True
                         search_index = 0
                 else:
-                    custom_popup('Invalid date format. Please enter mm/dd/yyyy or yyyy.')
+                    custom_popup('Invalid date format. Please enter yyyy/mm/dd or yyyy.')
 
         # Handle the Description Search button
         elif event == '-SEARCH_DESC-':
@@ -1414,7 +1740,7 @@ def open_search_dialog():
                     no_more_matches_found = True
                     search_index = 0
             else:
-                custom_popup('Invalid date format. Please enter mm/dd/yyyy or yyyy.')
+                custom_popup('Invalid date format. Please enter yyyy/mm/dd or yyyy.')
 
     search_window.close()
 def open_settings_dialog():
@@ -1573,6 +1899,8 @@ while True:
         if event[0] == '-LIST-' and '+CLICKED+' in event[1]:
             row, col = event[2]
             if row == -1:  # Header row is clicked
+                if Manager._should_ignore_header_sort_click():
+                    continue
                 Manager.sort_table(col)
             else:
                 Manager.row = row
@@ -1614,11 +1942,8 @@ while True:
     elif '-SELECTTEXT- Double' in event:
         try:
             second_blob = Manager.Rows[Manager.row][-1]
-            second_blob_date = next((timestamp for timestamp, filename in Manager.SecondBlobDates if filename == second_blob), None)
-
-            if second_blob_date is not None:
-                matching_first_blob = next((filename for timestamp, filename in reversed(Manager.FirstBlobDates) if timestamp <= second_blob_date), "Unknown")
-            else:
+            matching_first_blob = Manager._resolve_first_blob_for_second(second_blob)
+            if not matching_first_blob:
                 matching_first_blob = "Unknown"
 
             out = f'SecondBlob: {second_blob}\r\nFirstBlob: {matching_first_blob}'
@@ -1635,7 +1960,7 @@ while True:
             Manager.window['-STATEMSG-'].Update(value=Manager.GetLocale('label_copyclip'))
         except:
             pass
-    elif 'Extract' in event:
+    elif 'Extract' in event or 'Export Blob' in event:
         folder_selected = filedialog.askdirectory()
         if folder_selected == '' or folder_selected == ():
             print('cancel')
@@ -1643,61 +1968,58 @@ while True:
             ThePath = Path(folder_selected)
 
             if ThePath.is_dir():
-                # Handle extraction
-                if len(Manager.multiple_rows) > 1:
-                    print('Multiple blobs selected.')
-                    for row in Manager.multiple_rows:
-                        ThePath2 = Path(folder_selected)
-                        ThePath3 = Path(folder_selected)
-                        SecondName = Manager.Rows[row][-1]
+                selected_rows = []
+                if values.get('-LIST-'):
+                    selected_rows = values['-LIST-'].copy()
+                elif Manager.multiple_rows:
+                    selected_rows = Manager.multiple_rows.copy()
+                elif Manager.row is not None:
+                    selected_rows = [Manager.row]
 
-                        try:
-                            if Manager.PackReader is not None:
-                                FirstName = Manager.GetFirstBlobTo_Packed(SecondName)
-                                Manager.PackReader.WriteFirst(FirstName, ThePath)
-                                Manager.PackReader.WriteSecond(SecondName, ThePath)
-                            else:
-                                FirstName = Manager.GetFirstBlobTo_Unpacked(SecondName)
-                                with open(f'{ThePath}/secondblob.bin', 'wb') as f:
-                                    with open(f'{Manager.BlobsFolder}{SecondName}', 'rb') as src:
-                                        f.write(src.read())
-                                with open(f'{ThePath}/firstblob.bin', 'wb') as f:
-                                    with open(f'{Manager.BlobsFolder}{FirstName}', 'rb') as src:
-                                        f.write(src.read())
-                                copystat(f'{Manager.BlobsFolder}{SecondName}', f'{ThePath}/secondblob.bin')
-                                copystat(f'{Manager.BlobsFolder}{FirstName}', f'{ThePath}/firstblob.bin')
-                        except Exception as ex:
-                            Manager.window['-STATEMSG-'].Update(value = Manager.GetLocale('label_extract_failure'))
-                            print(f"Extraction failed for {SecondName}: {ex}")
-                            continue
-                        Manager.window['-STATEMSG-'].Update(value = Manager.GetLocale('label_extract_success'))
-                else:
-                    ThePath2 = Path(folder_selected)
-                    ThePath3 = Path(folder_selected)
-                    SecondName = Manager.Rows[Manager.row][-1]
+                if not selected_rows:
+                    Manager.window['-STATEMSG-'].Update(value = 'No blob selected to export.')
+                    continue
+
+                exported_count = 0
+                total_count = len(selected_rows)
+                failures = []
+                for row in selected_rows:
+                    second_name = Manager.Rows[row][-1]
 
                     try:
-                        if Manager.PackReader is not None:
-                            FirstName = Manager.GetFirstBlobTo_Packed(SecondName)
-                            Manager.PackReader.WriteFirst(FirstName, ThePath)
-                            Manager.PackReader.WriteSecond(SecondName, ThePath)
-                        else:
-                            FirstName = Manager.GetFirstBlobTo_Unpacked(SecondName)
-                            with open(f'{ThePath}/secondblob.bin', 'wb') as f:
-                                with open(f'{Manager.BlobsFolder}{SecondName}', 'rb') as src:
-                                    f.write(src.read())
-                            with open(f'{ThePath}/firstblob.bin', 'wb') as f:
-                                with open(f'{Manager.BlobsFolder}{FirstName}', 'rb') as src:
-                                    f.write(src.read())
-                            copystat(f'{Manager.BlobsFolder}{SecondName}', f'{ThePath}/secondblob.bin')
-                            copystat(f'{Manager.BlobsFolder}{FirstName}', f'{ThePath}/firstblob.bin')
+                        first_name = Manager.ExportBlobPair(second_name, ThePath)
+                        print(f"Exported -> FirstBlob: {first_name}, SecondBlob: {second_name}, Path: {ThePath}")
+                        exported_count += 1
                     except Exception as ex:
-                        Manager.window['-STATEMSG-'].Update(value = Manager.GetLocale('label_extract_failure'))
-                        print(f"Extraction failed for {SecondName}: {ex}")
-                        continue
+                        Manager.LogExportException(f"Extraction failed for '{second_name}'", ex)
+                        failures.append(f"{second_name}: {ex}")
+
+                if exported_count == total_count:
                     Manager.window['-STATEMSG-'].Update(value = Manager.GetLocale('label_extract_success'))
+                elif exported_count > 0:
+                    if Manager.ExportLoggingEnabled:
+                        Manager.window['-STATEMSG-'].Update(
+                                value = f"Exported {exported_count}/{total_count} blob set(s). See {Manager.ExportLogPath.name} for errors."
+                        )
+                    else:
+                        Manager.window['-STATEMSG-'].Update(
+                                value = f"Exported {exported_count}/{total_count} blob set(s)."
+                        )
+                else:
+                    if failures:
+                        first_error = failures[0]
+                        if Manager.ExportLoggingEnabled:
+                            Manager.window['-STATEMSG-'].Update(
+                                    value = f"{Manager.GetLocale('label_extract_failure')} {first_error} (details in {Manager.ExportLogPath.name})"
+                            )
+                        else:
+                            Manager.window['-STATEMSG-'].Update(
+                                    value = f"{Manager.GetLocale('label_extract_failure')} {first_error}"
+                            )
+                    else:
+                        Manager.window['-STATEMSG-'].Update(value = Manager.GetLocale('label_extract_failure'))
             else:
-                Manager.custom_popup(Manager.GetLocale('label_error_text3'))
+                custom_popup(Manager.GetLocale('label_error_text3'))
                 if event in (psg.WIN_CLOSED, 'Exit'):
                     break
 

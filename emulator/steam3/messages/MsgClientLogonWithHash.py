@@ -145,8 +145,17 @@ class ClientLogonWithHash:
             self.remember_password = struct.unpack_from('<B', data, offset)[0] != 0
             offset += 1
 
-            if len(data[offset:]) > 0:
-                raise ValueError(f"ClientLogonWithHash: Extra data found after deserialization: {data[offset:]}")
+            # Check for extra data, but allow trailing null bytes (padding)
+            remaining_data = data[offset:]
+            if len(remaining_data) > 0:
+                # If remaining data is only null bytes, log a debug message and ignore
+                if remaining_data.strip(b'\x00'):
+                    raise ValueError(f"ClientLogonWithHash: Non-null extra data found after deserialization: {remaining_data}")
+                else:
+                    # Only null byte padding, safe to ignore
+                    import logging
+                    log = logging.getLogger('ClientLogonWithHash')
+                    log.debug(f"ClientLogonWithHash: Ignoring {len(remaining_data)} trailing null bytes (padding)")
 
         except struct.error as e:
             raise ValueError(f"Error deserializing ClientLogonWithHash: {e}")

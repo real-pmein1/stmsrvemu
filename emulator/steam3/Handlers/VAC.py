@@ -4,6 +4,7 @@ from steam3.cm_packet_utils import CMResponse
 
 
 def handle_VACResponse(cmserver_obj, packet, client_obj):
+    # FIXME do something with this packet
     client_address = client_obj.ip_port
     # respond with 753? or 770
     request = packet.CMRequest
@@ -13,12 +14,11 @@ def handle_VACResponse(cmserver_obj, packet, client_obj):
 
     # Preparing packet data
     data = bytearray()
-    data.extend(struct.pack('I', request.accountID))
-    data.extend(struct.pack('I', request.clientId2))
-    data.extend(struct.pack('I', request.sessionID))
+    data.extend(struct.pack('<Q', request.steamID))
+    data.extend(struct.pack('<I', request.sessionID))
 
     num_vac_bans = 1
-    data.extend(struct.pack('I', num_vac_bans))
+    data.extend(struct.pack('<I', num_vac_bans))
 
     packet.length = len(data)
     packet.data = bytes(data)
@@ -27,5 +27,6 @@ def handle_VACResponse(cmserver_obj, packet, client_obj):
 
 
 def ClientVacStatusResponse(cmserver_obj, packet, client_obj):
+    # FIXME do something with this packet
     client_address = client_obj.ip_port
     return -1

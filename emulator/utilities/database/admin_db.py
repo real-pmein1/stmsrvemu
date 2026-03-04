@@ -3,17 +3,19 @@ import hashlib
 import logging
 import os
 import re
+from bisect import bisect_right
+from pathlib import Path
 import Levenshtein
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import and_, exists, func, or_, text
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 
 from steam3.Types.community_types import FriendRelationship, PlayerState
 from steam3.Types.steam_types import EResult
 from utilities.database import authdb, base_dbdriver, dbengine
-from utilities.database.base_dbdriver import AccountPaymentCardInfoRecord, AccountPrepurchasedInfoRecord, AccountSubscriptionsBillingInfoRecord, AccountSubscriptionsRecord, AdministrationUsersRecord, AppOwnershipTicketRegistry, Beta1_Friendslist, Beta1_Subscriptions, Beta1_TrackerRegistry, Beta1_User, ClientInventoryItems, CommunityRegistry, ExternalPurchaseInfoRecord, FriendsChatHistory, FriendsGroupMembers, FriendsGroups, FriendsList, FriendsNameHistory, FriendsPlayHistory, FriendsRegistry, GuestPassRegistry, Steam3CCRecord, Steam3GiftTransactionRecord, Steam3TransactionAddressRecord, Steam3TransactionsRecord, SteamApplications, SteamSubApps, SteamSubscriptions, UserMachineIDRegistry, VACBans, UserRegistry
-
+from utilities.database.base_dbdriver import AccountPaymentCardInfoRecord, AccountPrepurchasedInfoRecord, AccountSubscriptionsBillingInfoRecord, AccountSubscriptionsRecord, AdministrationUsersRecord, AppOwnershipTicketRegistry, Beta1_Friendslist, Beta1_Subscriptions, Beta1_TrackerRegistry, Beta1_User, ClientInventoryItems, CommunityRegistry, ExternalPurchaseInfoRecord, FriendsChatHistory, FriendsGroupMembers, FriendsGroups, FriendsList, FriendsNameHistory, FriendsPlayHistory, FriendsRegistry, GuestPassRegistry, Steam3CCRecord, Steam3TransactionAddressRecord, Steam3TransactionsRecord, SteamApplications, SteamSubApps, SteamSubscriptions, UserMachineIDRegistry, VACBans, UserRegistry
+import globalvars
 log = logging.getLogger('CMDB')
 
 # TODO:
@@ -36,13 +38,13 @@ class admin_dbdriver:
 
 
     def add_administrator(self, username, pw_hash, pw_seed, rights):
-        """ Store a new user with hashed password and seed """
+        """Store a new admin with hashed password and seed."""
         try:
             new_user = AdministrationUsersRecord(
                 Username=username,
                 PWHash=pw_hash,
                 PWSeed=pw_seed,
-                Rights=rights
+                Rights=rights,
             )
             self.session.add(new_user)
             self.session.commit()
@@ -52,11 +54,93 @@ class admin_dbdriver:
             print(f"Error adding user: {e}")
             return False
 
-    def validate_user(self, username_id, input_pw_hash):
-        """ Validate a user's password hash """
+    def create_administrator(self, username, password, rights):
+        """Create a new user in UserRegistry and add as administrator."""
         try:
-            user_record = self.session.query(AdministrationUsersRecord).filter_by(Username=username_id).one()
-            # Assuming the client-side logic recomputes the hash using the stored seed
+            salt = os.urandom(8).hex()
+            pw_hash = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
+
+            user_id = self.create_user(username)
+            if isinstance(user_id, str):
+                # Username taken or error creating user
+                return False
+
+            return self.add_administrator(username, pw_hash, salt, rights)
+        except Exception as e:
+            log.error(f"Error creating administrator {username}: {e}")
+            return False
+
+    def change_admin_username(self, old_username, new_username):
+        """Change the username for an administrator account."""
+        try:
+            admin_record = (
+                self.session.query(AdministrationUsersRecord)
+                .filter_by(Username=old_username)
+                .first()
+            )
+            user_record = (
+                self.session.query(self.UserRegistry)
+                .filter_by(UniqueUserName=old_username)
+                .first()
+            )
+            if not admin_record or not user_record:
+                return False
+            admin_record.Username = new_username
+            user_record.UniqueUserName = new_username
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error changing admin username {old_username}: {e}")
+            return False
+
+    def change_admin_email(self, username, new_email):
+        """Change the email address for an administrator account."""
+        try:
+            user_record = (
+                self.session.query(self.UserRegistry)
+                .filter_by(UniqueUserName=username)
+                .first()
+            )
+            if not user_record:
+                return False
+            user_record.AccountEmailAddress = new_email
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error changing admin email {username}: {e}")
+            return False
+
+    def change_admin_password(self, username, new_password):
+        """Change the password for an administrator account."""
+        try:
+            admin_record = (
+                self.session.query(AdministrationUsersRecord)
+                .filter_by(Username=username)
+                .first()
+            )
+            if not admin_record:
+                return False
+            salt = os.urandom(8).hex()
+            pw_hash = hashlib.sha256((salt + new_password).encode('utf-8')).hexdigest()
+            admin_record.PWHash = pw_hash
+            admin_record.PWSeed = salt
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error changing admin password {username}: {e}")
+            return False
+
+    def validate_user(self, username, input_pw_hash):
+        """Validate an administrator's password."""
+        try:
+            user_record = (
+                self.session.query(AdministrationUsersRecord)
+                .filter_by(Username=username)
+                .one()
+            )
             recomputed_hash = hashlib.sha256((user_record.PWSeed + input_pw_hash).encode('utf-8')).hexdigest()
             if recomputed_hash == user_record.PWHash:
                 return True, user_record.Rights
@@ -86,7 +170,7 @@ class admin_dbdriver:
             # Attempt to find the exact match
             user = self.session.query(
                     self.UserRegistry.UniqueID,
-                    self.UserRegistry.UniqueUserName
+                    self.UserRegistry.AccountEmailAddress
             ).filter(
                     self.UserRegistry.UniqueUserName == username
             ).one()
@@ -105,7 +189,7 @@ class admin_dbdriver:
             # Calculate the Levenshtein distance for each user
             closest_matches = sorted(
                     all_users,
-                    key = lambda user:Levenshtein.distance(username, user.AccountEmailAddress)
+                    key = lambda user: Levenshtein.distance(username, user.UniqueUserName)
             )[:5]  # Get top 5 closest matches
 
             return [(user.UniqueID, user.UniqueUserName) for user in closest_matches]
@@ -243,6 +327,56 @@ class admin_dbdriver:
             subscription_list.append([subscription.SubscriptionID, subscription_name])
 
         return subscription_list
+
+    def list_guest_passes(self, unique_id):
+        """Return guest passes for a user as list of (pass_id, package_id)."""
+        try:
+            passes = (
+                self.session.query(GuestPassRegistry)
+                .filter(GuestPassRegistry.RecipientAccountID == unique_id)
+                .all()
+            )
+            return [(gp.UniqueID, gp.PackageID) for gp in passes]
+        except Exception as e:
+            log.error(f"Error listing guest passes for user {unique_id}: {e}")
+            return []
+
+    def add_guest_pass(self, unique_id, package_id):
+        """Add a guest pass for a user."""
+        try:
+            new_pass = GuestPassRegistry(
+                PackageID=package_id,
+                RecipientAccountID=unique_id,
+                TimeCreated=datetime.utcnow(),
+            )
+            self.session.add(new_pass)
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error adding guest pass for user {unique_id}: {e}")
+            return False
+
+    def remove_guest_pass(self, unique_id, pass_id):
+        """Remove a guest pass from a user."""
+        try:
+            record = (
+                self.session.query(GuestPassRegistry)
+                .filter(
+                    GuestPassRegistry.RecipientAccountID == unique_id,
+                    GuestPassRegistry.UniqueID == pass_id,
+                )
+                .first()
+            )
+            if not record:
+                return False
+            self.session.delete(record)
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error removing guest pass {pass_id} for user {unique_id}: {e}")
+            return False
 
     def list_applications_for_subscription(self, subscription_id):
         console_height, _ = os.get_terminal_size()
@@ -611,6 +745,7 @@ class admin_dbdriver:
             self.session.rollback()
             print(f"Error listing Beta1 users: {e}")
             return f"Error: {str(e)}\x00"
+
     def beta1_get_uniqueid_by_email(self, email):
         """Returns the user's uniqueid where the username matches the email or a null terminated error string."""
         try:
@@ -662,3 +797,273 @@ class admin_dbdriver:
             self.session.rollback()
             print(f"Error removing subscription: {e}")
             return f"Error: {str(e)}\x00"
+
+    def log_admin_action(self, admin_id, action, details):
+        try:
+            new_log = AuditLog(
+                admin_id=admin_id,
+                action=action,
+                details=details,
+                timestamp=datetime.now()
+            )
+            self.session.add(new_log)
+            self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            return f"Error logging admin action: {e}"
+
+    def get_audit_logs(self, filters=None):
+        try:
+            query = self.session.query(AuditLog)
+            if filters:
+                if 'admin_id' in filters:
+                    query = query.filter(AuditLog.admin_id == filters['admin_id'])
+                if 'action' in filters:
+                    query = query.filter(AuditLog.action == filters['action'])
+                if 'start_date' in filters and 'end_date' in filters:
+                    query = query.filter(AuditLog.timestamp.between(filters['start_date'], filters['end_date']))
+            logs = query.all()
+            return logs
+        except SQLAlchemyError as e:
+            return f"Error retrieving audit logs: {e}"
+
+    def update_server_configuration(self, config_dict):
+        try:
+            for key, value in config_dict.items():
+                self.session.execute(
+                    update(ServerConfiguration)
+                    .where(ServerConfiguration.key == key)
+                    .values(value=str(value))
+                )
+            self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            return f"Error updating configuration: {e}"
+
+    def get_server_statistics(self):
+        stats = {
+            "active_connections": 42,  # Stub value
+            "uptime": "5 days, 3 hours",
+            "error_count": 7
+        }
+        return stats
+
+    def restart_server(self, server_id):
+        try:
+            restart_log = ServerRestartLog(
+                server_id=server_id,
+                restart_time=datetime.now()
+            )
+            self.session.add(restart_log)
+            self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            return f"Error recording server restart: {e}"
+
+    def toggle_maintenance_mode(self, server_id, mode):
+        key = f"maintenance_mode_{server_id}"
+        try:
+            self.session.execute(
+                update(ServerConfiguration)
+                .where(ServerConfiguration.key == key)
+                .values(value=str(mode))
+            )
+            self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            return f"Error toggling maintenance mode: {e}"
+
+    def broadcast_message(self, message):
+        try:
+            new_msg = BroadcastMessage(
+                message=message,
+                timestamp=datetime.now()
+            )
+            self.session.add(new_msg)
+            self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            return f"Error broadcasting message: {e}"
+
+    def get_pending_updates(self):
+        try:
+            updates = self.session.query(ServerUpdateStatus).filter(ServerUpdateStatus.update_pending == True).all()
+            return updates
+        except SQLAlchemyError as e:
+            return f"Error retrieving pending updates: {e}"
+
+    def get_error_reports(self, filters=None):
+        try:
+            query = self.session.query(ErrorLog)
+            if filters:
+                if 'server_id' in filters:
+                    query = query.filter(ErrorLog.server_id == filters['server_id'])
+                if 'start_date' in filters and 'end_date' in filters:
+                    query = query.filter(ErrorLog.timestamp.between(filters['start_date'], filters['end_date']))
+            errors = query.all()
+            return errors
+        except SQLAlchemyError as e:
+            return f"Error retrieving error reports: {e}"
+
+    def schedule_server_task(self, task_details):
+        try:
+            new_task = ScheduledTask(
+                task_details=task_details,
+                scheduled_time=datetime.now(),  # Schedule immediately (adjust as needed)
+                status="Scheduled"
+            )
+            self.session.add(new_task)
+            self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            return f"Error scheduling task: {e}"
+
+    def list_blobs(self):
+        """
+        Return a list of blobs (DB-only):
+          {
+            "steam":      int or None,
+            "steamui":    int or None,
+            "description": str,
+            "date":       "YYYY-MM-DD HH:MM:SS",
+            "custom":     bool,
+            "steam_pkg_exists":   bool,
+            "steamui_pkg_exists": bool
+          }, ?
+        """
+        pkg_dir = Path("files/packages")
+
+        # 1) load all first-blob configs
+        cfg = {}
+        q1 = text("""
+            SELECT filename, steam_pkg, steamui_pkg, ccr_blobdatetime
+              FROM clientconfigurationdb.configurations
+        """)
+        for fn, steam_pkg, steamui_pkg, raw_dt in self.session.execute(q1):
+            if not fn.startswith("firstblob.bin.") or not fn.endswith(".bin"):
+                continue
+            # raw_dt might be a datetime or string
+            dt = (raw_dt if isinstance(raw_dt, datetime)
+                  else datetime.strptime(raw_dt, "%Y-%m-%d %H_%M_%S"))
+            cfg[fn] = {"date": dt, "steam": steam_pkg, "steamui": steamui_pkg}
+
+        # prepare for bisect
+        sorted_first = sorted((info["date"], fn) for fn, info in cfg.items())
+        first_dates  = [dt for dt, fn in sorted_first]
+
+        # 2) fetch all second-blob entries
+        q2 = text("""
+            SELECT filename, blob_datetime, comments, is_custom
+              FROM betacontentdescriptiondb.filename
+            UNION
+            SELECT filename, blob_datetime, comments, is_custom
+              FROM contentdescriptiondb.filename
+        """)
+
+        entries = []
+        for fn, raw_dt, comments, is_custom in self.session.execute(q2):
+            if not fn.startswith("secondblob.bin.") or not fn.endswith(".bin"):
+                continue
+            dt = (raw_dt if isinstance(raw_dt, datetime)
+                  else datetime.strptime(raw_dt, "%Y-%m-%d %H_%M_%S"))
+            iso = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            # 3) find matching first-blob ? this timestamp
+            idx = bisect_right(first_dates, dt) - 1
+            steam_v = steamui_v = None
+            if idx >= 0:
+                first_fn    = sorted_first[idx][1]
+                steam_v     = cfg[first_fn]["steam"]
+                steamui_v   = cfg[first_fn]["steamui"]
+
+            # 4) check .pkg existence
+            has_spkg  = bool(steam_v   and (pkg_dir/f"steam_{steam_v}.pkg").is_file())
+            has_supkg = bool(steamui_v and (pkg_dir/f"steamui_{steamui_v}.pkg").is_file())
+
+            entries.append({
+                "steam":               steam_v,
+                "steamui":             steamui_v,
+                "description":         comments or "",
+                "date":                iso,
+                "custom":              bool(is_custom),
+                "steam_pkg_exists":    has_spkg,
+                "steamui_pkg_exists":  has_supkg,
+            })
+
+        return entries
+
+    def get_database_blob_list(self):
+        """Return the detailed blob list from the database."""
+        return self.list_blobs()
+
+    def list_administrators(self):
+        """Return a list of (username, rights) tuples for all admin accounts."""
+        try:
+            results = (
+                self.session.query(AdministrationUsersRecord)
+                .all()
+            )
+            return [(rec.Username, rec.Rights) for rec in results]
+        except Exception as e:
+            log.error(f"Error listing administrators: {e}")
+            return []
+
+    def get_admin_rights(self, username):
+        try:
+            record = (
+                self.session.query(AdministrationUsersRecord)
+                .filter_by(Username=username)
+                .first()
+            )
+            return record.Rights if record else None
+        except Exception as e:
+            log.error(f"Error getting admin rights for {username}: {e}")
+            return None
+
+    def has_permission(self, username, permission):
+        rights = self.get_admin_rights(username)
+        if rights is None:
+            return False
+        return (rights & permission) == permission
+
+    def update_admin_rights(self, username, new_rights):
+        """Update the rights bitfield for the administrator with the given username."""
+        try:
+            record = (
+                self.session.query(AdministrationUsersRecord)
+                .filter_by(Username=username)
+                .first()
+            )
+            if not record:
+                return False
+            record.Rights = new_rights
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error updating admin rights for {username}: {e}")
+            return False
+
+    def remove_administrator(self, username):
+        """Remove an administrator account by username."""
+        try:
+            record = (
+                self.session.query(AdministrationUsersRecord)
+                .filter_by(Username=username)
+                .first()
+            )
+            if not record:
+                return False
+            self.session.delete(record)
+            self.session.commit()
+            return True
+        except Exception as e:
+            self.session.rollback()
+            log.error(f"Error removing administrator {username}: {e}")
+            return False

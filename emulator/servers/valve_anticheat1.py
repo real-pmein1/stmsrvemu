@@ -12,7 +12,10 @@ from utilities.vac_utils import Module, Req, ReqAccept, ReqBlock, ReqCheckAccess
 config_var = config.get_config()
 
 class vacemu:
-    TestModuleDir = (config_var['vacmoduledir'] + '//beta/').encode('latin-1')
+    TestModuleDir = os.path.join(
+        config_var['vacmoduledir'],
+        'beta'
+    ).encode('latin-1')
     @staticmethod
     def Cmd_Accept(module_id):
         data = struct.pack('<I', -1 & 0xFFFFFFFF)
@@ -99,6 +102,8 @@ class VAC1Session(threading.Thread):
         self.lock.set()
 
     def run(self):
+        if self.address is None:
+            return
         clientid = str(self.address) + ": "
         self.log.info(clientid + "Connected to Valve Anti-Cheat 1 Server")
         try:
@@ -180,8 +185,9 @@ class VAC1Session(threading.Thread):
                     data_to_send = vacemu.Cmd_Block(block_data)
                     self.send(data_to_send)
         except Exception as e:
-            self.log.error(f"Exception occurred: {e}")
-            self.parent.close_session(self)
+            if self.running == True:
+                self.log.error(f"Exception occurred: {e}")
+                self.parent.close_session(self)
             return
 
 class VAC1Server(UDPNetworkHandler):

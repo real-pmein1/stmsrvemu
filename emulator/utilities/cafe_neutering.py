@@ -4,7 +4,7 @@ import tempfile
 import zipfile
 
 import globalvars
-from utilities.neuter import neuter_file
+
 
 
 def create_zip_package(zip_file, steam_dll, config_lines, caserver_lines, passwords_line, readme, steam_exe):
@@ -55,6 +55,7 @@ def generate_config_lines(ip, user, passw, ip_range) :
 
 
 def process_cafe_files(steam_dll_path, zip_path, wan_path, lan_path, read_me_path, steam_exe_path, config):
+    from utilities.neuter import neuter_file
     try:
         os.mkdir("client/cafe_server")
     except:

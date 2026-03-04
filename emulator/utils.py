@@ -1,4 +1,3 @@
-import copy
 import hashlib
 import ipaddress
 import logging
@@ -13,31 +12,69 @@ import string
 import struct
 import subprocess
 import sys
-import threading
+from threading import Thread, Event, RLock
 import time
-import traceback
+from datetime import datetime
 import mariadb
 from zipfile import ZipFile
 from collections import Counter
-
 import ipcalc
+import psutil
 import requests
 import xxhash
 from tqdm import tqdm
+
 import config as configurations
 import globalvars
 import utilities.database.userpy_to_db
 from config import get_config as read_config, save_config_value
-from steamweb.utils import copy_appropriate_installer, replace_file_in_zip
-from utilities import cafe_neutering, cdr_manipulator, checksum_dict, neuter, packages
-from utilities.cdr_manipulator import cache_cdr
+from utilities.contentdescriptionrecord import ContentDescriptionRecord
+from utilities import cafe_neutering, neuter, packages
+from utilities.cdr_manipulator import (
+    cache_cdr,
+    cache_cdr_unified,
+    check_and_merge_mod_blob_files,
+    load_blobs_to_memory,
+    cleanup_all_ephemeral_blobs
+)
 from utilities.database import ccdb
+from utilities.database import cmsdb
+from utilities.database import settings_db
 from utilities.name_suggestor import load_modifiers_from_files
-from utilities.neuter import config_replace_in_file
+from utilities.neuter import check_appinfo_cache, config_replace_in_file
 from utilities.packages import Package
+from neuter import auto_neuter as new_neuter
+import legacygamekeys
 
 config = read_config()
 log = logging.getLogger('UTILS')
+
+neutering_done = Event()
+
+# Initialize CDR blob lock for thread-safe memory access
+if globalvars.CDR_BLOB_LOCK is None:
+    globalvars.CDR_BLOB_LOCK = RLock()
+
+def sync_settings_to_db() -> None:
+    """Persist configuration values to the settings table.
+
+    Uses batch operations to sync all settings in minimal DB round-trips.
+    Keys containing ``"password"`` are skipped to avoid storing sensitive data.
+
+    Returns:
+        None: This function does not return anything.
+    """
+
+    if globalvars.settingsdb is None:
+        globalvars.settingsdb = settings_db.settings_dbdriver()
+
+    # Filter out password keys and batch sync in one operation
+    settings_to_sync = {
+        key: value
+        for key, value in config.items()
+        if "password" not in key.lower()
+    }
+    globalvars.settingsdb.batch_sync_settings(settings_to_sync)
 
 
 def decodeIP(ipport_str):
@@ -56,6 +93,14 @@ def encodeIP(ip_port):
     packed_string = struct.pack("<BBBBH", int(octets[0]), int(octets[1]), int(octets[2]), int(octets[3]), port)
     return packed_string
 
+def encodeIP_bigendian(ip_port):
+    ip, port = ip_port  # Unpacking the tuple
+    if isinstance(port, str):
+        port = int(port)
+    octets = ip.split(".")
+    # Use '>' for big-endian and include the port
+    packed_string = struct.pack(">BBBBH", int(octets[0]), int(octets[1]), int(octets[2]), int(octets[3]), port)
+    return packed_string
 
 def readfile_beta(fileid, offset, length, index_data, dat_file_handle, net_type):
     # Load the index
@@ -272,12 +317,28 @@ def sanitize_filename(filename):
     return normalized_filename.encode('latin-1')
 
 
+def neuter_worker(*args):
+    try:
+        new_neuter(*args)
+    finally:
+        # Signal that neutering is finished, even if it errored
+        neutering_done.set()
+
+
 def check_secondblob_changed():
-    cache_dir = 'files/cache'
-    secondblob_paths = ['files/secondblob.bin', 'files/secondblob.py', 'files/cache/secondblob_lan.bin']
+    # Skip processing if shutdown is in progress to prevent ThreadPoolExecutor errors
+    if getattr(globalvars, 'shutdown_requested', False):
+        return
+
+    from utilities.custom_neuter_tracker import check_all_cached_pkgs, check_custom_neuter_configs
+    cache_dir = os.path.join('files', 'cache')
+    secondblob_paths = [
+        os.path.join('files', 'secondblob.bin'),
+        os.path.join('files', 'secondblob.py'),
+        os.path.join(cache_dir, 'secondblob_lan.bin')
+    ]
     blobhash_path = os.path.join(cache_dir, 'blobhash')
     hash_needs_update = False
-    disable_converter = config['disable_storage_neutering'].lower() == "true"
 
     # Check if cache files exist
     if not os.path.exists(os.path.join(cache_dir, 'secondblob_lan.bin')) or \
@@ -294,10 +355,11 @@ def check_secondblob_changed():
     cache_date = False
     cache_time = False
     ignore_blobhash = False
-    if os.path.isfile("files/cache/emulator.ini.cache"):
-        with open("emulator.ini", 'r') as inifile:
+    cache_ini_path = os.path.join(cache_dir, 'emulator.ini.cache')
+    if os.path.isfile(cache_ini_path):
+        with open('emulator.ini', 'r') as inifile:
             mainini = inifile.readlines()
-        with open("files/cache/emulator.ini.cache", 'r') as cachefile:
+        with open(cache_ini_path, 'r') as cachefile:
             cacheini = cachefile.readlines()
         for line in mainini:
             #if "steam_date" in line:
@@ -316,7 +378,12 @@ def check_secondblob_changed():
         if new_date and new_time: # Separate for re-caching the blobs
             if new_date != config["steam_date"] or new_time != config["steam_time"]:
                 hash_needs_update = True
-                check_paths = ["files/firstblob.bin", "files/firstblob.py", "files/secondblob.bin", "files/secondblob.py"]
+                check_paths = [
+                    os.path.join('files', 'firstblob.bin'),
+                    os.path.join('files', 'firstblob.py'),
+                    os.path.join('files', 'secondblob.bin'),
+                    os.path.join('files', 'secondblob.py')
+                ]
                 for path in check_paths:
                     if os.path.isfile(path):
                         os.remove(path)
@@ -326,24 +393,29 @@ def check_secondblob_changed():
                 config["steam_date"] = new_date
                 config["steam_time"] = new_time
                 #ccdb.load_ccdb()
-                #launch_neuter_application(disable_converter)
-                os.remove("files/cache/emulator.ini.cache")
-                shutil.copy2("emulator.ini", "files/cache/emulator.ini.cache")
+                os.remove(cache_ini_path)
+                #shutil.copy2('emulator.ini', cache_ini_path)
             elif new_date != cache_date or new_time != cache_time:
                 hash_needs_update = True
-                check_paths = ["files/firstblob.bin", "files/firstblob.py", "files/secondblob.bin", "files/secondblob.py"]
+                check_paths = [
+                    os.path.join('files', 'firstblob.bin'),
+                    os.path.join('files', 'firstblob.py'),
+                    os.path.join('files', 'secondblob.bin'),
+                    os.path.join('files', 'secondblob.py')
+                ]
                 for path in check_paths:
                     if os.path.isfile(path):
                         os.remove(path)
                 config["steam_date"] = new_date
                 config["steam_time"] = new_time
-                os.remove("files/cache/emulator.ini.cache")
-                shutil.copy2("emulator.ini", "files/cache/emulator.ini.cache")
+                os.remove(cache_ini_path)
+                #shutil.copy2('emulator.ini', cache_ini_path)
             else: # Date/time match, setting flag to ignore blobhash
                 ignore_blobhash = True
     else: # Assume cached blobs are invalid as there's no ini cache
         hash_needs_update = True
-        shutil.copy2("emulator.ini", "files/cache/emulator.ini.cache")
+
+    shutil.copy2("emulator.ini", os.path.join("files", "cache", "emulator.ini.cache"))
 
     # Determine which file (bin or py) exists for hashing
     current_hash = None
@@ -372,86 +444,198 @@ def check_secondblob_changed():
     
     if hash_needs_update:
         log.info("Caching CDDB")
-        cache_cdr(True)
-        cache_cdr(False)
-        if globalvars.record_ver != 0:
-            launch_neuter_application(disable_converter)
+        # Process firstblob first to set record_ver before mod_blob merging in cache_cdr
         ccdb.neuter_ccdb()
+        # OPTIMIZATION: Use unified function to build blob ONCE and create both LAN/WAN variants
+        # This eliminates duplicate database queries and blob processing
+        cache_cdr_unified(isAppApproval_merge=False)
         log.info("Finished caching CDDB")
     else:
         log.info("Using cached secondblob file for content description")
+        # Check for new/modified files in mod_blob and merge without re-running neuter
+        merged_count = check_and_merge_mod_blob_files()
+        if merged_count > 0:
+            log.info(f"Merged {merged_count} new/modified mod_blob file(s) into cache")
+
+    # Check and update all cached pkgs against current mod_pkg state
+    check_all_cached_pkgs()
+
+    # Check for custom neuter config changes and invalidate affected caches
+    check_custom_neuter_configs(is_cold_start=False)
 
     from utilities import blobs
     import zlib
     import pprint
-    # We need to deserialize the cached blob if this is the case, and store it in memory for the CM and the subscription stuff
-    try:
-        with open("files/cache/secondblob_lan.bin.temp", "rb") as g:
-            blob = g.read()
-    except:
-        with open("files/cache/secondblob_lan.bin", "rb") as g:
-            blob = g.read()
-
-    if blob.startswith(b"\x01\x43"):
-        blob = zlib.decompress(blob[20:])
-    blob2 = blobs.blob_unserialize(blob)
-    file = "blob = " + pprint.saferepr(blob2)
-    execdict = {}
-    exec(file, execdict)
-    globalvars.CDR_DICTIONARY = execdict["blob"]
-    globalvars.ini_changed_by_server = False
     from utilities.time import steamtime_to_datetime
-    globalvars.current_blob_datetime = steamtime_to_datetime(execdict["blob"][b"\x03\x00\x00\x00"])
-    globalvars.CDDB_datetime = steamtime_to_datetime(globalvars.CDR_DICTIONARY[b"\x03\x00\x00\x00"])
+
+    # Load CDR blobs into memory
+    # During neuter (hash_needs_update=True), .temp files exist and we need to read from them
+    # After neuter or on normal startup, .bin files are used
+    if hash_needs_update:
+        # Read from .temp files during neutering process
+        # These will be renamed to .bin after neuter completes
+        try:
+            with open(os.path.join("files", "cache", "secondblob_lan.bin.temp"), "rb") as g:
+                lan_blob_bytes = g.read()
+        except Exception:
+            with open(os.path.join("files", "cache", "secondblob_lan.bin"), "rb") as g:
+                lan_blob_bytes = g.read()
+
+        try:
+            with open(os.path.join("files", "cache", "secondblob_wan.bin.temp"), "rb") as g:
+                wan_blob_bytes = g.read()
+        except Exception:
+            with open(os.path.join("files", "cache", "secondblob_wan.bin"), "rb") as g:
+                wan_blob_bytes = g.read()
+
+        # Store in memory (thread-safe)
+        with globalvars.CDR_BLOB_LOCK:
+            globalvars.CDR_BLOB_LAN = lan_blob_bytes
+            globalvars.CDR_BLOB_WAN = wan_blob_bytes
+
+            # Decompress and deserialize for CDR_DICTIONARY
+            # OPTIMIZATION: Use blob_unserialize directly instead of pprint.saferepr + exec
+            blob = lan_blob_bytes
+            if blob.startswith(b"\x01\x43"):
+                blob = zlib.decompress(blob[20:])
+            blob_dict = blobs.blob_unserialize(blob)
+            globalvars.CDR_DICTIONARY = blob_dict
+
+            # Update related globals
+            globalvars.CDR_obj = ContentDescriptionRecord(blob_dict)
+            globalvars.subscription_pass_list = globalvars.CDR_obj.get_onpurchase_guest_passes_info()
+
+            if b"\x03\x00\x00\x00" in blob_dict:
+                globalvars.current_blob_datetime = steamtime_to_datetime(blob_dict[b"\x03\x00\x00\x00"])
+                globalvars.CDDB_datetime = steamtime_to_datetime(blob_dict[b"\x03\x00\x00\x00"])
+                config_datetime = steamtime_to_datetime(blob_dict[b"\x03\x00\x00\x00"])
+                config["steam_date"] = config_datetime[0]
+                config["steam_time"] = config_datetime[1]
+    else:
+        # Normal startup - load from finalized .bin files using the memory caching function
+        # This also handles re-merging any ephemeral blobs from external content servers
+        load_blobs_to_memory()
+
+        # Update config with datetime from CDR_DICTIONARY
+        if hasattr(globalvars.CDR_DICTIONARY, 'VersionNumber'):
+            # CDR_DICTIONARY is a ContentDescriptionRecord object
+            globalvars.CDDB_datetime = steamtime_to_datetime(globalvars.CDR_DICTIONARY.LastChangedExistingAppOrSubscriptionTime)
+        else:
+            # CDR_DICTIONARY is a raw dict
+            globalvars.CDDB_datetime = steamtime_to_datetime(globalvars.CDR_DICTIONARY.get(b"\x03\x00\x00\x00"))
+        config_datetime = globalvars.CDDB_datetime
+        config["steam_date"] = config_datetime[0]
+        config["steam_time"] = config_datetime[1]
+
+    globalvars.ini_changed_by_server = False
+
+    try:
+        globalvars.settingsdb.set_setting('current_datetime', globalvars.CDDB_datetime)
+    except Exception as e:
+        log.error(f"Failed to store current_datetime: {e}")
+
+    check_appinfo_cache()
+    log_blob_information(True)
+
+    if hash_needs_update:
+        # Call the parent initializer, which sets most of the global vars during init.  this allows the server to load any changes made to the ini during blob or ini change.
+        # parent_initializer(reinitialize = True)
+        # Clear the event before starting new neutering process
+        # This ensures handle_neutering_completion waits for the new neuter to complete
+        neutering_done.clear()
+
+        neuter_thread = Thread(target=neuter_worker, args=("load", "app", ",8"), daemon=True)
+        neuter_thread.start()
+
+        news_thread = Thread(target=handle_neutering_completion, daemon=True)
+        news_thread.start()
+    else:
+        # recreate the client if it doesn't exist and not already created this session
+        if not globalvars.bootstrapper_created:
+            if not os.path.isfile(os.path.join("client", "lan", "Steam.exe")) or not os.path.isfile(os.path.join("client", "wan", "Steam.exe")):
+                create_bootstrapper()
+                globalvars.bootstrapper_created = True
+            elif not os.path.isfile(os.path.join("client", "lan", "HldsUpdateTool.exe")) or not os.path.isfile(os.path.join("client", "wan", "HldsUpdateTool.exe")):
+                create_bootstrapper()
+                globalvars.bootstrapper_created = True
+    # log_blob_information()
     # replace_installer_exes_thread()  # Function to call the installer steam.exe replacer for the website download
 
-def launch_neuter_application(disable_converter):
-    if not disable_converter:
-        if os.path.isfile(globalvars.neuter_path) and globalvars.record_ver > 1:
-            with open('files/configs/.isneutering', 'w') as fp:
-                pass
-            if globalvars.current_os == 'Windows':
-                if config["from_source"].lower() == "true":
-                    neuter1 = subprocess.Popen(f"start python {globalvars.neuter_path} load app ,8", shell = True)
-                else:
-                    neuter1 = subprocess.Popen(f"start {globalvars.neuter_path} load app ,8", shell = True)
-            elif globalvars.current_os == 'Linux':
-                neuter1 = subprocess.Popen(f'python3 {globalvars.neuter_path} load app ,8 &', shell = True)
-            neuter1.wait()
-        else:
-            rename_temp_blobs()
-    else:
-        rename_temp_blobs()
-
 def launch_neuter_application_standalone():
-    if os.path.isfile(globalvars.neuter_path) and globalvars.record_ver > 1:
-        with open('files/configs/.isneutering', 'w') as fp:
+    if os.path.isfile(globalvars.neuter_path):# and globalvars.record_ver > 1:
+        with open(os.path.join('files', 'configs', '.isneutering'), 'w') as fp:
             pass
-        if globalvars.current_os == 'Windows':
+        if globalvars.IS_WINDOWS:
             if config["from_source"].lower() == "true":
-                neuter1 = subprocess.Popen(f"start python {globalvars.neuter_path} load app ,8", shell = True)
+                cmd = ["python", globalvars.neuter_path, "load", "app", ",8"]
             else:
-                neuter1 = subprocess.Popen(f"start {globalvars.neuter_path} load app ,8", shell = True)
-        elif globalvars.current_os == 'Linux':
-            neuter1 = subprocess.Popen(f'python3 {globalvars.neuter_path} load app ,8 &', shell = True)
+                cmd = [globalvars.neuter_path, "load", "app", ",8"]
+        else:
+            cmd = ["python3", globalvars.neuter_path, "load", "app", ",8"]
+        neuter1 = subprocess.Popen(cmd)
         neuter1.wait()
     else:
         rename_temp_blobs()
 
-def wait_for_neutering_to_complete(neutering_flag_path):
-    """
-    Wait until the neutering process removes the specified file.
-    :param neutering_flag_path: Path to the `.isneutering` file.
-    """
-    while os.path.exists(neutering_flag_path):
-        #print("Waiting for neutering process to complete...")
-        time.sleep(2)
 
-def replace_installer_exes():
+def handle_neutering_completion():
+    try:
+        log.debug("Waiting for neutering to complete...")
+        # Wait until neutering_done is set by neuter_worker
+        neutering_done.wait()
+        log.debug("Neutering done event received")
+
+        # Update CMS theme if CMS is enabled
+        if config.get('use_cms', '').lower() == 'true':
+            try:
+                cmsdb.update_cms_theme()
+            except Exception as e:
+                log.error(f"Failed to update CMS theme: {e}")
+
+        from steam3.news_update_manager import news_update_manager
+
+        pkg_files_neutered = os.path.isfile(globalvars.neuter_path)
+        news_update_manager.set_pkg_files_neutered(pkg_files_neutered)
+        log.debug(f"Pkg files neutered: {pkg_files_neutered}")
+
+        # CM server wait logic stays as-is
+        cmserver_obj = None
+        max_wait_time = 60
+        wait_interval = 1
+        waited_time = 0
+
+        while waited_time < max_wait_time:
+            try:
+                from steam3.ClientManager import Client_Manager
+                if hasattr(Client_Manager, 'cmserver_obj') and Client_Manager.cmserver_obj is not None:
+                    cmserver_obj = Client_Manager.cmserver_obj
+                    if getattr(cmserver_obj, 'is_running', False) or getattr(cmserver_obj, 'serversocket', None):
+                        log.debug(f"Found CM server object after {waited_time}s")
+                        break
+            except Exception as e:
+                log.debug(f"Exception while waiting for CM server: {e}")
+
+            time.sleep(wait_interval)
+            waited_time += wait_interval
+
+        if cmserver_obj:
+            log.info("Neutering completed, sending client update news to connected clients")
+            news_update_manager.send_client_update_to_all_clients(cmserver_obj)
+        else:
+            log.warning(f"No CM server object available after waiting {max_wait_time} seconds - skipping news updates")
+
+    except Exception as e:
+        log.error(f"Error handling neutering completion: {e}")
+        import traceback
+        log.error(traceback.format_exc())
+
+
+# The following functions are defunct because we have no way to insert the modified steam.exe/dll into the wise installer executable.
+'''def replace_installer_exes():
     """
     Replace the Steam executable in the LAN and WAN installers.
     """
-    neutering_flag_path = 'files/configs/.isneutering'
+    neutering_flag_path = os.path.join('files', 'configs', '.isneutering')
     wait_for_neutering_to_complete(neutering_flag_path)
 
     try:
@@ -478,9 +662,10 @@ def replace_installer_exes_thread():
     """
     Launch the replace_installer_exes function in its own thread.
     """
-    thread = threading.Thread(target=replace_installer_exes, name="ReplaceInstallerExesThread")
+    thread = Thread(target=replace_installer_exes, name="ReplaceInstallerExesThread")
     thread.start()
-    return thread
+    return thread'''
+
 
 def quick_hash_file(file_path, sample_size=10*1024*1024):  # Sample size set to 10 MB
     file_size = os.path.getsize(file_path)
@@ -504,32 +689,77 @@ def quick_hash_file(file_path, sample_size=10*1024*1024):  # Sample size set to 
 
 
 def rename_temp_blobs():
-    if os.path.isfile("files/cache/secondblob_lan.bin.temp"):
-        try:
-            os.remove("files/cache/secondblob_lan.bin")
-        except:
-            pass
-        os.rename("files/cache/secondblob_lan.bin.temp", "files/cache/secondblob_lan.bin")
+    """
+    Safely rename .temp blob files to their final names with retry logic.
 
-    if os.path.isfile("files/cache/secondblob_wan.bin.temp"):
-        try:
-            os.remove("files/cache/secondblob_wan.bin")
-        except:
-            pass
-        os.rename("files/cache/secondblob_wan.bin.temp", "files/cache/secondblob_wan.bin")
+    This function handles the atomic rename of temp blob files after neutering
+    is complete. It includes proper error handling and retry logic to handle
+    cases where files may be temporarily locked by other processes.
+    """
+    cache_dir = os.path.join("files", "cache")
 
-    if os.path.isfile("files/cache/firstblob.bin.temp"):
-        try:
-            os.remove("files/cache/firstblob.bin")
-        except:
-            pass
-        os.rename("files/cache/firstblob.bin.temp", "files/cache/firstblob.bin")
+    # List of blob files to rename: (temp_name, final_name)
+    blob_files = [
+        ("secondblob_lan.bin.temp", "secondblob_lan.bin"),
+        ("secondblob_wan.bin.temp", "secondblob_wan.bin"),
+        ("firstblob.bin.temp", "firstblob.bin"),
+    ]
 
-    if os.path.isfile("files/configs/.isneutering"):
+    for temp_name, final_name in blob_files:
+        temp_path = os.path.join(cache_dir, temp_name)
+        final_path = os.path.join(cache_dir, final_name)
+
+        if not os.path.isfile(temp_path):
+            continue
+
+        # Retry up to 5 times with exponential backoff
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                # Try to remove existing file first
+                if os.path.isfile(final_path):
+                    try:
+                        os.remove(final_path)
+                    except PermissionError:
+                        # File is locked, wait and retry
+                        if attempt < max_retries - 1:
+                            time.sleep(0.1 * (2 ** attempt))  # 100ms, 200ms, 400ms, 800ms
+                            continue
+                        else:
+                            log.error(f"Cannot remove locked file {final_path} after {max_retries} attempts")
+                            break
+                    except OSError as e:
+                        log.warning(f"Error removing {final_path}: {e}")
+
+                # Perform the rename
+                os.rename(temp_path, final_path)
+                log.debug(f"Successfully renamed {temp_name} to {final_name}")
+                break  # Success, exit retry loop
+
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    log.debug(f"Rename attempt {attempt + 1} failed for {temp_name}, retrying...")
+                    time.sleep(0.1 * (2 ** attempt))
+                else:
+                    log.error(f"Failed to rename {temp_name} after {max_retries} attempts: {e}")
+            except OSError as e:
+                log.error(f"OS error renaming {temp_name} to {final_name}: {e}")
+                break  # Don't retry on other OS errors
+
+    # Clean up the .isneutering flag file
+    neuter_flag = os.path.join('files', 'configs', '.isneutering')
+    if os.path.isfile(neuter_flag):
         try:
-            os.remove("files/configs/.isneutering")
-        except:
-            pass
+            os.remove(neuter_flag)
+        except Exception as e:
+            log.warning(f"Failed to remove .isneutering flag: {e}")
+
+    # Reload blobs into memory from the finalized cache files
+    # This also re-merges any ephemeral blobs from external content servers
+    try:
+        load_blobs_to_memory()
+    except Exception as e:
+        log.error(f"Failed to load blobs to memory after rename: {e}")
 
 
 def check_files_checksums(storage_crc_list, directory):
@@ -545,30 +775,75 @@ def check_files_checksums(storage_crc_list, directory):
 
 
 def autoupdate():
+    try:
+        conn = mariadb.connect(
+                user=config['database_username'],
+                password=config['database_password'],
+                host=config['database_host'],
+                database=config['database'],
+                port=int(config['database_port'])
+        )
+        # Get Cursor
+        cur = conn.cursor()
+
+        try:
+            cur.execute(f"SELECT * FROM version")
+            if not cur.fetchall()[0][0] == 1:
+                cur.execute("USE mysql")
+                print(f"{config['database']} database schema out of date, dropping and rebuilding...")
+                cur.execute(f"DROP DATABASE IF EXISTS {config['database']}")
+        except Exception as e:
+            if str(e) == f"Table '{config['database']}.version' doesn't exist" or str(e) == "list index out of range":
+                try:
+                    cur.execute("USE mysql")
+                    print(f"{config['database']} database version missing, dropping and rebuilding...")
+                    cur.execute(f"DROP DATABASE IF EXISTS {config['database']}")
+                except Exception as e:
+                    print(f"Error dropping emulator database: {e}")
+            else:
+                print(f"Error dropping emulator database: {e}")
+        conn.close()
+    except mariadb.Error as e:
+        if not globalvars.mdb_ver == "0":
+            print(f"Error connecting to MariaDB Platform: {e}")
+        else:
+            pass
+
+    if not globalvars.IS_WINDOWS:
+        logging.info("Auto-update is disabled on non-Windows platforms")
+        return
     if config["emu_auto_update"].lower() == "true":
         arguments = sys.argv[0]
 
         if arguments.endswith("emulator.exe"):
             try:
+                live_repo = "stmemu-update"
+                test_repo = "stmemu-update-test"
+                try:
+                    uat_token = config["uat_key"]
+                except:
+                    uat_token = False
+                if config["uat"] == "1" and uat_token:
+                    repo = test_repo
+                    headers = {"Authorization": f"Bearer {uat_token}", "Accept": "application/vnd.github.v3.raw"}
+                else:
+                    repo = live_repo
+                    headers = {"Accept": "application/vnd.github.v3.raw"}
+                url = f"https://api.github.com/repos/real-pmein1/{repo}/contents/"
                 if os.path.isfile("emulatorTmp.exe"):
                     os.remove("emulatorTmp.exe")
                 if os.path.isfile("emulatorNew.exe"):
                     os.remove("emulatorNew.exe")
-                if config["uat"] == "1":
-                    url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/version"
-                    # url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/version"
-                else:
-                    url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/version"
-                resp = requests.get(url)
+                resp = requests.get(url + "version", headers=headers)
 
-                line1end = resp.text.index((b'\n').decode("UTF-8")) + 1
-                line2end = resp.text[line1end:].index((b'\n').decode("UTF-8")) + 1
-                line3end = resp.text[line1end + line2end:].index((b'\n').decode("UTF-8")) + 1
+                keys = ["server", "serverui", "mdb", "serverweb"]
+                lines = resp.text.strip().splitlines()
+                result = {k: v for k, v in zip(keys, lines)}
 
-                online_server_ver = resp.text[:line1end - 1]
-                online_serverui_ver = resp.text[line1end:line1end + line2end - 1]
-                online_mdb_ver = resp.text[line1end + line2end:line1end + line2end + line3end - 1]
-                online_serverweb_ver = resp.text[line1end + line2end + line3end:]
+                online_server_ver = result["server"]
+                online_serverui_ver = result["serverui"]
+                online_mdb_ver = result["mdb"]
+                online_serverweb_ver = result["serverweb"]
 
                 for file in os.listdir("."):
                     if file.startswith("Server_") and file.endswith(".mst"):
@@ -577,19 +852,15 @@ def autoupdate():
                         globalvars.ui_ver = file[9:-4]
                     elif file.startswith("ServerDB_") and file.endswith(".mst"):
                         globalvars.mdb_ver = file[9:-4]
+                    elif file.startswith("ServerWeb_") and file.endswith(".mst"):
+                        globalvars.web_ver = file[10:-4]
                     elif file.endswith(".pkg") or file.endswith(".srv") or file.endswith(".out"):
                         os.remove(file)
 
                 if online_server_ver != globalvars.emu_ver or not os.path.isfile("Server_" + online_server_ver + ".mst"):
                     shutil.copy("emulator.exe", "emulatorTmp.exe")
                     print("Server update found " + globalvars.emu_ver + " -> " + online_server_ver + ", downloading...")
-                    if config["uat"] == "1":
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/Server_" + online_server_ver + ".pkg"
-                        # url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/Server_" + online_server_ver + ".pkg"
-                    else:
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/Server_" + online_server_ver + ".pkg"
-                    # Streaming, so we can iterate over the response.
-                    response = requests.get(url, stream = True)
+                    response = requests.get(url + f"Server_{online_server_ver}.pkg", headers=headers, stream=True)
                     total_size_in_bytes = int(response.headers.get('content-length', 0))
                     block_size = 1024  # 1 Kilobyte
                     progress_bar = tqdm(total = total_size_in_bytes, unit = 'iB', unit_scale = True, ncols = 80, file=sys.stdout)
@@ -616,21 +887,22 @@ def autoupdate():
                     if globalvars.emu_ver:
                         if int(globalvars.emu_ver, 16) <= 3: # For forcing cache flush from py27 to py39
                             print("Config change detected, flushing cache...")
-                            shutil.rmtree("files/cache")
-                            os.mkdir("files/cache")
-                            shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+                            cache_dir = os.path.join('files', 'cache')
+                            shutil.rmtree(cache_dir)
+                            os.mkdir(cache_dir)
+                            os.mkdir(os.path.join(cache_dir, 'internal'))
+                            os.mkdir(os.path.join(cache_dir, 'external'))
+                            shutil.copy('emulator.ini', os.path.join(cache_dir, 'emulator.ini.cache'))
                             print
-                    subprocess.Popen("emulatorTmp.exe")
+                    if globalvars.IS_WINDOWS:
+                        subprocess.Popen("emulatorTmp.exe")
+                    else:
+                        subprocess.Popen([sys.executable, "emulator.py"])
                     sys.exit(0)
                 
                 if not online_serverui_ver == globalvars.ui_ver or not os.path.isfile("ServerUI_" + online_serverui_ver + ".mst"):
                     print("UI update found " + globalvars.ui_ver + " -> " + online_serverui_ver + ", downloading...")
-                    if config["uat"] == "1":
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/ServerUI_" + online_serverui_ver + ".pkg"
-                        # url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/ServerUI_" + online_serverui_ver + ".pkg"
-                    else:
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/ServerUI_" + online_serverui_ver + ".pkg"
-                    response = requests.get(url, stream = True)
+                    response = requests.get(url + f"ServerUI_{online_serverui_ver}.pkg", headers=headers, stream=True)
                     total_size_in_bytes = int(response.headers.get('content-length', 0))
                     block_size = 1024  # 1 Kilobyte
                     progress_bar = tqdm(total = total_size_in_bytes, unit = 'iB', unit_scale = True, ncols = 80, file=sys.stdout)
@@ -657,12 +929,7 @@ def autoupdate():
                 
                 if not online_mdb_ver == globalvars.mdb_ver or not os.path.isfile("ServerDB_" + online_mdb_ver + ".mst"):
                     print("DB update found " + globalvars.mdb_ver + " -> " + online_mdb_ver + ", downloading...")
-                    if config["uat"] == "1":
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/ServerDB_" + online_mdb_ver + ".pkg"
-                        # url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/ServerDB_" + online_mdb_ver + ".pkg"
-                    else:
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/ServerDB_" + online_mdb_ver + ".pkg"
-                    response = requests.get(url, stream = True)
+                    response = requests.get(url + f"ServerDB_{online_mdb_ver}.pkg", headers=headers, stream=True)
                     total_size_in_bytes = int(response.headers.get('content-length', 0))
                     block_size = 1024  # 1 Kilobyte
                     progress_bar = tqdm(total = total_size_in_bytes, unit = 'iB', unit_scale = True, ncols = 80, file=sys.stdout)
@@ -694,6 +961,7 @@ def autoupdate():
 
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ClientConfigurationDB'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ContentDescriptionDB'")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ProductInformationDB'")
                         conn.close()
                     except mariadb.Error as e:
                         if not globalvars.mdb_ver == "0":
@@ -716,12 +984,7 @@ def autoupdate():
                 
                 if not online_serverweb_ver == globalvars.web_ver or not os.path.isfile("ServerWeb_" + online_serverweb_ver + ".mst"):
                     print("Web update found " + globalvars.web_ver + " -> " + online_serverweb_ver + ", downloading...")
-                    if config["uat"] == "1":
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update-test/main/ServerWeb_" + online_serverweb_ver + ".pkg"
-                        # url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/ServerWeb_" + online_serverweb_ver + ".pkg"
-                    else:
-                        url = "https://raw.githubusercontent.com/real-pmein1/stmemu-update/main/ServerWeb_" + online_serverweb_ver + ".pkg"
-                    response = requests.get(url, stream = True)
+                    response = requests.get(url + f"ServerWeb_{online_serverweb_ver}.pkg", headers=headers, stream=True)
                     total_size_in_bytes = int(response.headers.get('content-length', 0))
                     block_size = 1024  # 1 Kilobyte
                     progress_bar = tqdm(total = total_size_in_bytes, unit = 'iB', unit_scale = True, ncols = 80, file=sys.stdout)
@@ -749,16 +1012,16 @@ def autoupdate():
             except Exception as e:
                 globalvars.update_exception1 = e
                 print(e)
-            # finally:
-                # if os.path.isfile("server_0.mst"):
-                    # os.remove("server_0.mst")
         elif arguments.endswith("emulatorTmp.exe") and not os.path.isfile("emulatorNew.exe"):
             print("WAITING...")
             try:
 
                 os.remove("emulator.exe")
                 shutil.copy("emulatorTmp.exe", "emulator.exe")
-                subprocess.Popen("emulator.exe")
+                if globalvars.IS_WINDOWS:
+                    subprocess.Popen("emulator.exe")
+                else:
+                    subprocess.Popen([sys.executable, "python3", "emulator.py"])
                 sys.exit(0)
 
             except Exception as e:
@@ -768,7 +1031,10 @@ def autoupdate():
             try:
                 os.remove("emulator.exe")
                 shutil.copy("emulatorNew.exe", "emulator.exe")
-                subprocess.Popen("emulator.exe")
+                if globalvars.IS_WINDOWS:
+                    subprocess.Popen("emulator.exe")
+                else:
+                    subprocess.Popen([sys.executable, "python3", "emulator.py"])
                 sys.exit(0)
 
             except Exception as e:
@@ -848,7 +1114,10 @@ def is_valid_ip(ip_address):
 def check_ip_and_exit(ip_address, ip_type):
     """Checks an IP address, logs error and exits if invalid."""
     if ip_address != "0.0.0.0" and not is_valid_ip(ip_address):
-        log.error(f"ERROR! The {ip_type} ip is malformed, currently {ip_address}")
+        if len(ip_address) == 0:
+            ip_address = "nothing"
+        log.error(f"ERROR! The {ip_type} ip is malformed, currently: {ip_address}")
+        time.sleep(1)
         input("Press Enter to exit...")
         quit()
 
@@ -880,6 +1149,11 @@ def setpublicip():
         globalvars.public_ip_b = globalvars.public_ip.encode("latin-1")
 
 
+def setcommunityip():
+    if config["community_ip"] == "":
+        save_config_value("community_ip", config["server_ip"])
+
+
 def print_stmserver_ipaddresses():
     iplen = max(len(config["server_ip"]), len(config["public_ip"]))
     print(("*" * 11) + ("*" * iplen))
@@ -887,7 +1161,6 @@ def print_stmserver_ipaddresses():
     if config["public_ip"] != "0.0.0.0":
         print(f"Public IP: {globalvars.public_ip}")
     print(("*" * 11) + ("*" * iplen))
-    print("")
 
 
 def initialize(server_type: int = 0):
@@ -916,48 +1189,55 @@ def initialize(server_type: int = 0):
     globalvars.firstblob_eval = ccdb.load_ccdb()
 
     if server_type in [0, 6]:
-        for filename in os.listdir("files/cache/"):
+        cache_dir = os.path.join('files', 'cache')
+        for filename in os.listdir(cache_dir):
             if globalvars.record_ver == 1 and "SteamUI_" in filename:
-                os.remove("files/cache/" + filename)
+                os.remove(os.path.join(cache_dir, filename))
                 break
             elif globalvars.record_ver != 1 and "PLATFORM_" in filename:
-                os.remove("files/cache/" + filename)
+                os.remove(os.path.join(cache_dir, filename))
                 break
 
-        if os.path.isdir("files/cache/internal"):
-            for filename in os.listdir("files/cache/internal/"):
+        internal_cache = os.path.join(cache_dir, 'internal')
+        if os.path.isdir(internal_cache):
+            for filename in os.listdir(internal_cache):
                 if globalvars.record_ver == 1 and "SteamUI_" in filename:
-                    os.remove("files/cache/internal/" + filename)
+                    os.remove(os.path.join(internal_cache, filename))
                     break
                 elif globalvars.record_ver != 1 and "PLATFORM_" in filename:
-                    os.remove("files/cache/internal/" + filename)
+                    os.remove(os.path.join(internal_cache, filename))
                     break
 
-        if os.path.isdir("files/cache/external"):
-            for filename in os.listdir("files/cache/external/"):
+        ext_cache_dir = os.path.join('files', 'cache', 'external')
+        if os.path.isdir(ext_cache_dir):
+            for filename in os.listdir(ext_cache_dir):
                 if globalvars.record_ver == 1 and "SteamUI_" in filename:
-                    os.remove("files/cache/external/" + filename)
+                    os.remove(os.path.join(ext_cache_dir, filename))
                     break
                 elif globalvars.record_ver != 1 and "PLATFORM_" in filename:
-                    os.remove("files/cache/external/" + filename)
+                    os.remove(os.path.join(ext_cache_dir, filename))
                     break
 
     file_altered = False
 
-    if not os.path.isfile("files/cache/emulator.ini.cache"):
+    cache_ini_path = os.path.join('files', 'cache', 'emulator.ini.cache')
+    if not os.path.isfile(cache_ini_path):
         print("Config change detected, flushing cache...")
-        shutil.rmtree("files/cache")
+        cache_dir = os.path.join('files', 'cache')
+        shutil.rmtree(cache_dir)
         try:
-            os.mkdir("files/cache")
+            os.mkdir(cache_dir)
+            os.mkdir(os.path.join(cache_dir, 'internal'))
+            os.mkdir(os.path.join(cache_dir, 'external'))
         except:
             pass # in case the folder itself isn't removed
-        shutil.copy2("emulator.ini", "files/cache/emulator.ini.cache")
+        shutil.copy2('emulator.ini', cache_ini_path)
         print()
     else:
         try:
-            with open("emulator.ini", 'r') as f:
+            with open('emulator.ini', 'r') as f:
                 ini = f.readlines()
-            with open("files/cache/emulator.ini.cache", 'r') as g:
+            with open(cache_ini_path, 'r') as g:
                 cache = g.readlines()
 
             ini_list = []
@@ -981,23 +1261,31 @@ def initialize(server_type: int = 0):
                     for line2 in cache_list:
                         if (line2.startswith(lineP1 + "=") or line2.startswith(lineP1[1:] + "=")) and not line2.startswith(";" + lineP1[1:] + "="):
                             if line1 != line2:
-                                print(line1, line2)
                                 file_altered = True
                             break
 
             if file_altered:
                 print("Config change detected, flushing cache...")
-                shutil.rmtree("files/cache")
-                os.mkdir("files/cache")
-                shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+                cache_dir = os.path.join('files', 'cache')
+                shutil.rmtree(cache_dir)
+                os.mkdir(cache_dir)
+                os.mkdir(os.path.join(cache_dir, 'internal'))
+                os.mkdir(os.path.join(cache_dir, 'external'))
+                shutil.copy('emulator.ini', os.path.join(cache_dir, 'emulator.ini.cache'))
                 print()
         except:  # FAILURE, ASSUME CACHE CORRUPTED
             print("Config change detected, flushing cache...")
-            shutil.rmtree("files/cache")
-            os.mkdir("files/cache")
-            shutil.copy("emulator.ini", "files/cache/emulator.ini.cache")
+            cache_dir = os.path.join('files', 'cache')
+            shutil.rmtree(cache_dir)
+            os.mkdir(cache_dir)
+            os.mkdir(os.path.join(cache_dir, 'internal'))
+            os.mkdir(os.path.join(cache_dir, 'external'))
+            shutil.copy('emulator.ini', os.path.join(cache_dir, 'emulator.ini.cache'))
             print()
-    globalvars.server_net = ipaddress.IPv4Network(config["server_ip"] + '/' + config["server_sm"], strict = False)
+    globalvars.server_net = ipaddress.IPv4Network(
+        config["server_ip"] + '/' + config["server_sm"], strict=False
+    )
+    globalvars.server_network = ipcalc.Network(str(globalvars.server_net))
 
 
 def check_autoip_config():
@@ -1009,37 +1297,74 @@ def check_autoip_config():
         if config["auto_server_ip"].lower() == "true":
             globalvars.server_ip = get_internal_ip()
             globalvars.server_ip_b = globalvars.server_ip.encode("latin-1")
+        #setcommunityip()
         setpublicip()
         # RELOAD THE CONFIG SO THE MEMORY CONTAINS THE LATEST CHANGES
         config = configurations.read_config()
     else:
+        #setcommunityip()
+        config = configurations.read_config()
         checkip()
         setpublicip()
 
 
 def finalinitialize(log, server_type: int = 0):
+    # Clean up any stale ephemeral blobs from previous runs (crash recovery)
+    # This prevents accidentally merging old external content server blobs
+    try:
+        cleanup_all_ephemeral_blobs()
+        log.debug("Cleaned up stale ephemeral blobs from previous session")
+    except Exception as e:
+        log.warning(f"Failed to cleanup ephemeral blobs on startup: {e}")
+
+    # Cold-start check for custom neuter configs
+    # Detects new/modified configs and invalidates affected caches before blob processing
+    try:
+        from utilities.custom_neuter_tracker import check_custom_neuter_configs
+        result = check_custom_neuter_configs(is_cold_start=True)
+        if result["new"] or result["modified"] or result["deleted"]:
+            log.info(f"Custom neuter config changes detected on startup: "
+                     f"new={result['new']}, modified={result['modified']}, deleted={result['deleted']}")
+    except Exception as e:
+        log.warning(f"Failed to check custom neuter configs on startup: {e}")
+
     check_secondblob_changed()
 
     # create_bootstrapper()
 
     # TODO NEED TO DEPRECATE THIS IN FAVOR OF PROTOCOL VERSIONING
-    if globalvars.steamui_ver < 61:  # guessing steamui version when steam client interface v2 changed to v3
+    if isinstance(globalvars.steamui_ver, str):
+        globalvars.tgt_version = "1"
+    elif globalvars.steamui_ver < 61:  # guessing steamui version when steam client interface v2 changed to v3
         globalvars.tgt_version = "1"
     else:
         globalvars.tgt_version = "2"  # config file states 2 as default
 
-    if globalvars.steamui_ver < 122:
-        if os.path.isfile("files/cafe/Steam.dll"):
-            log.info("Cafe files found")
-            cafe_neutering.process_cafe_files(
-                    "files/cafe/Steam.dll",
-                    "files/cafe/CASpackage.zip",
-                    "client/cafe_server/CASpackageWAN.zip",
-                    "client/cafe_server/CASpackageLAN.zip",
-                    "files/cafe/README.txt",
-                    "client/Steam.exe",
-                    config
-            )
+    if not isinstance(globalvars.steamui_ver, str):
+        if globalvars.steamui_ver < 122:
+            if os.path.isfile("files/cafe/1.3/Steam.dll"):
+                log.info("Cafe v1.3 files found")
+                cafe_neutering.process_cafe_files(
+                        "files/cafe/1.3/Steam.dll",
+                        "files/cafe/1.3/CASpackage.zip",
+                        "client/cafe_server/CASpackageWAN.zip",
+                        "client/cafe_server/CASpackageLAN.zip",
+                        "files/cafe/1.3/README.txt",
+                        "client/Steam.exe",
+                        config
+                )
+        elif globalvars.steamui_ver < 127:
+            if os.path.isfile("files/cafe/1.4/Steam.dll"):
+                log.info("Cafe v1.4 files found")
+                cafe_neutering.process_cafe_files(
+                        "files/cafe/1.4/Steam.dll",
+                        "files/cafe/1.4/CASpackage.zip",
+                        "client/cafe_server/CASpackageWAN.zip",
+                        "client/cafe_server/CASpackageLAN.zip",
+                        "files/cafe/1.4/README.txt",
+                        "client/Steam.exe",
+                        config
+                )
 
     if os.path.isfile("Steam.exe"):
         os.remove("Steam.exe")
@@ -1064,9 +1389,9 @@ def finalinitialize(log, server_type: int = 0):
     # if os.path.isfile("submanager.exe"):
     #    os.remove("submanager.exe")
 
-    if os.path.isfile("files/users.txt"):
+    if os.path.isfile(os.path.join("files", "users.txt")):
         users = {}  # REMOVE LEGACY USERS
-        f = open("files/users.txt")
+        f = open(os.path.join("files", "users.txt"))
         for line in f.readlines():
             if line[-1:] == "\n":
                 line = line[:-1]
@@ -1075,21 +1400,44 @@ def finalinitialize(log, server_type: int = 0):
                 users[user] = user
         f.close()
         for user in users:
-            if os.path.isfile("files/users/" + user + ".py"):
-                os.rename("files/users/" + user + ".py", "files/users/" + user + ".legacy")
-        os.rename("files/users.txt", "files/users.off")
+            user_py = os.path.join("files", "users", user + ".py")
+            if os.path.isfile(user_py):
+                os.rename(user_py, os.path.join("files", "users", user + ".legacy"))
+        os.rename(os.path.join("files", "users.txt"), os.path.join("files", "users.off"))
 
 
 def create_bootstrapper():
+    # Note: The caller (ccdb.py) handles the logic for when to call this function,
+    # including version changes. Do not add early return checks here.
+
     #  modify the steam and hlsupdatetool binary files
     try:
         if globalvars.record_ver == 0:
-            # beta 1 v0
-            f = open(config["packagedir"] + "betav1/Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
+            f = open(
+                os.path.join(
+                    config["packagedir"],
+                    "betav1",
+                    f"Steam_{globalvars.steam_ver}.pkg",
+                ),
+                "rb",
+            )
         elif globalvars.record_ver == 1:
-            f = open(config["packagedir"] + "betav2/Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
+            f = open(
+                os.path.join(
+                    config["packagedir"],
+                    "betav2",
+                    f"Steam_{globalvars.steam_ver}.pkg",
+                ),
+                "rb",
+            )
         else:
-            f = open(config["packagedir"] + "Steam_" + str(globalvars.steam_ver) + ".pkg", "rb")
+            f = open(
+                os.path.join(
+                    config["packagedir"],
+                    f"Steam_{globalvars.steam_ver}.pkg",
+                ),
+                "rb",
+            )
     except:
         log.warning(f"Cannot Neuter, Package: Steam_{str(globalvars.steam_ver)}.pkg Not Present!")
         return
@@ -1106,13 +1454,13 @@ def create_bootstrapper():
         pass
 
     try:
-        os.mkdir("client/lan")
-    except:
+        os.mkdir(os.path.join("client", "lan"))
+    except Exception:
         pass
 
     try:
-        os.mkdir("client/wan")
-    except:
+        os.mkdir(os.path.join("client", "wan"))
+    except Exception:
         pass
 
     #if not os.path.isfile("client/lan/Steam.exe") or not os.path.isfile("client/wan/Steam.exe"):
@@ -1123,10 +1471,31 @@ def create_bootstrapper():
         file_wan = neuter.neuter_file(file, globalvars.public_ip, config["dir_server_port"], b"SteamNew.exe", False)
         file_lan = neuter.neuter_file(file2, globalvars.server_ip, config["dir_server_port"], b"SteamNew.exe", True)
 
-        with open("client/wan/Steam.exe", "wb") as f:
+        with open(os.path.join("client", "wan", "Steam.exe"), "wb") as f:
             f.write(file_wan)
-        with open("client/lan/Steam.exe", "wb") as g:
+        with open(os.path.join("client", "lan", "Steam.exe"), "wb") as g:
             g.write(file_lan)
+        if globalvars.steamui_ver == "0.6.1.0/1.1.0.0":
+            try:
+                os.makedirs(os.path.join("files", "beta1_ftp", "0"))
+            except:
+                pass
+            try:
+                os.remove(os.path.join("files", "beta1_ftp", "0", "Steam1.exe"))
+            except:
+                pass
+            if (config["public_ip"] != "0.0.0.0") or (config["public_ip"] != config["server_ip"]):
+                with open(os.path.join("files", "beta1_ftp", "0", "Steam1.exe"), "wb") as h:
+                    h.write(file_wan)
+            else:
+                with open(os.path.join("files", "beta1_ftp", "0", "Steam1.exe"), "wb") as i:
+                    i.write(file_lan)
+        else:
+            try:
+                os.remove(os.path.join("files", "beta1_ftp", "0", "Steam1.exe"))
+            except:
+                pass
+            
     except:
         log.error("Steam Client Unwriteable!")
         pass
@@ -1135,9 +1504,22 @@ def create_bootstrapper():
     try:
         if globalvars.record_ver != 0 and config["hldsupkg"] != "":
             if globalvars.record_ver == 1:
-                g = open(config["packagedir"] + "betav2/" + config["hldsupkg"], "rb")
+                g = open(
+                    os.path.join(
+                        config["packagedir"],
+                        "betav2",
+                        config["hldsupkg"],
+                    ),
+                    "rb",
+                )
             else:
-                g = open(config["packagedir"] + config["hldsupkg"], "rb")
+                g = open(
+                    os.path.join(
+                        config["packagedir"],
+                        config["hldsupkg"],
+                    ),
+                    "rb",
+                )
             pkg = Package(g.read())
             g.close()
 
@@ -1145,13 +1527,17 @@ def create_bootstrapper():
             file_wan = neuter.neuter_file(file, config["public_ip"], config["dir_server_port"], b"HldsUpdateToolNew.exe", False)
             file_lan = neuter.neuter_file(file, config["server_ip"], config["dir_server_port"], b"HldsUpdateToolNew.exe", True)
 
-            with open("client/wan/HldsUpdateTool.exe", "wb") as f:
+            with open(os.path.join("client", "wan", "HldsUpdateTool.exe"), "wb") as f:
                 f.write(file_wan)
-            with open("client/lan/HldsUpdateTool.exe", "wb") as g:
+            with open(os.path.join("client", "lan", "HldsUpdateTool.exe"), "wb") as g:
                 g.write(file_lan)
     except:
         log.error("HLDS Update Tool Unwriteable!")
         pass
+
+    # Mark bootstrapper as created for this session
+    globalvars.bootstrapper_created = True
+    log.debug("Bootstrapper created successfully")
 
 
 def generate_password():
@@ -1168,8 +1554,8 @@ def generate_password():
 
 
 def check_peerpassword():
+    """Check if there is a peer password, if not it'll generate one"""
     try:
-        # Check if there is a peer password, if not it'll generate one
         if "peer_password" in config and config["peer_password"]:
             # The peer_password is present and not empty
             globalvars.peer_password = config["peer_password"]
@@ -1187,10 +1573,12 @@ def check_peerpassword():
         return -1
 
 
-def parent_initializer():
-    log.info("---Starting Initialization---")
+def parent_initializer( reinitialize = False):
+    if reinitialize:
+        log.info("---Starting Re-Initialization---")
+    else:
+        log.info("---Starting Initialization---")
 
-    globalvars.cs_region = 'US' if config["override_ip_country_region"].lower() == 'false' else config["override_ip_country_region"].upper()
     globalvars.cellid = int(config["cellid"])
     globalvars.dir_ismaster = config["dir_ismaster"].lower()
     # globalvars.use_file_blobs = config["use_file_blobs"].lower()
@@ -1198,6 +1586,7 @@ def parent_initializer():
     globalvars.force_email_verification = config['force_email_verification'].lower()
 
     initialize()
+    sync_settings_to_db()
 
     # IP Address variables must be set after initializer() incase user wants to use auto_ip and leave the server_ip or public_ip blank
     globalvars.server_ip = config["server_ip"]
@@ -1210,12 +1599,17 @@ def parent_initializer():
     if not globalvars.update_exception2 == "":
         log.debug("Update2 error: " + str(globalvars.update_exception2))
 
-    finalinitialize(log)
+    legacygamekeys.insert_gamekeys(config["database_host"], config["database_username"], config["database_password"], config["database_port"], config["database"])
+    if not reinitialize:
+        finalinitialize(log)
 
     log.info(f"Loading Suggested Names Modifiers from file and adding to default list")
     load_modifiers_from_files()
-    log.info("---Initialization Complete---")
-    print()
+    if reinitialize:
+        log.info("---Re-Initialization Complete---")
+    else:
+        log.info("---Initialization Complete---")
+        print()
 
     # check for a peer_password, otherwise generate one
     return check_peerpassword()
@@ -1242,6 +1636,7 @@ def standalone_parent_initializer(server_type: int = 0):
         globalvars.force_email_verification = config['force_email_verification'].lower()
 
     initialize(server_type)
+    sync_settings_to_db()
 
     # IP Address variables must be set after initializer() incase user wants to use auto_ip and leave the server_ip or public_ip blank
     globalvars.server_ip = config["server_ip"]
@@ -1268,9 +1663,11 @@ def standalone_parent_initializer(server_type: int = 0):
 
 
 def get_location(ip_address):
-    # If the IP is a LAN IP then we grab the servers external IP, we assume the client and server both use the same external IP and we get the location information for the email!
-    if str(ip_address) in ipcalc.Network(str(globalvars.server_net)):
-        ip_address = get_external_ip(locationcheck = True)
+    """ This function is used only for more realistic warning emails for things like: attempted login with incorrect password.
+    If the IP is a LAN IP then we grab the servers external IP, we assume the client and server both use the same external
+    IP and we get the location information for the email!"""
+    if str(ip_address) in globalvars.server_network:
+        ip_address = get_external_ip(locationcheck=True)
 
     url = f'http://ip-api.com/json/{ip_address}'
 
@@ -1292,8 +1689,8 @@ def get_location(ip_address):
 # This method is for killing any 'seperate' processes we may have started such as
 # Apache or MariaDB
 def kill_process(pid):
-    """Kills the MariaDB process identified by pid."""
-    if os.name == 'nt':  # Windows
+    """Kills the process identified by pid."""
+    if globalvars.IS_WINDOWS:
         subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
     else:  # Unix/Linux
         os.kill(pid, signal.SIGTERM)
@@ -1358,44 +1755,24 @@ def load_admin_ips():
         log.error(f"Error loading admin IPs: {e}")
 
 
-def is_30_minutes_or_less(time_string):
-    total_minutes = 0
-
-    # Fast extraction of each time component
-    if 'd' in time_string:
-        days = int(time_string.split('d')[0])
-        total_minutes += days * 24 * 60
-        time_string = time_string.split('d')[1]
-
-    if 'h' in time_string:
-        hours = int(time_string.split('h')[0])
-        total_minutes += hours * 60
-        time_string = time_string.split('h')[1]
-
-    if 'm' in time_string:
-        minutes = int(time_string.split('m')[0])
-        total_minutes += minutes
-        time_string = time_string.split('m')[1]
-
-    if 's' in time_string:
-        seconds = int(time_string.split('s')[0])
-        total_minutes += seconds // 60
-
-    return total_minutes <= 30
-
-
 def check_ini_duplicates():
     duplicate_lines = []
     with open("emulator.ini", 'r') as f:
         seen = set()
-        for line in f:
-            if "=" in line and not line.startswith(";"):
-                line = line[:line.index("=")]
-                line_lower = line.lower()
-                if line_lower in seen:
-                    duplicate_lines.append(line_lower)
+        for raw_line in f:
+            line = raw_line.strip()
+
+            # Ignore comments and blank lines
+            if not line or line.startswith(";"):
+                continue
+
+            if "=" in line:
+                key = line.split("=", 1)[0].strip().lower()
+
+                if key in seen:
+                    duplicate_lines.append(key)
                 else:
-                    seen.add(line_lower)
+                    seen.add(key)
 
     return duplicate_lines
 
@@ -1423,3 +1800,20 @@ def ip_replacer(file, filename, ip, server_ip):
         file = file[:loc] + replace_ip + file[loc + len(ip):]
         log.debug(f"{filename}: Found and replaced IP {ip} at location {loc:08x}")
     return file
+
+
+def log_blob_information(silent=False):
+    date_obj = datetime.strptime(globalvars.CDDB_datetime, "%m/%d/%Y %H:%M:%S")
+    formatted_date = date_obj.strftime("%Y/%m/%d") # Changed date to Y/M/D to avoid confusion
+    globalvars.formatted_date = formatted_date
+    globalvars.formatted_underscore_date = date_obj.strftime("%Y-%m-%d") # For neutering
+    if not silent:
+        print()
+        log.info("Steam Environment Information:")
+        log.info(f"  Steam Version   : {globalvars.steam_ver}")
+        if formatted_date < "2003/09/11":
+            log.info(f"  Game Version    : {globalvars.steamui_ver}")
+        else:
+            log.info(f"  SteamUI Version : {globalvars.steamui_ver}")
+        log.info(f"  Blob Timestamp  : {formatted_date}")
+        print()

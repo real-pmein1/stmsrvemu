@@ -1,3 +1,4 @@
+import math
 import struct
 import binascii
 import socket
@@ -5,8 +6,75 @@ import time
 from datetime import datetime, timedelta
 
 class Steam2Ticket:
-    def __init__(self, real_ticket):
+    class appOwnershipTicket:
+        def __init__(self, data):
+            pos = 0
+
+            # 3) read 1-byte length
+            self.appOwnershipTicketLength = data[pos]
+            pos += 1
+
+            # 4) next 4 bytes little-endian ? unknownValue1
+            self.unknownValue1 = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+
+            # 5) next 4 bytes little-endian ? ownershipTicketVersion
+            self.ownershipTicketVersion = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+
+            # 6) next 8 bytes ? steamid
+            self.steamid = data[pos:pos+8]
+            pos += 8
+
+            # 7) next 4 bytes little-endian ? appID
+            self.appID = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+
+            # 8) next 4 bytes reversed ? publicIP
+            pub_ip = data[pos:pos+4][::-1]
+            pos += 4
+            self.publicIP = socket.inet_ntoa(pub_ip)
+
+            # 9) next 4 bytes reversed ? privateIP
+            priv_ip = data[pos:pos+4][::-1]
+            pos += 4
+            self.privateIP = socket.inet_ntoa(priv_ip)
+
+            # 10) next 4 bytes little-endian ? ownershipFlags
+            self.ownershipFlags = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+
+            # 11) next 4 bytes ? timeIssues (as Unix seconds)
+            ts1 = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+            self.timeIssues = datetime.utcfromtimestamp(ts1).strftime('%m/%d/%Y %H:%M:%S')
+
+            # 12) next 4 bytes ? timeExpires (as Unix seconds)
+            ts2 = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+            self.timeExpires = datetime.utcfromtimestamp(ts2).strftime('%m/%d/%Y %H:%M:%S')
+
+        def __str__(self):
+            return (
+                f"appOwnershipTicket(\n"
+                f"  length={self.appOwnershipTicketLength},\n"
+                f"  unknownValue1={self.unknownValue1},\n"
+                f"  ownershipTicketVersion={self.ownershipTicketVersion},\n"
+                f"  steamid={binascii.hexlify(self.steamid).decode()},\n"
+                f"  appID={self.appID},\n"
+                f"  publicIP={self.publicIP},\n"
+                f"  privateIP={self.privateIP},\n"
+                f"  ownershipFlags={self.ownershipFlags},\n"
+                f"  timeIssues='{self.timeIssues}',\n"
+                f"  timeExpires='{self.timeExpires}'\n"
+                f")"
+            )
+
+    def __init__(self, real_ticket, cmTicket = False):
         self.real_ticket = real_ticket
+        self.appOwnershipTicket = None
+        self.sessionToken = None
+        self.cmTicket = cmTicket
         self._parse_ticket()
 
     def steamtime_to_unixtime(self, raw_bytes):
@@ -32,25 +100,24 @@ class Steam2Ticket:
 
     def _parse_ticket(self):
         pos = 0
+        data = self.real_ticket
 
         # TGT version
-        self.tgt_version = self.real_ticket[pos:pos + 2]
+        self.tgt_version = data[pos:pos + 2]
         pos += 2
 
-        # Data1 length string
-        data1_len_str = self.real_ticket[pos:pos + 2]
-        data1_len = struct.unpack(">H", data1_len_str)[0]
+        # Data1 length
+        data1_len = struct.unpack_from(">H", data, pos)[0]
         pos += 2
 
-        # Data1
-        data1 = self.real_ticket[pos:pos + data1_len]
+        # Data1 block
+        data1 = data[pos:pos + data1_len]
         pos += data1_len
 
         # IV
-        self.iv = self.real_ticket[pos:pos + 16]
+        self.iv = data[pos:pos + 16]
         pos += 16
-
-        """# Empty2 lengths
+        # Empty2 lengths
         self.empty2_dec_len = struct.unpack(">H", self.real_ticket[pos:pos + 2])[0]
         pos += 2
         self.empty2_enc_len = struct.unpack(">H", self.real_ticket[pos:pos + 2])[0]
@@ -67,30 +134,63 @@ class Steam2Ticket:
         pos += subcommand2_len
 
         # Empty3
-        self.empty3 = self.real_ticket[pos:pos + 128]"""
-
-        # Parse Data1 fields
+        self.empty3 = self.real_ticket[pos:pos + 128]
+        # --- parse the Data1 block locally ---
+        dpos = 0
         username_bytes = data1.split(b'\x00', 1)[0]
-        self.username = username_bytes[:len(username_bytes) // 2].decode('ascii')
-        pos_data1 = len(username_bytes)
-        self.indicator = data1[pos_data1:pos_data1 + 2]
-        pos_data1 += 2
-        self.public_ip = data1[pos_data1:pos_data1 + 4][::-1]  # Reverse byte order
-        pos_data1 += 4
-        self.client_ip = data1[pos_data1:pos_data1 + 4]
-        pos_data1 += 4
-        servers = data1[pos_data1:pos_data1 + 12]
-        pos_data1 += 12
-        self.password_digest = data1[pos_data1:pos_data1 + 16]
-        pos_data1 += 16
-        self.creation_time = data1[pos_data1:pos_data1 + 8]
-        pos_data1 += 8
-        self.ticket_expiration_time = data1[pos_data1:pos_data1 + 8]
-        pos_data1 += 8
+        tmpUsername = username_bytes.decode('ascii', errors='ignore')
+        mid = math.ceil(len(tmpUsername) / 2) # we split the username in half because it is doubled for some reason
+        self.username = tmpUsername[:mid]
+        dpos += len(username_bytes) + 1
 
-        # Parse servers into two IP:port pairs
+        self.indicator = data1[dpos:dpos+1]; dpos += 1
+
+        self.public_ip = data1[dpos:dpos+4][::-1]; dpos += 4
+        self.client_ip = data1[dpos:dpos+4];       dpos += 4
+
+        servers = data1[dpos:dpos+12]; dpos += 12
+        self.password_digest = data1[dpos:dpos+16]; dpos += 16
+
+        self.creation_time = data1[dpos:dpos+8];    dpos += 8
+        self.ticket_expiration_time = data1[dpos:dpos+8]; dpos += 8
+
+        # parse the two servers
+        if servers == b'\x00\x00\x00\x00\x00\x00': # temp for tinserver
+            servers = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+
         self.server1 = self.parse_ip_port(servers[:6])
         self.server2 = self.parse_ip_port(servers[6:])
+
+        if not self.cmTicket:
+            # --- **new**: check for leftover bytes after pos ---
+            if pos < len(data):
+                extra = data[pos:]
+                # 1) count leading 0x00 bytes
+                null_count = 0
+                for b in extra:
+                    if b == 0:
+                        null_count += 1
+                    else:
+                        break
+
+                # 2) decide sessionToken based on null_count
+                if null_count == 64:
+                    # no session token present
+                    self.sessionToken = None
+                    remainder = extra[64:]
+                elif null_count == 56:
+                    # session token occupies bytes 56?63
+                    self.sessionToken = extra[56:56+8]
+                    remainder = extra[64:]
+                else:
+                    # fallback: strip any leading zeros then read next 8 bytes
+                    trimmed = extra.lstrip(b'\x00')
+                    self.sessionToken = trimmed[:8]
+                    remainder = trimmed[8:]
+
+                # 3) hand off the rest for parsing
+                if len(remainder) != 0:
+                    self.appOwnershipTicket = Steam2Ticket.appOwnershipTicket(remainder)
 
     @property
     def tgt_version_hex(self):
@@ -130,16 +230,16 @@ class Steam2Ticket:
 
     @property
     def time_until_expiration(self):
-        expiration_unix_time = self.steamtime_to_unixtime(self.ticket_expiration_time)
-        current_unix_time = time.time()
-        time_diff = expiration_unix_time - current_unix_time
-        return timedelta(seconds=time_diff)
+        # turn raw steam?times into Unix floats
+        creation_ts   = self.steamtime_to_unixtime(self.creation_time)
+        expiration_ts = self.steamtime_to_unixtime(self.ticket_expiration_time)
+        # now the difference between them is exactly the ticket?s lifetime
+        return timedelta(seconds=(expiration_ts - creation_ts))
 
     @property
     def is_expired(self):
-        expiration_unix_time = self.steamtime_to_unixtime(self.ticket_expiration_time)
-        current_unix_time = time.time()
-        return current_unix_time > expiration_unix_time
+        # expired as soon as the remaining time ? 0
+        return self.time_until_expiration <= timedelta(0)
 
     def __repr__(self):
         return (f"Steam2Ticket(tgt_version={self.tgt_version_hex}, username={self.username_str}, "

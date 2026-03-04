@@ -7,17 +7,18 @@ import os
 import socket as real_socket
 import zlib
 import struct
+import time
 
-import ipcalc
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Hash import SHA1
 from Crypto.Signature import pkcs1_15
 
 import globalvars
 import utilities.time
-from utilities import blobs, encryption
+import utils
+from utilities import blobs, encryption, server_stats
 from utilities.database.beta1_authdb import *
-from utilities.cdr_manipulator import read_secondblob
+from utilities.cdr_manipulator import read_secondblob_beta1
 from utilities.networkhandler import TCPNetworkHandler
 
 
@@ -27,11 +28,20 @@ class Beta1_AuthServer(TCPNetworkHandler):
         # Create an instance of NetworkHandler
         super(Beta1_AuthServer, self).__init__(config, port, self.server_type)
         self.config = config
-        self.dict_blob = (
-                read_secondblob("files/secondblob.py")
-                if os.path.isfile("files/secondblob.py")
-                else read_secondblob("files/secondblob.bin")
-        )
+        try:
+            cache_blob = os.path.join("files", "cache", "secondblob_lan.bin")
+            self.dict_blob = read_secondblob_beta1(cache_blob)
+        except Exception:
+            temp_blob = os.path.join("files", "cache", "secondblob_lan.bin.temp")
+            if os.path.isfile(temp_blob):
+                self.dict_blob = read_secondblob_beta1(temp_blob)
+            else:
+                self.dict_blob = read_secondblob_beta1(cache_blob)
+        #self.dict_blob = (
+        #        read_secondblob("files/secondblob.py")
+        #        if os.path.isfile("files/secondblob.py")
+        #        else read_secondblob("files/secondblob.bin")
+        #)
 
         self.log = logging.getLogger("B1AUTHSRV")
         # self.blob, self.dict_blob = load_secondblob()
@@ -42,8 +52,12 @@ class Beta1_AuthServer(TCPNetworkHandler):
         clientid = str(client_address) + ": "
 
         self.log.info(f"{clientid}Connected to Beta1 Authentication Server")
+        try:
+            server_stats.expire_old()
+        except Exception:
+            pass
 
-        if str(client_address[0]) in ipcalc.Network(str(globalvars.server_net)):
+        if str(client_address[0]) in globalvars.server_network:
             islan = True
         else:
             islan = False
@@ -57,14 +71,16 @@ class Beta1_AuthServer(TCPNetworkHandler):
 
         msg = client_socket.recv_all(4)
         version, = struct.unpack(">I", msg)
+        blob_version = globalvars.steam_ver
         if version == 0:
-            recv_func = client_socket.recv_withlen_short
+            is_short = True
         elif version == 1:
-            recv_func = client_socket.recv_withlen
+            is_short = False
         else:
             self.log.info(f"{clientid}Using Unrecognized version! {version}")
             client_socket.close()
 
+        recv_func =  client_socket.recv_withlen
         self.log.info(f"{clientid}Using Version: {version}")
 
         msg = client_socket.recv_all(4)
@@ -73,32 +89,34 @@ class Beta1_AuthServer(TCPNetworkHandler):
         self.log.debug(f"{clientid}Internal IP: {client_internal_ip} Exernal IP: {client_external_ip}")
         client_socket.send(b"\x01" + client_external_ip[::-1])
 
-        msg = recv_func()
+        msg = recv_func(is_short = is_short)
         cmd = msg[0]
         self.log.debug(f"{clientid}Client Command: {cmd} packet: {binascii.b2a_hex(msg)}")
 
         if cmd == 0:
-            self.log.info(f"{clientid}Recieved CCDB request, sending version {version}")
+            self.log.info(f"{clientid}Received CCDB request, sending version {blob_version}")
+            try:
+                betaui_ver = globalvars.steamui_ver.replace('.', '')
+                betaui_ver = betaui_ver.replace('/', '')
+                betaui_ver_bytes = struct.pack('<IIIIIIII', int(betaui_ver[0]), int(betaui_ver[1]), int(betaui_ver[2]), int(betaui_ver[3]), int(betaui_ver[4]), int(betaui_ver[5]), int(betaui_ver[6]), int(betaui_ver[7]))
+                client_socket.send(betaui_ver_bytes)
 
-            if version == 0:
-                client_socket.send(struct.pack("<IIIIIIII", 0, 6, 0, 0, 1, 0, 0, 0))
-            elif version == 1:
-                client_socket.send(struct.pack("<IIIIIIII", 0, 6, 1, 0, 1, 1, 0, 0))
-
-            msg = client_socket.recv_all(1)
-            client_socket.close()
+                msg = client_socket.recv_all(1)
+                client_socket.close()
+            except Exception:
+                self.log.error(f"{clientid}Tried to connect to Beta auth server, while emulator is using non beta CDR")
 
         elif cmd == 1:  # Create User
             self.log.info(f"{clientid}Recieved Create User Request")
             data = bytes.fromhex("30819d300d06092a864886f70d010101050003818b0030818702818100") + encryption.network_key.n.to_bytes(128, byteorder = "big") + bytes.fromhex("020111")
 
-            client_socket.send_withlen_short(data)
+            client_socket.send_withlen(data, is_short = True)
 
             sig = pkcs1_15.new(encryption.network_key).sign(SHA1.new(data))
 
-            client_socket.send_withlen_short(sig)
+            client_socket.send_withlen(sig, is_short = True)
 
-            msg = recv_func()
+            msg = recv_func(is_short=is_short)
 
             bio = io.BytesIO(msg)
 
@@ -119,9 +137,9 @@ class Beta1_AuthServer(TCPNetworkHandler):
             # pprint.pprint(blobs.blob_unserialize(ptext))
 
             res = userdb.create_user(ptext, version)
-            if res:
+            if res == True:
                 client_socket.send(b"\x01")
-            else:
+            else: # some type of error..
                 client_socket.send(b"\x00")
         # login
         elif cmd == 2:
@@ -155,9 +173,11 @@ class Beta1_AuthServer(TCPNetworkHandler):
             client_socket.send(salt)
 
             if version == 0:
-                msg = client_socket.recv_withlen_short()
+                is_short = True
             elif version == 1:
-                msg = client_socket.recv_withlen()
+                is_short = False
+
+            msg = client_socket.recv_withlen(is_short = is_short)
 
             ptext = encryption.decrypt_message(msg, key)
             # print(f"decrypted text: {ptext}")
@@ -227,6 +247,11 @@ class Beta1_AuthServer(TCPNetworkHandler):
             )
             self.log.info(f"{clientid}Sending Version {version} Ticket to client")
             client_socket.send(ticket_full)
+            account_row = userdb.get_user(username1)
+            account_id = account_row.id if account_row else None
+            if account_id is not None:
+                server_stats.expire_user_tickets(account_id)
+                server_stats.mark_login(account_id, client_address[0], ticket_signed.hex(), time.time()+3600)
 
         elif cmd in (3, 4, 5, 6, 9, 10):
             innerkey = bytes.fromhex("10231230211281239191238542314233")
@@ -342,6 +367,13 @@ class Beta1_AuthServer(TCPNetworkHandler):
                     binblob = blobs.blob_serialize(userblob)
 
                     client_socket.send(struct.pack(">I", len(binblob)) + binblob)
+                    try:
+                        account_row = userdb.get_user(username1)
+                        account_id = account_row.id if account_row else None
+                        if account_id is not None:
+                            server_stats.mark_ticket_renew(account_id, client_address[0])
+                    except Exception:
+                        pass
                 except:
                     client_socket.send(b"\x00")
                     client_socket.close()

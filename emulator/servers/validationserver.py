@@ -29,7 +29,8 @@ class validationserver(TCPNetworkHandler):
 
         self.log.debug(":" + binascii.b2a_hex(command[1:5]).decode("latin-1") + ":")
         self.log.debug(":" + binascii.b2a_hex(command).decode("latin-1") + ":")
-
+        if command[0:1] == b"\x0C":
+            self.parse_cdkey_packet(client_socket, client_address, command)
         if command[1:5] in [b"\x00\x00\x00\x01", b"\x00\x00\x00\x03", b"\x00\x00\x00\x04"]:  # TODO IMPLEMENT COMMAND 0C - validate new valve cd key
             client_socket.send(b"\x01" + real_socket.inet_aton(client_address[0]))  # CRASHES IF NOT 01 (protocol)
             ticket_full = client_socket.recv_withlen()
@@ -63,3 +64,28 @@ class validationserver(TCPNetworkHandler):
 
         client_socket.close()
         self.log.info(clientid + "Disconnected from Validation Server")
+
+    def parse_cdkey_packet(self, client_socket, client_address, data: bytes):
+        # Ensure the data is at least 13 bytes
+        if len(data) < 12:
+            raise ValueError("Data too short")
+
+        message_type = int.from_bytes(data[0:4], 'little')                              # 1 byte
+        field_6D4 = int.from_bytes(data[5:9], 'little')     # 4 bytes
+        field_6EC = int.from_bytes(data[9:13], 'little')     # 4 bytes
+        # field_6E8 = int.from_bytes(data[9:13], 'little')    # 4 bytes
+
+        # Everything after byte 13 is the original `src` payload
+        if len(data) > 12:
+            raw_payload = data[13:]
+        else:
+            raw_payload = b""
+        client_socket.send(b"\x01\x00" + real_socket.inet_aton(client_address[0]) + b"\xff"*24)
+        data = client_socket.recv(400)
+        return {
+            "message_type": message_type,
+            "field_6D4": field_6D4,
+            "field_6EC": field_6EC,
+            #"field_6E8": field_6E8,
+            "raw_payload": raw_payload,
+        }

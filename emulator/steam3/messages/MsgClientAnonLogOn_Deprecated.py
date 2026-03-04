@@ -97,6 +97,6 @@ class MsgClientAnonLogOn_Deprecated:
 
     def __repr__(self):
         return (f"MsgClientAnonLogOn(protocol_version={self.protocol_version}, private_ip={self.private_ip}, "
-                f"public_ip={self.public_ip}, steam_id={self.steam_id}, ticket_length={self.ticket_length}, "
+                f"public_ip={self.public_ip}, Steam ID={self.steam_id}, ticket_length={self.ticket_length}, "
                 f"ticket={self.ticket}, email='{self.email}', language='{self.language}', "
                 f"client_version={self.client_version}, remaining_bytes={self.remaining_bytes})")

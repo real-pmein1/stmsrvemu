@@ -1,3 +1,4 @@
+from __future__ import annotations
 import struct
 
 
@@ -47,16 +48,17 @@ class MsgClientFileToDownload:
 
 
 class MsgClientDRMDownloadResponse:
-    """
-    Represents MsgClientDRMDownloadResponse_t structure.
-    """
+    """Python representation of ``CMsgDRMDownloadResponse``."""
 
-    def __init__(self):
+    def __init__(self, client_obj=None, data: bytes | None = None):
+        self.client_obj = client_obj
         self.result = 0
         self.app_id = 0
         self.blob_download_type = 0
         self.merge_guid = b""
         self.file = MsgClientFileToDownload()
+        if data:
+            self.deserialize(data)
 
     def deserialize(self, data):
         """
@@ -80,6 +82,13 @@ class MsgClientDRMDownloadResponse:
         base = struct.pack('<III', self.result, self.app_id, self.blob_download_type) + self.merge_guid
         return base + self.file.serialize()
 
+    def to_clientmsg(self):
+        packet = CMResponse(eMsgID=EMsg.ClientDRMDownloadResponse,
+                            client_obj=self.client_obj)
+        packet.data = self.serialize()
+        packet.length = len(packet.data)
+        return packet
+
     def __str__(self):
         """
         Returns a human-readable string representation of the structure.
@@ -93,3 +102,5 @@ class MsgClientDRMDownloadResponse:
             f"  file={str(self.file)}\n"
             f")"
         )
+
+    __repr__ = __str__

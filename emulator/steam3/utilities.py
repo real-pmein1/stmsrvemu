@@ -1,3 +1,4 @@
+import os
 import re
 import socket
 import struct
@@ -6,30 +7,10 @@ import secrets
 import string
 import creditcard
 import csv
-import os
 import ipaddress
 from datetime import datetime
 
 from steam3.Types.community_types import PersonaStateFlags
-
-
-def getAccountId(request):
-    res = request.accountID
-    res //= 2
-    return res & 0xFFFF
-
-
-def create_GlobalID(accountId, clientId2):
-    # Ensure accountId and clientId2 are treated as 32-bit unsigned integers
-    # Pack accountId (the least significant part) and clientId2 (the most significant part) into bytes
-    # Note: '<I' - unsigned int (32-bit) in little-endian format
-    steam_globalID = struct.pack('<I', accountId) + struct.pack('<I', clientId2)
-
-    # Unpack the 64-bit integer from the combined byte object
-    # '<Q' - unsigned long long (64-bit) in little-endian format
-    globalID_Int = struct.unpack('<Q', steam_globalID)[0]
-
-    return globalID_Int
 
 
 def reverse_bytes(uint):
@@ -45,6 +26,7 @@ def decipher_persona_flags(value):
     flags = [flag.name for flag in PersonaStateFlags if flag & PersonaStateFlags(value)]
     return flags if flags else ['none']  # Giving you an out when inevitably nothing makes sense
 
+
 def read_null_terminated_string(stream, max_length):
     """
     Reads a null-terminated string from the stream, up to max_length bytes.
@@ -59,6 +41,7 @@ def read_null_terminated_string(stream, max_length):
         string_bytes.extend(byte)
 
     return string_bytes.decode('utf-8')
+
 
 def read_string(data, start):
     # Let's pretend we know where strings end
@@ -134,6 +117,7 @@ def convert_str_ip2hostordert(ipaddr):
 
     return ip_packed
 
+
 def ip_to_reverse_int(ip):
     # Convert the IP to a packed binary format
     packed_ip = socket.inet_aton(ip)
@@ -142,6 +126,7 @@ def ip_to_reverse_int(ip):
     # Convert to an integer
     reversed_int_ip = struct.unpack("<I", reversed_packed_ip)[0]
     return reversed_int_ip
+
 
 def ip_to_int(ip):
     # Convert the IP to a packed binary format
@@ -191,11 +176,13 @@ def get_credit_card_brand(card_number):
     brand = creditcard.get_brand(card_number)
     return brand
 
+
 def read_until_null_byte(buffer):
     null_byte_index = buffer.find(b'\x00')
     if null_byte_index != -1:
         return buffer[:null_byte_index]
     return buffer  # Return the entire buffer if no null byte is found
+
 
 class InputStream:
     def __init__(self, data):
@@ -261,7 +248,8 @@ def compare_dictionaries(dict1, dict2):
     return True
 
 
-def extract_guest_pass_packages(data):
+# TODO Remove
+"""def extract_guest_pass_packages(data):
     guest_pass_values = []
 
     def search_dict(d, current_depth, start_depth):
@@ -276,7 +264,7 @@ def extract_guest_pass_packages(data):
     if isinstance(data, dict):
         search_dict(data, 0, 0)  # Start the search at depth 0
 
-    return ','.join(guest_pass_values)
+    return ','.join(guest_pass_values)"""
 
 
 class BitVector64:
@@ -298,6 +286,7 @@ class BitVector64:
     def __setitem__(self, key, value):
         start_bit, mask = key
         self.data = (self.data & ~(mask << start_bit)) | ((value & mask) << start_bit)
+
 
 def is_valid_email(email):
     email = email.strip()
@@ -344,8 +333,8 @@ print(result)"""
 
 def get_country_code(ip_address: str) -> str:
     # Path to the CSV file
-    csv_file_path = 'files/geolitedb/GeoLite2-Country-Blocks-IPv4.csv'
-    country_file_path = 'files/geolitedb/GeoLite2-Country-Locations-en.csv'
+    csv_file_path = os.path.join('files', 'geolitedb', 'GeoLite2-Country-Blocks-IPv4.csv')
+    country_file_path = os.path.join('files', 'geolitedb', 'GeoLite2-Country-Locations-en.csv')
 
     # Dictionary to map geoname_id to country ISO code
     geoname_to_country = {}
@@ -383,7 +372,7 @@ def get_country_code(ip_address: str) -> str:
     return "US"  # Default if no match is found
 
 
-def find_appid_files(start_date_str, appids, base_path="."):
+"""def find_appid_files(start_date_str, appids, base_path="."):
     # Parse the start date
     start_date = datetime.strptime(start_date_str, "%m/%d/%Y %H:%M:%S")
 
@@ -432,62 +421,16 @@ import os
 from datetime import datetime
 import re
 
-def find_appid_files_2009(start_date_str, base_path="files/appcache/2009_2010/"):
-    # Parse the start date
-    start_date = datetime.strptime(start_date_str, "%m/%d/%Y %H:%M:%S")
 
-    # Dictionary to store the latest file path and modification time for each appid
-    appid_file_paths = {}
-
-    # Collect all directories and sort them by date/time
-    directories = [
-        d for d in os.listdir(base_path)
-        if os.path.isdir(os.path.join(base_path, d)) and "_" in d
-    ]
-    directories = sorted(directories, key=lambda d: datetime.strptime(d, "%m-%d-%Y_%H-%M"))
-
-    # Traverse the directories
-    for directory in directories:
-        dir_path = os.path.join(base_path, directory)
-        dir_date = datetime.strptime(directory, "%m-%d-%Y_%H-%M")
-
-        # If the directory's date is after the start date, stop processing further directories
-        if dir_date > start_date:
-            break
-
-        # Process files in the current directory
-        for file_name in os.listdir(dir_path):
-            if file_name.startswith("app_") and file_name.endswith(".vdf"):
-                try:
-                    appid = int(file_name.split("_")[1].replace(".vdf", ""))
-                except ValueError:
-                    continue
-
-                file_path = os.path.join(dir_path, file_name)
-                file_mod_time = os.path.getmtime(file_path)
-
-                # Only keep the latest file for each appid
-                if appid not in appid_file_paths or file_mod_time > appid_file_paths[appid][1]:
-                    appid_file_paths[appid] = (file_path, file_mod_time)
-
-    # Remove modification times and sort by appid
-    sorted_appid_files = sorted(
-        [(appid, path_time[0]) for appid, path_time in appid_file_paths.items()],
-        key=lambda x: x[0]
-    )
-
-    return sorted_appid_files
-
-
-def find_appids_by_date(end_date_str, base_path="files/appcache/2009_2010/"):
-    """
+def find_appids_by_date(end_date_str, base_path=os.path.join("files", "appcache", "2009_2010")):
+    
     Recursively finds all .vdf files in subdirectories with date and time in the format /MM-DD-YYYY_hh-mm/.
     Parses the folders sequentially by date, ensuring no duplicate app IDs in the list.
 
     :param end_date_str: End date in the format "%m/%d/%Y %H:%M:%S".
     :param base_path: Base directory path to search for date-time folders.
     :return: Sorted list of unique app IDs found in .vdf files.
-    """
+    
     # Parse the end date
     end_date = datetime.strptime(end_date_str, "%m/%d/%Y %H:%M:%S")
 
@@ -525,24 +468,77 @@ def find_appids_by_date(end_date_str, base_path="files/appcache/2009_2010/"):
     # Return the sorted list of unique app IDs
     return sorted(unique_appids)
 
-"""# Example usage
+# Example usage
 result = find_app_files_by_date("02/09/2010 14:05:00", base_path="/path/to/folders")
 for item in result:
     print(item)
 """
 
-def create_4byte_id_from_date(end_date):
+
+def get_appids_from_vdf_files(directory_path):
+    appid_list = []
+
+    # Regex pattern to match filenames in the format app_<appid>.vdf
+    pattern = re.compile(r'app_(\d+)\.vdf')
+
+    # Walk through the directory to find all .vdf files
+    for root, dirs, files in os.walk(directory_path):
+        for file in files:
+            # Check if the file matches the expected pattern
+            match = pattern.match(file)
+            if match:
+                # Extract the appid (group 1 from the regex)
+                appid = match.group(1)
+                appid_list.append(appid)
+
+    return appid_list
+
+
+def get_state_iso_code(state_name: str) -> str:
     """
-    Create a repeatable 4-byte ID based on the given date.
-
-    :param end_date: A datetime object representing the date.
-    :return: A 4-byte ID as a little-endian integer.
+    Converts a state name or code into its ISO 3166-2 two-letter code.
+    If the input is already 2 letters, it is returned in uppercase.
+    Otherwise, a lookup is performed. (A complete mapping for US states is provided.)
     """
-    # Calculate total seconds since epoch (1970-01-01)
-    total_seconds = int(end_date.timestamp())
+    state_name = state_name.strip().upper()
+    if len(state_name) == 2:
+        return state_name
+    state_mapping = {
+        "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR",
+        "CALIFORNIA": "CA", "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE",
+        "FLORIDA": "FL", "GEORGIA": "GA", "HAWAII": "HI", "IDAHO": "ID",
+        "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA", "KANSAS": "KS",
+        "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
+        "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS",
+        "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV",
+        "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY",
+        "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK",
+        "OREGON": "OR", "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
+        "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT",
+        "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV",
+        "WISCONSIN": "WI", "WYOMING": "WY"
+    }
+    return state_mapping.get(state_name, state_name)
 
-    # Ensure it fits within 4 bytes (truncate if necessary)
-    id_4byte = total_seconds & 0xFFFFFFFF
 
-    # Convert to little-endian bytes
-    return struct.pack('<I', id_4byte)
+def fix_transactionID(request):
+    """
+    Parse the transaction ID from a client acknowledgment request.
+
+    The transaction ID is a 64-bit GlobalID that should be passed through
+    directly without any bit manipulation.
+    """
+    if len(request.data) < 8:
+        import logging
+        log = logging.getLogger("fix_transactionID")
+        log.error(f"Request data too short: {len(request.data)} bytes, expected 8")
+        return 0
+
+    transactionID = struct.unpack("<Q", request.data[:8])[0]
+
+    # Log for debugging GlobalID format
+    import logging
+    log = logging.getLogger("fix_transactionID")
+    log.debug(f"Parsed transaction ID: {transactionID} (0x{transactionID:016X})")
+
+    return transactionID

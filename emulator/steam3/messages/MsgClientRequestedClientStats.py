@@ -1,42 +1,49 @@
 import struct
-from io import BytesIO
 from enum import IntEnum
 
 
 # Define the ClientStat enum
 class ClientStat(IntEnum):
-    ClientStat_p2pConnectionsUDP = 0
-    ClientStat_p2pConnectionsRelay = 1
-    ClientStat_p2pGamesConnections = 2
-    ClientStat_p2pVoiceConnections = 3
-    ClientStat_p2pBytesDownloaded = 4
+    p2pConnectionsUDP = 0
+    p2pConnectionsRelay = 1
+    p2pGamesConnections = 2
+    p2pVoiceConnections = 3
+    p2pBytesDownloaded = 4
 
 
 class MsgClientRequestedClientStats:
-    def __init__(self, stats_count=0, stats_list=None):
+    def __init__(self):
         """
-        Initialize the MsgClientRequestedClientStats with the stats count and list of stats.
-        :param stats_count: The number of stats (int)
-        :param stats_list: List of stats, each stat is a ClientStat (enum)
+        Initialize the MsgClientRequestedClientStats with an empty stats list.
         """
-        self.stats_count = stats_count
-        self.stats_list = stats_list if stats_list is not None else []
+        self.stats_list = []
+
+    def add_requested_stats(self, stat):
+        """
+        Add a single stat to the stats list.
+        :param stat: A ClientStat enum value.
+        """
+        if not isinstance(stat, ClientStat):
+            raise TypeError("Stat must be an instance of ClientStat enum.")
+        self.stats_list.append(stat)
 
     def serialize(self):
         """
         Serializes the MsgClientRequestedClientStats object into a byte buffer.
         :return: byte buffer containing the serialized data
         """
-        stream = BytesIO()
+        # Create a byte buffer
+        buffer = b""
 
-        # Write the stats count (4 bytes, int32)
-        stream.write(struct.pack('<I', self.stats_count))
+        # Get the count of stats and write it to the buffer
+        stats_count = len(self.stats_list)
+        buffer += struct.pack('<I', stats_count)
 
         # Write each stat (4 bytes per stat, int32)
         for stat in self.stats_list:
-            stream.write(struct.pack('<I', stat))
+            buffer += struct.pack('<I', stat)
 
-        return stream.getvalue()
+        return buffer
 
     @classmethod
     def deserialize(cls, byte_buffer):
@@ -45,19 +52,22 @@ class MsgClientRequestedClientStats:
         :param byte_buffer: byte buffer containing the serialized data
         :return: MsgClientRequestedClientStats object
         """
-        stream = BytesIO(byte_buffer)
-
         # Read stats count (4 bytes, int32)
-        stats_count = struct.unpack('<I', stream.read(4))[0]
+        stats_count = struct.unpack('<I', byte_buffer[:4])[0]
 
         # Read each stat (4 bytes per stat, int32) and convert to ClientStat enum
         stats_list = []
+        offset = 4
         for _ in range(stats_count):
-            stat = struct.unpack('<I', stream.read(4))[0]
+            stat = struct.unpack('<I', byte_buffer[offset:offset + 4])[0]
             stats_list.append(ClientStat(stat))
+            offset += 4
 
-        return cls(stats_count, stats_list)
+        # Create a new instance and populate the stats list
+        instance = cls()
+        instance.stats_list = stats_list
+        return instance
 
     def __repr__(self):
         stats_repr = [stat.name for stat in self.stats_list]
-        return f"MsgClientRequestedClientStats(stats_count={self.stats_count}, stats_list={stats_repr})"
+        return f"MsgClientRequestedClientStats(stats_list={stats_repr})"

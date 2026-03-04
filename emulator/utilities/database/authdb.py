@@ -5,6 +5,7 @@ import random
 import string
 import time
 
+from sqlalchemy import and_
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 
 import globalvars
@@ -63,10 +64,24 @@ class auth_dbdriver:
         user_record = self.db_driver.select_data(base_dbdriver.UserRegistry,
                                                  base_dbdriver.UserRegistry.UniqueUserName == username)
         return True if user_record[0].Banned == 1 else False
+
     def check_email_verified(self, username):
         user_record = self.db_driver.select_data(base_dbdriver.UserRegistry,
                                                  base_dbdriver.UserRegistry.UniqueUserName == username)
         return True if user_record[0].email_verified == 1 else False
+
+    def set_email_verified(self, username):
+        session = self.session
+        try:
+            session.query(base_dbdriver.UserRegistry).filter(
+                base_dbdriver.UserRegistry.UniqueUserName == username
+            ).update({base_dbdriver.UserRegistry.email_verified: 1})
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"Error setting email verified: {e}")
+        finally:
+            session.close()
 
     def get_uniqueuserid(self, username):
         user_registry_data = self.db_driver.select_data(base_dbdriver.UserRegistry,
@@ -100,6 +115,14 @@ class auth_dbdriver:
         else:
             return False
 
+    def get_question_info_2003(self, username):
+        user_registry_data = self.db_driver.select_data(base_dbdriver.UserRegistry,
+                                                        base_dbdriver.UserRegistry.UniqueUserName == username)
+        if len(user_registry_data) > 0:
+            return bytes.fromhex(user_registry_data[0].SaltedAnswerToQuestionDigest)
+        else:
+            return False
+
     def get_userpass_stuff(self, username):
         user_registry_data = self.db_driver.select_data(base_dbdriver.UserRegistry,
                                                         base_dbdriver.UserRegistry.UniqueUserName == username)
@@ -115,6 +138,14 @@ class auth_dbdriver:
             return user_registry_data[0].AccountEmailAddress
         else:
             return False
+
+    def get_user_by_id(self, accountid):
+        record = self.db_driver.select_data(base_dbdriver.UserRegistry,
+                                            base_dbdriver.UserRegistry.UniqueID == accountid)
+        if record:
+            entry = record[0]
+            return entry.UniqueUserName, entry.AccountEmailAddress
+        return None, None
 
     def check_validationcode(self, username, validationcode):
         user_registry_data = self.db_driver.select_data(base_dbdriver.UserRegistry,
@@ -227,7 +258,7 @@ class auth_dbdriver:
             log.error(f"[create_user] User {username} Error occurred while inserting into community_profile: {e}")
             return -1
 
-        if pkt_version not in ['b2003', 'r2003']:
+        if pkt_version not in ['b2003', 'r2003', 'b2004']:
             # Add default Subscription 0
             self.insert_sub_0(uniqueid)
 
@@ -236,15 +267,17 @@ class auth_dbdriver:
 
     def insert_sub_0(self, uniqueid):
         # Add default Subscription 0
+        # 10/35 MUST BE 31-1-0
+        log.debug("Adding default subscription (0)")
         next_unique_sub_id = self.db_driver.get_next_available_id(self.subscriptionsrecord_table)
         current_datetime = utilities.time.get_current_datetime()
         data = {'UserRegistry_UniqueID':    uniqueid,
                 'SubscriptionID':           0,
                 'SubscribedDate':           current_datetime,
                 'UnsubscribedDate':         utilities.time.add_100yrs(current_datetime),
-                'SubscriptionStatus':       1,
-                'StatusChangeFlag':         0,
-                'PreviousSubscriptionState':31
+                'SubscriptionStatus':       31,
+                'StatusChangeFlag':         1,
+                'PreviousSubscriptionState':0
         }
         try:
             self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsRecord, data)
@@ -267,7 +300,7 @@ class auth_dbdriver:
             log.error(f"[create_user] Userid {uniqueid} Error occurred while inserting into accountsubscriptionsbillinginforecord: {e}")
             return -1
 
-    def insert_subscription(self, username, subid, paymenttype, userip, tuple_paymentrecord = None):
+    def insert_subscription(self, username, subid, paymenttype, userip, tuple_paymentrecord = None, pkt_version = None):
         user_uniqueid = self.get_uniqueuserid(username)
 
         if user_uniqueid == 0:
@@ -279,21 +312,40 @@ class auth_dbdriver:
                                                             (base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == user_uniqueid) &
                                                             (base_dbdriver.AccountSubscriptionsRecord.SubscriptionID == subid))
 
-        if existing_subscriptions:
+        if subid == 0:
+            log.debug(f"[insert_sub] Subscribing to default sub {subid}")
+        elif existing_subscriptions:
             log.warning(f"[insert_sub] Subid: {subid} Already Exists For User: {username}")
             return True
 
         current_time = utilities.time.get_current_datetime()
         next_unique_sub_id = self.db_driver.get_next_available_id(self.subscriptionsrecord_table)
 
-        if subid == 0:
-            subscription_status = 1
-            status_change_flag = 1
-            previous_subscription_state = 0
+# 9/24 and 9/25 have broken purchasing
+# 9/25 has broken cdkey
+
+# TESTED USING STEAM2 PURCHASE SUB 7 / CDKEY SUB 1 / DEFAULT SUB 0
+# TESTED 2003: 1/1, 1/2
+# TESTED 2004: 9/30, 10/35, 11/40
+# TESTED 2005: 14/52, 14/87
+# TESTED 2006: 14/147, 15/251
+# TESTED 2007: 21/270, 33/327, 36/253078
+
+# TESTED USING STEAM2 CDKEY SUB 1 / DEFAULT SUB 0 - PURCHASE 7 FAILS DUE TO STEAM3
+# TESTED 2008: 41/447
+
+# DEFAULT: MUST BE 31-1-0, then 1-1-31 EXCEPT 2003 WHICH MUST BE 0-0-0
+# PURCHASE: MUST BE 0-0-0
+# CDKEY: MUST BE 0-0-0
+
+        if paymenttype == 7 and pkt_version not in ['b2003', 'r2003', 'b2004']:
+            subscription_status = 1 # pending
+            status_change_flag = 1 # client doesnt need to be informed yet
+            previous_subscription_state = 31 # old status (unsubscribed)
         else:
-            subscription_status = 0
-            status_change_flag = 0
-            previous_subscription_state = 31
+            subscription_status = 0 # should start as 31 for pending
+            status_change_flag = 0 # set to 1 so the client knows there's a change.  gets set to 0 when the client sends its receipt ack
+            previous_subscription_state = 0 # what changes this to 31, does this part run twice?
 
         data = {
                 'UserRegistry_UniqueID':    user_uniqueid,
@@ -309,7 +361,10 @@ class auth_dbdriver:
         max_retries = 3
         for attempt in range(max_retries):  # NOTE: This retry stuff is left-over code from when we used an SQLITE DB
             try:
-                self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsRecord, data)
+                if subid == 0 and pkt_version not in ['b2003', 'r2003', 'b2004']:
+                    self.db_driver.update_data(base_dbdriver.AccountSubscriptionsRecord, and_(base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == user_uniqueid, base_dbdriver.AccountSubscriptionsRecord.SubscriptionID == 0), data)
+                else:
+                    self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsRecord, data)
                 break
             except Exception as e:
                 log.error(f"[insert_sub] Attempt {attempt + 1}: Error occurred while inserting subscription into accountsubscriptionsrecord: {e}")
@@ -366,6 +421,7 @@ class auth_dbdriver:
 
         elif paymenttype == 6:
             next_unique_prepurchase_id = self.db_driver.get_next_available_id(self.prepurchasedinforecord_table)
+            print("unique id:", next_unique_prepurchase_id)
             (TypeOfProofOfPurchase, BinaryProofOfPurchaseToken) = tuple_paymentrecord
             if BinaryProofOfPurchaseToken == '':
                 BinaryProofOfPurchaseToken = '4610731021040'
@@ -388,6 +444,7 @@ class auth_dbdriver:
                         continue
                     else:
                         return False  # Failed after retries
+
         else:
             if paymenttype != 7:
                 log.error(f"[insert_sub] User {username} Has An Invalid Payment Type ID! PaymentTypeID: {str(paymenttype)}")
@@ -407,7 +464,8 @@ class auth_dbdriver:
 
         for attempt in range(max_retries):  # NOTE: This retry stuff is left-over code from when we used an SQLITE DB
             try:
-                self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsBillingInfoRecord, data)
+                if subid != 0 or pkt_version in ['b2003', 'r2003', 'b2004']:
+                    self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsBillingInfoRecord, data)
                 break
             except Exception as e:
                 log.error(f"[insert_sub] Error occurred while inserting into accountsubscriptionsbillinginforecord: {e}")
@@ -417,7 +475,7 @@ class auth_dbdriver:
                 else:
                     return False  # Failed after retries
 
-        log.info(f"[insert_sub] Successfully inserted new Subscription To Database, Subscription ID: {str(subid)} Username: {username}")
+        log.info(f"[insert_sub] User {username} successfully subscribed to {str(subid)}")
 
     def get_userregistry_dict(self, username, clientver, ipaddress):
         user_registry = UserRegistry(self)
@@ -442,14 +500,116 @@ class auth_dbdriver:
         # Building the user registry
         user_registry.build_user_registry(user_registry_builder, userrecord_dbdata)
 
-        if clientver not in ["b2003", "r2003"]:
+        if clientver not in ["b2003", "r2003", "b2004"]:
             user_registry.process_subscriptions_billing_info(user_registry_builder, userrecord_dbdata.UniqueID)
 
         user_registry.process_subscription_records(user_registry_builder, userrecord_dbdata.UniqueID, clientver)
 
         return user_registry_builder.build()
 
-    def update_subscription_status_flags(self, username):
+    def get_usersecrets_dict(self, username, clientver, ipaddress):
+        user_registry = UserRegistry(self)
+        user_registry_builder = UserRegistryBuilder()
+        userrecord_dbdata_rows = self.db_driver.select_data(base_dbdriver.UserRegistry, base_dbdriver.UserRegistry.UniqueUserName == username)
+
+        if not userrecord_dbdata_rows:
+            log.error(f"[get_dict] User not found: {username}")
+            return 0
+
+        if len(userrecord_dbdata_rows) > 1:
+            pprint.pprint(userrecord_dbdata_rows)
+            log.error(f"[get_dict] More than 1 row returned when loading user from database! user: {username}")
+            return 2
+
+        userrecord_dbdata = userrecord_dbdata_rows[0]
+        user_registry.build_user_secret_registry(user_registry_builder, userrecord_dbdata)
+
+        return user_registry_builder.build2()
+
+    def update_subscription_status_flags_new(self, username):
+        try:
+
+            # Get the 'UniqueID' for the given 'UniqueUserName'
+            userrecord_dbdata = self.db_driver.select_data(
+                    base_dbdriver.UserRegistry,
+                    base_dbdriver.UserRegistry.UniqueUserName == username
+            )
+
+            if len(userrecord_dbdata) == 0:
+                log.error(f"[update_sub] User {username} not found!")
+                return False
+
+            unique_id = userrecord_dbdata[0].UniqueID
+
+            # Prepare the updates for SubscriptionStatus = 0
+            where_clause_status_0 = (
+                    (base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == unique_id) &
+                    (base_dbdriver.AccountSubscriptionsRecord.SubscriptionStatus == 0) &
+                    (base_dbdriver.AccountSubscriptionsRecord.StatusChangeFlag == 0) &
+                    (base_dbdriver.AccountSubscriptionsRecord.PreviousSubscriptionState == 0)
+            )
+            new_values_status_0 = {
+                    'SubscriptionStatus':       1,
+                    'StatusChangeFlag':         1,
+                    'PreviousSubscriptionState':0
+            }
+
+            # Update records where SubscriptionStatus = 0
+            result_0 = self.db_driver.update_data(
+                    base_dbdriver.AccountSubscriptionsRecord,
+                    where_clause_status_0,
+                    new_values_status_0
+            )
+
+            # Prepare the updates for SubscriptionStatus = 1
+            where_clause_status_1 = (
+                    (base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == unique_id) &
+                    (base_dbdriver.AccountSubscriptionsRecord.SubscriptionStatus == 1) &
+                    (base_dbdriver.AccountSubscriptionsRecord.StatusChangeFlag == 1) &
+                    (base_dbdriver.AccountSubscriptionsRecord.PreviousSubscriptionState == 31)
+            )
+            new_values_status_1 = {
+                    'StatusChangeFlag':0
+            }
+
+            # Update records where SubscriptionStatus = 1
+            result_1 = self.db_driver.update_data(
+                    base_dbdriver.AccountSubscriptionsRecord,
+                    where_clause_status_1,
+                    new_values_status_1
+            )
+
+            # Prepare the updates for SubscriptionStatus = 31
+            where_clause_status_31 = (
+                    (base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == unique_id) &
+                    (base_dbdriver.AccountSubscriptionsRecord.SubscriptionStatus == 31) &
+                    (base_dbdriver.AccountSubscriptionsRecord.StatusChangeFlag == 1) &
+                    (base_dbdriver.AccountSubscriptionsRecord.PreviousSubscriptionState == 0)
+            )
+            new_values_status_31 = {
+                    'SubscriptionStatus':       1,
+                    'StatusChangeFlag':         1,
+                    'PreviousSubscriptionState':31
+            }
+
+            # Update records where SubscriptionStatus = 31
+            result_31 = self.db_driver.update_data(
+                    base_dbdriver.AccountSubscriptionsRecord,
+                    where_clause_status_31,
+                    new_values_status_31
+            )
+
+            if result_31: # or result_1:
+                log.info(f"[update_sub] Successfully updated subscription records for user {username}")
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            log.error(f"[update_sub] Error updating subscription records: {e}")
+            return False
+
+    def update_subscription_status_flags_OLD(self, username):
         try:
             # Get the 'UniqueID' for the given 'UniqueUserName'
             userrecord_dbdata = self.db_driver.select_data(
@@ -591,6 +751,7 @@ class auth_dbdriver:
             }
 
         return None
+
     def change_password(self, username, salted_digest, pass_salt):
         # Dictionary containing data to be updated
         current_time = utilities.time.get_current_datetime()
@@ -664,7 +825,7 @@ class auth_dbdriver:
 
         return success
 
-    def check_or_set_auth_ticket(self, accountID, userIP, creationTime, expirationTime):
+    def check_or_set_auth_ticket(self, accountID, userIP, creationTime, expirationTime, ticket_data=b""):
         session = self.session
         try:
             record = session.query(base_dbdriver.AuthenticationTicketsRecord).filter_by(UserRegistry_UniqueID=accountID).first()
@@ -673,21 +834,65 @@ class auth_dbdriver:
                     session.delete(record)
                     session.commit()
                     return False
+                record.TicketData = ticket_data
+                record.TicketCreationTime = creationTime
+                record.TicketExpirationTime = expirationTime
+                session.commit()
                 return record.TicketCreationTime, record.TicketExpirationTime
             else:
                 new_record = base_dbdriver.AuthenticationTicketsRecord(
                     UserRegistry_UniqueID=accountID,
                     UserIPAddress=userIP,
                     TicketCreationTime=creationTime,
-                    TicketExpirationTime=expirationTime
+                    TicketExpirationTime=expirationTime,
+                    TicketData=ticket_data
                 )
                 session.add(new_record)
                 session.commit()
-                return None
+            log_rec = base_dbdriver.AuthenticationTicketLog(
+                UserRegistry_UniqueID=accountID,
+                TicketData=ticket_data,
+                TicketCreationTime=creationTime,
+                TicketExpirationTime=expirationTime
+            )
+            session.add(log_rec)
+            session.commit()
+            return None
         except SQLAlchemyError as e:
             session.rollback()
             print(f"Error checking or setting auth ticket: {e}")
             return None
+        finally:
+            session.close()
+
+    def expire_expired_tickets(self):
+        session = self.session
+        try:
+            now = datetime.datetime.now()
+            session.query(base_dbdriver.AuthenticationTicketsRecord).filter(
+                base_dbdriver.AuthenticationTicketsRecord.TicketExpirationTime < now
+            ).delete()
+            session.query(base_dbdriver.AuthenticationTicketLog).filter(
+                base_dbdriver.AuthenticationTicketLog.TicketExpirationTime < now
+            ).delete()
+            session.commit()
+        except SQLAlchemyError as e:
+            session.rollback()
+            print(f"Error expiring tickets: {e}")
+        finally:
+            session.close()
+
+    def expire_tickets_for_user(self, accountID):
+        """Delete all active tickets for a specific user."""
+        session = self.session
+        try:
+            session.query(base_dbdriver.AuthenticationTicketsRecord).filter_by(
+                UserRegistry_UniqueID=accountID
+            ).delete()
+            session.commit()
+        except SQLAlchemyError as e:
+            session.rollback()
+            print(f"Error expiring tickets for user {accountID}: {e}")
         finally:
             session.close()
 
@@ -720,7 +925,9 @@ class auth_dbdriver:
             if subscriptions:
                 # Update SubscriptionStatus to 0 for each subscription
                 for subscription in subscriptions:
+                    subscription.SubscriptionStatus = 1
                     subscription.StatusChangeFlag = 0
+                    subscription.PreviousSubscriptionState = 31
 
                 # Commit the changes
                 self.session.commit()

@@ -3,81 +3,73 @@ import copy
 import logging
 import struct
 import sys
+import threading
 import time
 import traceback
-from collections import defaultdict, deque
-from config import read_config
+from typing import Optional
+
+from config import get_config as read_config
+from steam3 import Types
 from steam3.ClientManager import Client_Manager
 from steam3.ClientManager.client import Client
-from steam3.Handlers.connection import create_channel_encryption_request, create_conn_acceptresponse, handle_challengerequest
-from steam3.Handlers.system import handle_Heartbeat
-from steam3.Types.wrappers import ConnectionID
-from steam3.cm_crypto import symmetric_decrypt, symmetric_encrypt
-from steam3.cm_packet_utils import CMPacket, CMProtoResponse, ExtendedMsgHdr, MsgHdr_deprecated, MsgMulti, deprecated_responsehdr
-from steam3.cmserver_base import CMServer_Base
+from steam3.Handlers.connection import (
+    create_channel_encryption_request,
+    create_channel_encryption_result,
+    create_conn_acceptresponse,
+    handle_challengerequest,
+    parse_channel_encryption_response,
+)
+from steam3.Types.emsg import EMsg
 from utilities import encryption
 from utilities.encryption import calculate_crc32_bytes
-from utilities.networkhandler import TCPNetworkHandler, TCPNetworkHandlerCM
-from utilities.socket import ImpSocket
+from steam3.cm_crypto import symmetric_decrypt, symmetric_encrypt
+from steam3.cm_packet_utils import CMPacket, CMProtoResponse, ExtendedMsgHdr, MultiMsg, deprecated_responsehdr
+from steam3.cmserver_base import CMServer_Base
+from utilities.networkhandler import TCPNetworkHandlerCM
+from utilities.impsocket import ImpSocket, MessageInfo
 
 config = read_config()
 
 class CMServerTCP(CMServer_Base):
-    # Add a class-level dictionary to track IP attempts
-    # If you want per-instance instead, do this in __init__ instead.
-    connection_attempts = defaultdict(deque)
-    def handle_client(self, socket, address):
-        ip = address[0]  # Extract the IP from the client address
-
-        # Record this attempt
-        now = time.time()
-        attempts = self.connection_attempts[ip]
-        attempts.append(now)
-
-        # Remove attempts older than 2 seconds
-        two_seconds_ago = now - 2
-        while attempts and attempts[0] < two_seconds_ago:
-            attempts.popleft()
-
-        # Check if attempts exceed the threshold
-        if len(attempts) > 5:
-            self.log.warning(f"{ip}: Too many connection attempts. Blocking IP.")
-            socket.block_ip()
-            socket.close()
+    def handle_client(self, client_socket, address):
+        try:
+            imp_socket = ImpSocket(sock=client_socket)
+            imp_socket.address = address
+        except Exception as e:
+            self.log.error(f"Error initializing ImpSocket for {address[0]}: {e}")
+            try:
+                client_socket.close()
+            except Exception as e_close:
+                self.log.error(f"Error closing socket for {address[0]}: {e_close}")
             return
 
         try:
-            clientid = str(address) + ": "
+            clientid = f"{address}: "
             self.log.info(f"{clientid}Connected to TCP CM Server")
-
-            #send encryption request
-            #recieve key
-            #send OK
-            #recieve normal messages
-
             packet = CMPacket(is_tcp=True)
-
-            conn_type = "encrypted" if self.is_encrypted else "unencrypted"
-
-            if self.is_encrypted:
+            conn_type = "encrypted" if getattr(self, 'is_encrypted', False) else "unencrypted"
+            if getattr(self, 'is_encrypted', False):
                 self.log.info(f"{clientid}[{conn_type}] Sending Encryption Handshake Request To Client")
                 cmidreply = create_channel_encryption_request(packet, packet, self.connectionid_count)
-                socket.send(cmidreply, to_log = False)
-            client = Client(ip_port = address, connectionid = self.connectionid_count)
+                msg_info = MessageInfo(emsg_id=EMsg.ChannelEncryptRequest, emsg_name="ChannelEncryptRequest")
+                client_socket.send(cmidreply, to_log=True, msg_info=msg_info)
+            client = Client(ip_port=address, connectionid=self.connectionid_count)
+            client.objCMServer = self  # Store reference to this CM server for push messages
             client_obj = Client_Manager.add_or_update_client(client)
-            client_obj.socket = socket
+            client_obj.socket = client_socket
             self.connectionid_count += 1
 
-            data = socket.recv(16288)
-
+            data = client_socket.recv(16288)
+            if not data:
+                client_socket.close()
+                return
             cm_packet = packet.parse(data, True)
             cm_packet_reply = copy.deepcopy(cm_packet)
             if isinstance(cm_packet.data, int):
-                socket.close()
+                client_socket.close()
                 return
 
-            if b"\x18\x05" == cm_packet.data[:2]:
-                # we decrypt the aes session key here
+            if cm_packet.data.startswith(b"\x18\x05"):
                 encrypted_message = cm_packet.data[28:156]
                 encrypted_message_crc32 = cm_packet.data[156:160]
                 self.log.debug(f"encrypted response: {cm_packet}")
@@ -85,87 +77,115 @@ class CMServerTCP(CMServer_Base):
                 self.log.debug(f"Encrypted Session Key: {key}")
                 verification_local = calculate_crc32_bytes(encrypted_message)
                 verification_result = "Pass" if verification_local == encrypted_message_crc32 else "Fail"
-                self.log.debug(f"CRC32 Verification Result: packet crc: {encrypted_message_crc32}\nlocally verified crc: {verification_local}\nResult: {verification_result}")
-
+                self.log.debug(f"CRC32 Verification Result: {verification_result}")
                 client_obj.set_symmetric_key(key)
                 client_obj.hmac_key = key[:16]
-
-                # send ChannelEncryptResult result = OK
-                cm_packet_reply.data = b'\x19\x05\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01\x00\x00\x00'
+                cm_packet_reply.data = create_channel_encryption_result()  # EResult.OK = 1
                 cm_packet_reply.size = len(cm_packet_reply.data)
-                handshake_confirmation = MsgHdr_deprecated(eMsgID = 0x1905,
-                                                           accountID = 0xffffffff,
-                                                           clientId2 = 0xffffffff,
-                                                           sessionID = 0xffffffff,
-                                                           data = b'\x01\x00\x00\x00'  # eResult, 01 is OK
-                                                           )
-
-                # cm_packet_reply.data = handshake_confirmation.serialize()
-
                 cmidreply = cm_packet_reply.serialize()
-                socket.send(cmidreply, to_log = False)
+                msg_info = MessageInfo(emsg_id=EMsg.ChannelEncryptResult, emsg_name="ChannelEncryptResult")
+                client_socket.send(cmidreply, to_log=True, msg_info=msg_info)
             while True:
-                try:
-                    data = socket.recv(16288)
-                    cm_packet = packet.parse(data,  True)
-
-                    self.handle_CMPacket(cm_packet, client_obj)
-                except:
-                    socket.close()
-                    return
-
+                data = client_socket.recv(16288)
+                if not data:
+                    self.log.info(f"Connection closed by {address}")
+                    break
+                cm_packet = packet.parse(data, True)
+                self.handle_CMPacket(cm_packet, client_obj)
         except Exception as e:
             traceback.print_exc()
             self.log.error(f"(CM Handle_Client) thread exception: {e}")
             tb = sys.exc_info()[2]
             self.log.error(''.join(traceback.format_tb(tb)))
+        finally:
+            try:
+                client_socket.close()
+            except Exception:
+                pass
 
-    def sendReply(self, client_obj, response_packet_list: [list, ExtendedMsgHdr | CMProtoResponse | deprecated_responsehdr | MsgMulti], packetID = None, priority_level = 1):
+    def sendReply(self, client_obj, response_packet_list: list, *args):
         """ Send a reply to a client. Takes a list of packets to send, and handles splitting the packets if necessary. """
-        try:
-            if not response_packet_list:
-                return
+        if not response_packet_list:
+            return
 
-            # Prepare the CMPacket for reply
-            reply_packet = CMPacket(is_tcp=True)
-            reply_packet.magic = 0x31305456 #VT01
+        # Validate client is still in the manager (not replaced by a newer connection)
+        # This prevents sending to stale client objects that have been disconnected/reconnected
+        current_client = Client_Manager.get_client_by_identifier(client_obj.ip_port)
+        if current_client is not client_obj:
+            self.log.debug(f"Client object for {client_obj.ip_port} is stale (replaced), skipping send")
+            return
 
-            if len(response_packet_list) == 1:
-                response_packet = response_packet_list[0]
-                if response_packet.data:
-                    # Log the data before encryption
-                    #log_to_file("logs/before_encryption.txt", response_packet.serialize(), client_obj.ip_port[0], "Before Encryption")
+        # Acquire send lock to ensure packets are sent in order
+        # This is less critical for TCP than UDP (TCP has its own ordering)
+        # but still prevents issues with stale references during concurrent access
+        with client_obj.send_lock:
+            try:
+                packets_to_send = []
+                msg_info_list = []
+                for idx, response_packet in enumerate(response_packet_list):
+                    # Skip any empty or malformed entries
+                    if not response_packet or not getattr(response_packet, 'data', None):
+                        self.log.error(
+                            f"(response {idx} missing .data) No data in response packet "
+                            f"for client {client_obj.ip_port[0]}"
+                        )
+                        continue
 
+                    # Extract message info BEFORE encryption for logging
+                    emsg_id = getattr(response_packet, 'eMsgID', None)
+                    emsg_name = Types.get_enum_name(EMsg, emsg_id) if emsg_id is not None else None
+                    target_job_id = getattr(response_packet, 'targetJobID', None)
+                    source_job_id = getattr(response_packet, 'sourceJobID', None)
+                    is_encrypted = getattr(self, 'is_encrypted', False) and client_obj.symmetric_key is not None
+
+                    # build a fresh CMPacket for each response
+                    reply_packet = CMPacket(is_tcp=True)
+                    reply_packet.magic = 0x31305456  # VT01
+
+                    # serialize the high-level response into the CMPacket
                     reply_packet.data = response_packet.serialize()
 
-                    print(f'packet sent to client: {reply_packet.data}')
+                    # Log unencrypted packet through impsocket for centralized logging
+                    msg_info = MessageInfo(
+                        emsg_id=emsg_id,
+                        emsg_name=emsg_name,
+                        is_encrypted=is_encrypted,
+                        target_job_id=target_job_id,
+                        source_job_id=source_job_id
+                    )
+                    client_obj.socket.log_packet(
+                        address=client_obj.ip_port,
+                        direction="Sent",
+                        data=reply_packet.data,
+                        msg_info=msg_info
+                    )
 
-                    # Encrypt the packet and log the encrypted data
+                    # encrypt and log if desired
                     reply_packet.data = self.encrypt_packet(reply_packet, client_obj)
-                    #log_to_file("logs/encrypted_data.txt", reply_packet.data, client_obj.ip_port[0], "Encrypted Data")
 
-                    data_len = len(reply_packet.data)
+                    # set size and collect
+                    reply_packet.size = len(reply_packet.data)
+                    packets_to_send.append(reply_packet)
 
-                    # Data fits in a single packet
-                    reply_packet.size = data_len
-                    packets_to_send = [reply_packet]
-                else:
-                    self.log.error(f"(response missing .data) No data in response packet for client {client_obj.ip_port[0]} {reply_packet.data}")
-                    return  # No data to send
-            else:
-                self.log.error(f"(no response in list) No data in response packet for client {client_obj.ip_port[0]} {reply_packet.data}")
-                return
+                    # Reuse the msg_info we already created for log_packet
+                    msg_info_list.append(msg_info)
 
-            # Serialize and send each packet
-            for packet in packets_to_send:
-                serialized_packet = packet.serialize()
-                client_obj.socket.send(serialized_packet, to_log = True)
-                #self.serversocket.send(serialized_packet, to_log = False)
-        except Exception as e:
-            tb = sys.exc_info()[2]  # Get the original traceback
-            self.log.error(f"CM Server Sendreply error: {e}")
-            self.log.error(''.join(traceback.format_tb(tb)))  # Logs traceback up to this point
-            raise e.with_traceback(tb)  # Re-raise with the original traceback
+                # now send each packet in the same order
+                for i, reply_packet in enumerate(packets_to_send):
+                    serialized = reply_packet.serialize()
+                    msg_info = msg_info_list[i] if i < len(msg_info_list) else None
+                    self._sendreply(client_obj, serialized, msg_info)
+
+            except Exception as e:
+                tb = sys.exc_info()[2]
+                self.log.error(f"CM Server sendReply error: {e}")
+                self.log.error(''.join(traceback.format_tb(tb)))
+                raise e.with_traceback(tb)
+
+    def _sendreply(self, client_obj, serialized_packet, msg_info: Optional[MessageInfo] = None):
+        """ Send a reply to a client. Takes a list of packets to send, and handles splitting the packets if necessary. """
+        client_obj.socket.send(serialized_packet, to_log=True, msg_info=msg_info)
+
 class CMServerTCP_27017(TCPNetworkHandlerCM, CMServerTCP):
     """		// the tcp packet header is considerably less complex than the udp one
 		// it only consists of the packet length, followed by the "VT01" magic"""
@@ -175,7 +195,7 @@ class CMServerTCP_27017(TCPNetworkHandlerCM, CMServerTCP):
         self.is_encrypted = True
         self.is_tcp = True
         self.server_type = "CMServerTCP_27017"
-        self.log = logging.getLogger("CMTCP27017")
+        self.log = logging.getLogger("CM27017TCP")
         self.master_server = master_server  # Store the reference to MasterServer
 
     def encrypt_packet(self, packet, client_obj: Client):
@@ -210,7 +230,7 @@ class CMServerTCP_27014(TCPNetworkHandlerCM, CMServerTCP):
         self.server_type = "CMServerTCP_27014"
         self.is_encrypted = False
         self.is_tcp = True
-        self.log = logging.getLogger("CMTCP27014")
+        self.log = logging.getLogger("CM27014TCP")
         self.master_server = master_server  # Store the reference to MasterServer
 
     def handle_client(self, socket, address):

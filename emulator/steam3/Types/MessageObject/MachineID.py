@@ -15,9 +15,11 @@ class MachineID:
         self.BB3 = self.message_object.get('BB3')
         self.FF2 = self.message_object.get('FF2')
         self._3B3 = self.message_object.get('3B3')
+        self.BBB = self.message_object.get('BBB')
+        self._333 = self.message_object.get('333')
 
     def __str__(self):
-        return f"BB3: {self.BB3}, FF2: {self.FF2}, 3B3: {self._3B3}"
+        return f"BB3: {self.BB3}, FF2: {self.FF2}, 3B3: {self._3B3}, BBB: {self.BBB}, 333: {self._333}"
 # example for parsing
 # Assume 'data' is your byte string containing multiple MessageObjects
 #machine_id = MachineID(data)

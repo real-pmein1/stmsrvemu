@@ -1,4 +1,6 @@
 import struct
+
+
 class StatsUDP:
     def __init__(self, data):
         self.deserialize(data)
@@ -22,6 +24,8 @@ class StatsUDP:
 
     def __repr__(self):
         return self.__str__()
+
+
 class StatsVConn:
     def __init__(self, data):
         self.deserialize(data)
@@ -71,6 +75,8 @@ class StatsVConn:
 
     def __repr__(self):
         return self.__str__()
+
+
 class StatsLogon:
     def __init__(self, data):
         self.deserialize(data)
