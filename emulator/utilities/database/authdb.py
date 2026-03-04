@@ -837,7 +837,6 @@ class auth_dbdriver:
         finally:
             session.close()
 
-
     def change_subscriptions_changeflag(self, username: str):
         """
         Finds a user by their username in UserRegistry, retrieves all their subscriptions
