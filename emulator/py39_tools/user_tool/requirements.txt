@@ -1,0 +1,3 @@
+windows-curses; sys_platform == "win32"
+curses; platform_system == "Linux"
+pycryptodome

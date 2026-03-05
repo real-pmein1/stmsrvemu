@@ -11,6 +11,7 @@ Base = declarative_base()
 class custom_DateTime(TypeDecorator):
     """Stores datetimes in the database and converts back to datetime objects when retrieved."""
     impl = DateTime
+    cache_ok = True
 
     def process_bind_param(self, value, dialect):
         if isinstance(value, datetime):
@@ -1070,13 +1071,14 @@ class S3SurveyData(Base):
 
 
 class AdministrationUsersRecord(Base):
-    """ Used to hold temporary gifting information, until transaction is finalized"""
+    """Administrator login information."""
     __tablename__ = 'admin_users_record'
-    UniqueID = Column(Integer, primary_key = True, autoincrement = True)
-    Username = Column(Integer, ForeignKey('userregistry.UniqueID'))
-    PWHash = Column(Integer)
+
+    UniqueID = Column(Integer, primary_key=True, autoincrement=True)
+    Username = Column(String(60), nullable=False, unique=True)
+    PWHash = Column(String(64), nullable=False)
     PWSeed = Column(String(256))
-    Rights = Column(String(256))
+    Rights = Column(Integer)
 
 
 class PlatformUpdateNews(Base):
