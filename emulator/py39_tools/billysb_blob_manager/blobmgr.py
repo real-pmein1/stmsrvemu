@@ -763,9 +763,9 @@ class BlobManager(object):
             steamui_pkg_path = beta_pkg_path
         elif self._is_beta2_platform_blob(blob_filename):
             # For specific beta2 blobs, both checks are resolved strictly in packagedir/betav2.
-            # Steam uses steam_<version>.pkg and SteamUI uses PLATFORM_1.pkg.
+            # Steam uses steam_<version>.pkg and SteamUI uses PLATFORM_<steamui_version>.pkg.
             steam_pkg_path = f'{packages_dir}/betav2/steam_{steam_value}.pkg'
-            steamui_pkg_path = f'{packages_dir}/betav2/PLATFORM_1.pkg'
+            steamui_pkg_path = f'{packages_dir}/betav2/PLATFORM_{steamui_raw}.pkg'
         else:
             steam_pkg_path = f'{packages_dir}/steam_{steam_value}.pkg'
             steamui_pkg_path = f'{packages_dir}/steamui_{steamui_raw}.pkg'
