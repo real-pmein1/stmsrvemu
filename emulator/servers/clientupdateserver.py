@@ -93,9 +93,24 @@ class clientupdateserver(TCPNetworkHandler):
         global cusConnectionCount
 
         def global_thread_exception_handler(args):
-            logging.getLogger('threadhndl').error(
-                f"Exception in thread '{args.thread.name}': {args.exc_type.__name__}: {args.exc_value}",
-                exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
+            #logging.getLogger('threadhndl').error(
+            #    f"Exception in thread '{args.thread.name}': {args.exc_type.__name__}: {args.exc_value}",
+            #    exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
+            #)
+            logger = logging.getLogger("threadhndl")
+
+            formatted = "".join(
+                traceback.format_exception(
+                    args.exc_type,
+                    args.exc_value,
+                    args.exc_traceback
+                )
+            )
+
+            formatted = "" + formatted.split("Python39_code\\", 1)[1] if "Python39_code\\" in formatted else formatted
+
+            logger.error(
+                f"Exception in thread '{args.thread.name}':\n{formatted}"
             )
 
         threading.excepthook = global_thread_exception_handler

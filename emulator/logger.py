@@ -265,6 +265,8 @@ def custom_exception_handler(exc_type, exc_value, tb):
         tb_str = "".join(traceback.format_exception(exc_type, exc_value, tb))
         # Ensure the traceback is encodable in the system's default encoding
         safe_tb_str = tb_str.encode('ascii', errors='replace').decode('ascii')
+        # Remove the full path for exe
+        safe_tb_str = "" + safe_tb_str.split("Python39_code\\", 1)[1] if "Python39_code\\" in safe_tb_str else safe_tb_str
         # Log the exception
         logger.critical("Uncaught exception: " + safe_tb_str)
     except Exception:
