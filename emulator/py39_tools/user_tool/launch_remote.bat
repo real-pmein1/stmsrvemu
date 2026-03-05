@@ -1,0 +1,1 @@
+python ./remote_admintool.py

@@ -1,6 +1,5 @@
 import curses
-import os
-import sys
+import local_utils  # Local utilities - avoids dependency on server's config.py
 
 def print_centered_bar(text, width = 80, fill_char = '?'):
     # Ensure the text is not longer than the width of the bar
@@ -18,11 +17,9 @@ def print_centered_bar(text, width = 80, fill_char = '?'):
     # Print the bar
     print(bar)
 
-def clear_console():
-    if os.name == 'nt':  # For Windows
-        os.system('cls')
-    else:  # For macOS and Linux
-        os.system('clear')
+def clear_console() -> None:
+    """Clear the console using the shared utility helper."""
+    local_utils.clear_console()
 
 def display_menu(options, items_per_page=25, ismulti=False, list_only=False):
     def main(stdscr):
@@ -186,7 +183,9 @@ def display_menu(options, items_per_page=25, ismulti=False, list_only=False):
                     if result is not None:
                         return result
 
-    return curses.wrapper(main)
+    result = curses.wrapper(main)
+    clear_console()
+    return result
 
 
 """# Test Example
