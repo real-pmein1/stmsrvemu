@@ -1030,7 +1030,7 @@ class StorageBeta(object):
         storages_path = os.path.normpath("betastorages/")
 
         # Check if the path ends with the normalized storage paths
-        if normalized_path.endswith(storages_path):
+        if normalized_path.endswith(storages_path) or normalized_path.endswith(beta1_path):
             manifestpathbeta = config["betamanifestdir"]
         else:
             self.log.error("Path to storages directory is not set to files/betastorages!")
