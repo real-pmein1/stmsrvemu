@@ -38,7 +38,7 @@ config = get_config()
 # VERSION STRINGS
 # =============================================================================
 
-local_ver: str = "0.90 -- In Memorium - Dormine (1980-2026)"
+local_ver: str = "0.90.1 -- In Memorium - Dormine (1980-2026)"
 emu_ver: str = "0"
 ui_ver: str = "0"
 mdb_ver: str = "0"
