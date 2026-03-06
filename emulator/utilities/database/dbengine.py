@@ -17,6 +17,10 @@ from sqlalchemy.sql import Delete, Insert, Select, Update
 from sqlalchemy_utils import create_database, database_exists
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError  # Make sure to import this at the top
 
+import sqlparse.engine.grouping
+sqlparse.engine.grouping.MAX_GROUPING_DEPTH = None
+sqlparse.engine.grouping.MAX_GROUPING_TOKENS = None
+
 import globalvars
 from .base_dbdriver import Base, ExecutedSQLFile
 

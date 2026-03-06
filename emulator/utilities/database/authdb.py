@@ -609,65 +609,6 @@ class auth_dbdriver:
             log.error(f"[update_sub] Error updating subscription records: {e}")
             return False
 
-    def update_subscription_status_flags_OLD(self, username):
-        try:
-            # Get the 'UniqueID' for the given 'UniqueUserName'
-            userrecord_dbdata = self.db_driver.select_data(
-                    base_dbdriver.UserRegistry,
-                    base_dbdriver.UserRegistry.UniqueUserName == username
-            )
-
-            if len(userrecord_dbdata) == 0:
-                log.error(f"[update_sub] User {username} not found!")
-                return False
-
-            unique_id = userrecord_dbdata[0].UniqueID
-
-            # Prepare the updates for SubscriptionStatus = 1
-            where_clause_status_1 = (
-                    (base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == unique_id) &
-                    (base_dbdriver.AccountSubscriptionsRecord.SubscriptionStatus == 1)
-            )
-            new_values_status_1 = {
-                    'StatusChangeFlag':0
-            }
-
-            # Update records where SubscriptionStatus = 1
-            result_1 = self.db_driver.update_data(
-                    base_dbdriver.AccountSubscriptionsRecord,
-                    where_clause_status_1,
-                    new_values_status_1
-            )
-
-            # Prepare the updates for SubscriptionStatus = 0
-            where_clause_status_0 = (
-                    (base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == unique_id) &
-                    (base_dbdriver.AccountSubscriptionsRecord.SubscriptionStatus == 0)
-            )
-            new_values_status_0 = {
-                    'SubscriptionStatus':       1,
-                    'StatusChangeFlag':         1,
-                    'PreviousSubscriptionState':0
-            }
-
-            # Update records where SubscriptionStatus = 0
-            result_0 = self.db_driver.update_data(
-                    base_dbdriver.AccountSubscriptionsRecord,
-                    where_clause_status_0,
-                    new_values_status_0
-            )
-
-            if result_0 or result_1:
-                log.info(f"[update_sub] Successfully updated subscription records for user {username}")
-                return True
-            else:
-                log.error(f"[update_sub] Update failed for user {username}")
-                return False
-
-        except Exception as e:
-            log.error(f"[update_sub] Error updating subscription records: {e}")
-            return False
-
     def unsubscribe(self, username, subid):
         try:
             # Get the 'UniqueID' for the given 'username'
@@ -895,7 +836,6 @@ class auth_dbdriver:
             print(f"Error expiring tickets for user {accountID}: {e}")
         finally:
             session.close()
-
 
     def change_subscriptions_changeflag(self, username: str):
         """

@@ -1,9 +1,11 @@
 # STMServer Emulator
 Source code for the server emulator for clients 2002-2011
 
-Compile on Python 3.9 x86-64 if you want to run/build from source using:
+* Install the required dependencies in the ``emulator`` folder using:
+``python -m pip install -r requirements.txt``
 
-python.exe -m PyInstaller -F -i source-content.ico emulator.py
+* Compile on Python 3.9.13 if you want to run/build from source using:
+``python -m PyInstaller -F -i source-content.ico emulator.py --add-data "steam3/protobufs/:steam3/protobufs/" --add-data "files/icons/*.ico;files/icons/" --hidden-import tkinter``
 
 > *Please note the code is constant work-in-progress and might not compile or operate correctly, please use the release zip for full functionality*
 
@@ -11,17 +13,4 @@ python.exe -m PyInstaller -F -i source-content.ico emulator.py
 + pmein1 - Server developer and support
 + cystface-man - Server developer and support
 + Dormine - Original python poc emulator code and updates
-+ Tane - Original app update code
-+ ymgve - Beta 2002/2003 and tracker coding
-+ steamCooker - Help with some of the intricacies of the Steam services
-+ BillySB - Website developer
-+ XJR9000 - Website developer and support/tester
-+ Rossen - ValvePython protobuf for CM encryption code and the clientmsg format
-+ Da_FileServer - Original AppDataCacheToXML code
-+ Tomi + anon - Java VAC server code
-+ UAVXP - 2002 tracker client code
-+ GenoKirby - Provided assistance with the subscriber database
-+ NC-HardcorE - Testing
-+ Xaero - Testing
-+ Medik_red - Testing
-+ Alex - Testing
++ Other credits can be found in credits.txt
