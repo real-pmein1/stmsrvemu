@@ -1,3 +1,13 @@
+0.90.1 - changelog from 0.90:
+
+fixed cddb filenames table and data
+fixed mariadb loading on Linux
+fixed Steam3 loading an incorrectly named module
+fixed blobmgr start time
+added auto-blob to blobmgr
+reduced all exe sizes
+started removal of old/redundant functions
+
 0.90 - changelog from 0.81.1:
 
 merged neuter application into emulator
