@@ -185,9 +185,9 @@ class DatabaseDriver():
                 if filename == "ClientConfigurationDB.sql":
                     needs_reexecution = not self._table_exists_in_database("ClientConfigurationDB", "configurations")
                 elif filename == "ContentDescriptionDB.sql":
-                    needs_reexecution = not self._table_exists_in_database("ContentDescriptionDB", "filename")
+                    needs_reexecution = not self._table_exists_in_database("ContentDescriptionDB", "filenames")
                 elif filename == "BetaContentDescriptionDB.sql":
-                    needs_reexecution = not self._table_exists_in_database("BetaContentDescriptionDB", "filename")
+                    needs_reexecution = not self._table_exists_in_database("BetaContentDescriptionDB", "filenames")
                 elif filename == "ProductInformationDB.sql":
                     needs_reexecution = not self._table_exists_in_database("ProductInformationDB", "applications")
 
