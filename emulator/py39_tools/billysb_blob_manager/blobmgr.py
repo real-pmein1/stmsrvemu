@@ -6,7 +6,7 @@ from datetime import datetime
 import struct
 import zlib
 import traceback
-from tkinter import filedialog
+from tkinter import filedialog, font as tkfont
 import PySimpleGUI as psg
 import configparser
 from pathlib import Path
@@ -157,6 +157,16 @@ class BlobManager(object):
         self._header_resize_in_progress = False
         self._header_resize_dragged = False
         self._last_header_resize_at = 0.0
+        self.AutoSwapEnabled = False
+        self.AutoSwapMultiplier = 1.0
+        self.AutoSwapCurrentSecond = None
+        self.AutoSwapNextSecond = None
+        self.AutoSwapNextDue = None
+        self.AutoSwapIntervalSeconds = None
+        self.AutoSwapScheduledAt = None
+        self.AutoSwapLastCountdownText = None
+        self.matching_first_blob = None
+        self.matching_second_blob = None
 
         # Table Header and Content.
         self.Rows = []
@@ -437,6 +447,26 @@ class BlobManager(object):
                 right_click_selects = True
         )
 
+        autoswap_controls = psg.Column(
+                [[
+                        psg.Text('Speed'),
+                        psg.Slider(
+                                range = (1, 10),
+                                default_value = 1,
+                                resolution = 1,
+                                orientation = 'h',
+                                size = (12, 12),
+                                key = '-AUTOSWAP-SPEED-',
+                                enable_events = True
+                        ),
+                        psg.Text('1x', key = '-AUTOSWAP-SPEEDTXT-', size = (3, 1)),
+                        psg.Text('Next swap: --:--:--', key = '-AUTOSWAP-COUNTDOWN-', size = (19, 1)),
+                        psg.Checkbox('Auto Swap', key = '-AUTOSWAP-ENABLE-', enable_events = True),
+                ]],
+                pad = (0, 0),
+                element_justification = 'right'
+        )
+
         layout = [
                 [psg.Text(f"{self.GetLocale('label_installed_blob1')} {self.GetLocale('label_installed_blob1_none')}", key = '-IFB-')],
                 [psg.Text(f"{self.GetLocale('label_installed_blob2')} {self.GetLocale('label_installed_blob2_none')}", key = '-ISB-')],
@@ -453,7 +483,19 @@ class BlobManager(object):
                 ],
 
                 [tbl1],
-                [psg.Text(f"{self.GetLocale('label_selected')} {self.GetLocale('label_selected_none')}", key = '-SELECTTEXT-', font = ('Verdana underline', 9), justification = 'center', enable_events = True)],
+                [
+                        psg.Text(
+                                f"{self.GetLocale('label_selected')} {self.GetLocale('label_selected_none')}",
+                                key = '-SELECTTEXT-',
+                                font = ('Verdana underline', 9),
+                                size = (1, 1),
+                                auto_size_text = False,
+                                justification = 'left',
+                                enable_events = True,
+                                expand_x = True
+                        ),
+                        autoswap_controls
+                ],
         ]
         if self.load_from_database:
             blob_base = "Database Blobs"
@@ -605,6 +647,7 @@ class BlobManager(object):
 
                     # Update -IFB- and -ISB- with the matched filenames
                     self.matching_first_blob = matching_first_blob
+                    self.matching_second_blob = matching_second_blob
                     if matching_first_blob:
                         self.window['-IFB-'].update(value = f"Installed FirstBlob: {matching_first_blob}")
                     else:
@@ -614,9 +657,12 @@ class BlobManager(object):
                         self.window['-ISB-'].update(value = f"Installed SecondBlob: {matching_second_blob}")
                     else:
                         self.window['-ISB-'].update(value = f"Installed SecondBlob: {self.GetLocale('label_installed_blob2_none')}")
+                        self.matching_second_blob = None
 
                 else:
                     # Handle case where either firstblob.bin or secondblob.bin is missing
+                    self.matching_first_blob = None
+                    self.matching_second_blob = None
                     self.window['-IFB-'].update(value = f"Installed FirstBlob: {self.GetLocale('label_installed_blob1_none')}")
                     self.window['-ISB-'].update(value = f"Installed SecondBlob: {self.GetLocale('label_installed_blob2_none')}")
 
@@ -645,13 +691,17 @@ class BlobManager(object):
 
                     # Update the -IFB- and -ISB- text elements in the window with the matched blob filenames
                     if matching_firstblob:
+                        self.matching_first_blob = matching_firstblob
                         self.window['-IFB-'].update(value = f"Installed FirstBlob: {matching_firstblob}")
                     else:
+                        self.matching_first_blob = None
                         self.window['-IFB-'].update(value = f"Installed FirstBlob: {self.GetLocale('label_installed_blob1_none')}")
 
                     if matching_secondblob:
+                        self.matching_second_blob = matching_secondblob
                         self.window['-ISB-'].update(value = f"Installed SecondBlob: {matching_secondblob}")
                     else:
+                        self.matching_second_blob = None
                         self.window['-ISB-'].update(value = f"Installed SecondBlob: {self.GetLocale('label_installed_blob2_none')}")
 
             except Exception as e:
@@ -763,9 +813,9 @@ class BlobManager(object):
             steamui_pkg_path = beta_pkg_path
         elif self._is_beta2_platform_blob(blob_filename):
             # For specific beta2 blobs, both checks are resolved strictly in packagedir/betav2.
-            # Steam uses steam_<version>.pkg and SteamUI uses PLATFORM_1.pkg.
+            # Steam uses steam_<version>.pkg and SteamUI uses PLATFORM_<steamui_version>.pkg.
             steam_pkg_path = f'{packages_dir}/betav2/steam_{steam_value}.pkg'
-            steamui_pkg_path = f'{packages_dir}/betav2/PLATFORM_1.pkg'
+            steamui_pkg_path = f'{packages_dir}/betav2/PLATFORM_{steamui_raw}.pkg'
         else:
             steam_pkg_path = f'{packages_dir}/steam_{steam_value}.pkg'
             steamui_pkg_path = f'{packages_dir}/steamui_{steamui_raw}.pkg'
@@ -854,6 +904,252 @@ class BlobManager(object):
             return self.FirstBlobDates[idx][1]
         self.LogExport(f"No firstblob <= secondblob timestamp for '{second_blob_name}'")
         return False
+
+    def _find_secondblob_timeline_index(self, second_blob_name):
+        if not second_blob_name:
+            return None
+        for idx, (_, name) in enumerate(self.SecondBlobDates):
+            if name == second_blob_name:
+                return idx
+
+        canonical_name = self._get_export_filename(second_blob_name)
+        for idx, (_, name) in enumerate(self.SecondBlobDates):
+            if self._get_export_filename(name) == canonical_name:
+                return idx
+        return None
+
+    def _find_row_index_by_second_blob(self, second_blob_name):
+        if not second_blob_name:
+            return None
+        for idx, row in enumerate(self.Rows):
+            if row[-1] == second_blob_name:
+                return idx
+
+        canonical_name = self._get_export_filename(second_blob_name)
+        for idx, row in enumerate(self.Rows):
+            if self._get_export_filename(row[-1]) == canonical_name:
+                return idx
+        return None
+
+    def _get_installed_second_blob(self):
+        if self.matching_second_blob:
+            return self.matching_second_blob
+        try:
+            installed_text = self.window['-ISB-'].get()
+        except Exception:
+            return None
+
+        prefix = self.GetLocale('label_installed_blob2')
+        if installed_text.startswith(prefix):
+            value = installed_text[len(prefix):].strip()
+        elif ':' in installed_text:
+            value = installed_text.split(':', 1)[1].strip()
+        else:
+            value = installed_text.strip()
+
+        if not value or value == self.GetLocale('label_installed_blob2_none'):
+            return None
+        return value
+
+    def _set_auto_swap_speed_text(self):
+        try:
+            speed = int(round(float(self.AutoSwapMultiplier)))
+        except Exception:
+            speed = 1
+        self.window['-AUTOSWAP-SPEEDTXT-'].update(value = f"{speed}x")
+
+    def _clip_text_to_pixels(self, widget, text, max_width_px):
+        if max_width_px <= 0:
+            return text
+
+        try:
+            font_ref = widget.cget('font')
+            font = tkfont.nametofont(font_ref)
+        except Exception:
+            try:
+                font = tkfont.Font(font = widget.cget('font'))
+            except Exception:
+                return text
+
+        if font.measure(text) <= max_width_px:
+            return text
+
+        ellipsis = '...'
+        ellipsis_px = font.measure(ellipsis)
+        if ellipsis_px >= max_width_px:
+            return ellipsis
+
+        target_px = max_width_px - ellipsis_px
+        low = 0
+        high = len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if font.measure(text[:mid]) <= target_px:
+                low = mid
+            else:
+                high = mid - 1
+
+        return f"{text[:low].rstrip()}{ellipsis}"
+
+    def UpdateSelectedTextElement(self):
+        if self.row is not None and 0 <= self.row < len(self.Rows):
+            full_text = f"{self.GetLocale('label_selected')} {self.Rows[self.row][-1]}"
+        else:
+            full_text = f"{self.GetLocale('label_selected')} {self.GetLocale('label_selected_none')}"
+
+        display_text = full_text
+        try:
+            self.window.TKroot.update_idletasks()
+            selected_widget = self.window['-SELECTTEXT-'].Widget
+            available_px = selected_widget.winfo_width() - 10
+            if available_px > 20:
+                display_text = self._clip_text_to_pixels(selected_widget, full_text, available_px)
+        except Exception:
+            pass
+
+        self.window['-SELECTTEXT-'].Update(value = display_text)
+
+    def _format_countdown(self, seconds_remaining):
+        total_seconds = max(0, int(seconds_remaining + 0.999))
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _update_auto_swap_countdown(self):
+        text = 'Next swap: --:--:--'
+        if self.AutoSwapEnabled and self.AutoSwapNextDue is not None and self.AutoSwapNextSecond is not None:
+            remaining = max(0.0, self.AutoSwapNextDue - monotonic())
+            text = f"Next swap: {self._format_countdown(remaining)}"
+
+        if text != self.AutoSwapLastCountdownText:
+            self.window['-AUTOSWAP-COUNTDOWN-'].update(value = text)
+            self.AutoSwapLastCountdownText = text
+
+    def _set_auto_swap_controls(self, enabled):
+        self.window['-AUTOSWAP-ENABLE-'].update(value = enabled)
+
+    def _stop_auto_swap(self, status_message = None, uncheck = True):
+        self.AutoSwapEnabled = False
+        self.AutoSwapCurrentSecond = None
+        self.AutoSwapNextSecond = None
+        self.AutoSwapNextDue = None
+        self.AutoSwapIntervalSeconds = None
+        self.AutoSwapScheduledAt = None
+        if uncheck:
+            self._set_auto_swap_controls(False)
+        self._update_auto_swap_countdown()
+        if status_message:
+            self.window['-STATEMSG-'].Update(value = status_message)
+
+    def _schedule_next_auto_swap(self, current_second_blob):
+        current_idx = self._find_secondblob_timeline_index(current_second_blob)
+        if current_idx is None:
+            self._stop_auto_swap('Auto Swap stopped: installed blob is not in the loaded list.')
+            return False
+
+        if current_idx + 1 >= len(self.SecondBlobDates):
+            self._stop_auto_swap('Auto Swap stopped: reached newest blob.')
+            return False
+
+        current_ts, current_name = self.SecondBlobDates[current_idx]
+        next_ts, next_name = self.SecondBlobDates[current_idx + 1]
+
+        delta_seconds = max(0.0, float(next_ts - current_ts))
+        speed = max(1.0, float(self.AutoSwapMultiplier))
+        real_seconds = delta_seconds / speed if delta_seconds > 0 else 0.0
+
+        # Avoid tight-looping when two blobs share an identical timestamp.
+        if real_seconds <= 0:
+            real_seconds = 0.1
+
+        self.AutoSwapCurrentSecond = current_name
+        self.AutoSwapNextSecond = next_name
+        self.AutoSwapIntervalSeconds = delta_seconds
+        self.AutoSwapScheduledAt = monotonic()
+        self.AutoSwapNextDue = self.AutoSwapScheduledAt + real_seconds
+        self._update_auto_swap_countdown()
+        return True
+
+    def StartAutoSwap(self, slider_multiplier = None):
+        if slider_multiplier is None:
+            try:
+                slider_multiplier = self.window['-AUTOSWAP-SPEED-'].get()
+            except Exception:
+                slider_multiplier = 1
+
+        self.UpdateAutoSwapMultiplier(slider_multiplier)
+
+        installed_second = self._get_installed_second_blob()
+        if not installed_second:
+            self._stop_auto_swap('Auto Swap needs an installed secondblob first.', uncheck = True)
+            return False
+
+        self.AutoSwapEnabled = True
+        self._set_auto_swap_speed_text()
+        if not self._schedule_next_auto_swap(installed_second):
+            return False
+
+        self.window['-STATEMSG-'].Update(value = f'Auto Swap enabled at {int(self.AutoSwapMultiplier)}x')
+        return True
+
+    def UpdateAutoSwapMultiplier(self, multiplier_value):
+        old_multiplier = self.AutoSwapMultiplier
+        try:
+            multiplier = float(multiplier_value)
+        except Exception:
+            multiplier = 1.0
+        self.AutoSwapMultiplier = min(10.0, max(1.0, multiplier))
+        self._set_auto_swap_speed_text()
+
+        if not self.AutoSwapEnabled or self.AutoSwapNextSecond is None:
+            return
+
+        now = monotonic()
+        old_speed = max(1.0, float(old_multiplier))
+        total_delta = max(0.0, float(self.AutoSwapIntervalSeconds or 0.0))
+
+        if self.AutoSwapScheduledAt is None:
+            elapsed_blob_time = 0.0
+        else:
+            elapsed_real = max(0.0, now - self.AutoSwapScheduledAt)
+            elapsed_blob_time = min(total_delta, elapsed_real * old_speed)
+
+        remaining_blob_time = max(0.0, total_delta - elapsed_blob_time)
+        remaining_real_time = remaining_blob_time / self.AutoSwapMultiplier if remaining_blob_time > 0 else 0.1
+        self.AutoSwapScheduledAt = now
+        self.AutoSwapNextDue = now + max(0.1, remaining_real_time)
+        self._update_auto_swap_countdown()
+
+    def ProcessAutoSwap(self):
+        if not self.AutoSwapEnabled:
+            return
+        if self.AutoSwapNextDue is None or self.AutoSwapNextSecond is None:
+            return
+        self._update_auto_swap_countdown()
+        if monotonic() < self.AutoSwapNextDue:
+            return
+
+        next_blob = self.AutoSwapNextSecond
+        row_idx = self._find_row_index_by_second_blob(next_blob)
+        if row_idx is None:
+            self._stop_auto_swap(f"Auto Swap stopped: couldn't find row for {next_blob}.")
+            return
+
+        try:
+            self.window['-LIST-'].update(select_rows = [row_idx])
+            self.row = row_idx
+            self.multiple_rows = [row_idx]
+            self.UpdateSelectedTextElement()
+            self.window['-SWAP-'].Update(disabled = True)
+            self.SwapBlobs()
+        except Exception as ex:
+            self._stop_auto_swap(f'Auto Swap failed: {ex}')
+            return
+
+        installed_after_swap = self.matching_second_blob or next_blob
+        self.AutoSwapCurrentSecond = installed_after_swap
+        self._schedule_next_auto_swap(installed_after_swap)
 
     def _build_first_blob_from_database(self, first_blob_name):
         try:
@@ -1213,6 +1509,7 @@ class BlobManager(object):
 
                 # Now, update the GUI to show the installed first and second blobs
                 self.matching_first_blob = copy.deepcopy(first_blob_filename)
+                self.matching_second_blob = copy.deepcopy(second_blob)
                 self.window['-IFB-'].update(value = f"Installed FirstBlob: {first_blob_filename}")  # Correctly display first blob
                 self.window['-ISB-'].update(value = f"Installed SecondBlob: {second_blob}")  # Correctly display second blob
                 self.LastSelectedFirstBlob = first_blob_filename
@@ -1307,6 +1604,7 @@ class BlobManager(object):
                 self.window['-IFB-'].update(value = f"{self.GetLocale('label_installed_blob1')} {FirstTarget}")
                 self.window['-ISB-'].update(value = f"{self.GetLocale('label_installed_blob2')} {SecondTarget}")
                 self.matching_first_blob = copy.deepcopy(FirstTarget)
+                self.matching_second_blob = copy.deepcopy(SecondTarget)
                 # Update the tracking attribute
                 self.last_message_row = self.row
 
@@ -1525,6 +1823,7 @@ class BlobManager(object):
 
 
 Manager = BlobManager()
+Manager._set_auto_swap_speed_text()
 
 
 # Date validation function (only accepts mm/dd/yyyy or yyyy)
@@ -1550,7 +1849,7 @@ def select_row(row_index):
     treeview = Manager.window['-LIST-'].Widget
     treeview_id = treeview.get_children()[row_index]
     treeview.see(treeview_id)
-    Manager.window['-SELECTTEXT-'].Update(value=f"{Manager.GetLocale('label_selected')} {Manager.Rows[Manager.row][-1]}")
+    Manager.UpdateSelectedTextElement()
     Manager.window['-SWAP-'].Update(disabled=False)
 
 
@@ -1874,7 +2173,7 @@ def open_settings_dialog():
 # Function to handle selection changes
 def update_selected_text():
     if Manager.row is not None and Manager.row >= 0:
-        Manager.window['-SELECTTEXT-'].Update(value=f"{Manager.GetLocale('label_selected')} {Manager.Rows[Manager.row][-1]}")
+        Manager.UpdateSelectedTextElement()
         Manager.window['-SWAP-'].Update(disabled=False)
         # Clear the message only if a different row is selected
         if Manager.last_message_row != Manager.row:
@@ -1888,6 +2187,10 @@ Manager.window.bind('<Down>', 'DOWN_KEY')
 # Event loop with adjusted event handling
 while True:
     event, values = Manager.window.read(Manager.WindowUpdateTime)
+    if event == psg.TIMEOUT_EVENT:
+        Manager.ProcessAutoSwap()
+        if Manager.row is not None and Manager.row >= 0:
+            Manager.UpdateSelectedTextElement()
 
     if event in (psg.WIN_CLOSED, 'Exit'):
         break
@@ -1895,6 +2198,13 @@ while True:
         open_search_dialog()
     elif event == '-SETTINGS-':
         open_settings_dialog()
+    elif event == '-AUTOSWAP-SPEED-':
+        Manager.UpdateAutoSwapMultiplier(values.get('-AUTOSWAP-SPEED-', 1))
+    elif event == '-AUTOSWAP-ENABLE-':
+        if values.get('-AUTOSWAP-ENABLE-', False):
+            Manager.StartAutoSwap(values.get('-AUTOSWAP-SPEED-', 1))
+        else:
+            Manager._stop_auto_swap('Auto Swap disabled.', uncheck = False)
     elif isinstance(event, tuple):
         if event[0] == '-LIST-' and '+CLICKED+' in event[1]:
             row, col = event[2]
@@ -1932,12 +2242,16 @@ while True:
     elif '-SWAP-' == event:
         Manager.window['-SWAP-'].Update(disabled=True)
         Manager.SwapBlobs()
+        if Manager.AutoSwapEnabled:
+            Manager._schedule_next_auto_swap(Manager.matching_second_blob)
         continue
     if '-LIST- Double' in event:
         if values['-LIST-']:
             Manager.Selected = values['-LIST-'][0]
             Manager.window['-SWAP-'].Update(disabled=True)
             Manager.SwapBlobs()
+            if Manager.AutoSwapEnabled:
+                Manager._schedule_next_auto_swap(Manager.matching_second_blob)
         continue
     elif '-SELECTTEXT- Double' in event:
         try:
