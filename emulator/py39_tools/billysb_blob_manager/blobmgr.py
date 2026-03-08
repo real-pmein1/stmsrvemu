@@ -1672,7 +1672,7 @@ class BlobManager(object):
                     comments, 
                     is_custom 
                 FROM 
-                    BetaContentDescriptionDB.filename
+                    BetaContentDescriptionDB.filenames
                 UNION
                 SELECT 
                     filename, 
@@ -1680,7 +1680,7 @@ class BlobManager(object):
                     comments, 
                     is_custom 
                 FROM 
-                    ContentDescriptionDB.filename;
+                    ContentDescriptionDB.filenames;
             """)
             filename_result = self.connection.execute(filename_query).fetchall()
 
