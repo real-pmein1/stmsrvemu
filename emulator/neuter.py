@@ -11,22 +11,37 @@ from tqdm import tqdm
 from datetime import datetime, date
 import glob
 
-import tkinter as tk
 from threading import Thread, Event
 import threading
 import sys
 import random
 
+# Check whether a GUI display is available for the neuter progress window.
+# If there's no X11/Wayland we will fall back to the console mode.
+_GUI_AVAILABLE = False
+try:
+    if sys.platform != 'win32':
+        # On Linux only attempt tkinter if a display server is reachable
+        if os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'):
+            import tkinter as tk
+            _GUI_AVAILABLE = True
+        else:
+            tk = None
+    else:
+        import tkinter as tk
+        _GUI_AVAILABLE = True
+except (ImportError, Exception):
+    tk = None
+
 # Cross-platform icon support
-if sys.platform != 'win32':
+_PIL_AVAILABLE = False
+if _GUI_AVAILABLE and sys.platform != 'win32':
     try:
         from PIL import Image
         import io
         _PIL_AVAILABLE = True
     except ImportError:
-        _PIL_AVAILABLE = False
-else:
-    _PIL_AVAILABLE = False
+        pass
 
 
 def set_window_icon(window, icon_path):
@@ -442,6 +457,29 @@ sentences = ["Every 60 seconds in Seattle, a minute passes", "Valve Time means, 
 
 # Neuter window code =================================
 
+# Helpers for headless mode
+class ConsoleProgressAdapter:
+    def update_progress(self, value):
+        pass  # Progress is shown via the label adapter
+
+class ConsoleLabelAdapter:
+    def config(self, text=""):
+        # Overwrite the current line with the latest status
+        print(f"\r{text}", end="", flush=True)
+
+
+def create_console_window(apps_to_neuter):
+    log.info("Running in headless mode")
+    task_count = len(apps_to_neuter)
+    for task_id in range(1, task_count + 1):
+        progress = ConsoleProgressAdapter()
+        label = ConsoleLabelAdapter()
+        download_app(progress, label, task_id, lambda: None, task_count, apps_to_neuter[task_id])
+        print()  # newline after each app's progress line
+        if halt_processing.is_set():
+            break
+
+
 def update_progress_bar(progress_canvas, progress_text, value, task_desc, n_iter, total, elapsed, remaining):
     progress_canvas.update_progress(value)
     progress_text.config(text=f"{task_desc}: {value}% | {n_iter}/{total} | {elapsed}<{remaining}")# | {rate}{unit}/s")
@@ -804,8 +842,9 @@ def download_app(progress_canvas, label, task_id, callback, max_tasks, app_data)
             ceg_filelist.append(file_path.name)
 
         #for dir_id in tqdm(manif.dir_entries, disable=False, unit=" files", desc=tqdm_desc, file=sys.stdout):
-        with open(os.devnull, 'w') as fnull:
-            with tqdm(manif.dir_entries, unit=" files", desc=tqdm_desc, file=fnull) as neuter_progress:
+        tqdm_file = sys.stdout if not _GUI_AVAILABLE else open(os.devnull, 'w')
+        try:
+            with tqdm(manif.dir_entries, unit=" files", desc=tqdm_desc, file=tqdm_file) as neuter_progress:
                 files_processed = 0
                 for dir_id in neuter_progress:
                     fileid = manif.dir_entries[dir_id].fileid
@@ -1050,10 +1089,13 @@ def download_app(progress_canvas, label, task_id, callback, max_tasks, app_data)
                     if halt_processing.is_set():
                         task_id = max_tasks
 
+        finally:
+            if tqdm_file is not sys.stdout:
+                tqdm_file.close()
         #log.info(f"Disconnecting client for app {appid}.")
         #with open("files/cache/" + str(appid) + ".txt", "r") as f:
         #    ids = f.read()
-        
+
         #id_list = list(ids.split(", "))
         #cleaned_id_list = [item for item in set(id_list) if item != '']
         #cleaned_id_list.sort()
@@ -1071,10 +1113,11 @@ def download_app(progress_canvas, label, task_id, callback, max_tasks, app_data)
             callback()
         else:
             stop_event.set()
-            def close_window():
-                window.quit()
-                window.destroy()
-            window.after(100, close_window)
+            if _GUI_AVAILABLE and window is not None:
+                def close_window():
+                    window.quit()
+                    window.destroy()
+                window.after(100, close_window)
 
 def neuter_steamworks_SDK(islan):
     """ Neuters the steamworks SDK, specifically only the content tool at the moment"""
@@ -1462,7 +1505,7 @@ def auto_neuter(param1, param2, param3):
                             #download_app(app_id, app_ver, b"Unknown app")
                             apps_to_neuter[neuter_id] = [app_id, app_ver, b"Unknown app", contentserver]
                             neuter_id += 1
-                    create_tkinter_window(apps_to_neuter)
+                    create_tkinter_window(apps_to_neuter) if _GUI_AVAILABLE else create_console_window(apps_to_neuter)
                     print(datetime.now())
                     sys.exit("Complete.")
 
@@ -1534,7 +1577,7 @@ def auto_neuter(param1, param2, param3):
                 neuter_id_sorted += 1
 
             if len(apps_to_neuter_sorted) > 0:
-                create_tkinter_window(apps_to_neuter_sorted)
+                create_tkinter_window(apps_to_neuter_sorted) if _GUI_AVAILABLE else create_console_window(apps_to_neuter_sorted)
             else:
                 log.debug("Nothing to do")
 
@@ -1637,7 +1680,7 @@ def neuter_single_storage(appid: int, version: int) -> bool:
 
     # Use the GUI to process (same as auto_neuter)
     try:
-        create_tkinter_window(apps_to_neuter)
+        create_tkinter_window(apps_to_neuter) if _GUI_AVAILABLE else create_console_window(apps_to_neuter)
         log.info(f"Single storage neuter completed for {appid}_{version}")
         return True
     except Exception as e:
