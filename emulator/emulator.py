@@ -160,6 +160,7 @@ if os.path.exists(override_path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     contentserver = module.contentserver
+elif os.path.exists("servers/contentserver2.py"):
     from servers.contentserver2 import contentserver
 else:
     from servers.contentserver import contentserver
