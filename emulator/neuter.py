@@ -33,7 +33,6 @@ try:
 except (ImportError, Exception):
     tk = None
 
-# Cross-platform icon support
 _PIL_AVAILABLE = False
 if _GUI_AVAILABLE and sys.platform != 'win32':
     try:
@@ -43,7 +42,7 @@ if _GUI_AVAILABLE and sys.platform != 'win32':
     except ImportError:
         pass
 
-
+# Cross-platform icon support
 def set_window_icon(window, icon_path):
     """Cross-platform window icon setter. Uses iconbitmap on Windows, iconphoto with PIL on Linux.
     On Linux, converts ICO to PNG in memory and uses tkinter's native PhotoImage to avoid
