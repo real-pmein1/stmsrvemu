@@ -1,0 +1,41 @@
+name: Build and Upload
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install libmariadb-dev
+  
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install Python dependencies
+        run: |
+          pip install -U pip
+          pip install -r emulator/requirements.txt
+          pip install PyInstaller
+
+      - name: Build
+        run: |
+          cd emulator
+          pyinstaller -F -i source-content.ico emulator.py \
+            --add-data="steam3/protobufs/:steam3/protobufs/" \
+            --add-data="files/icons/*.ico:files/icons/" \
+            --hidden-import tkinter \
+            --paths .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator
+          path: emulator/dist/emulator
