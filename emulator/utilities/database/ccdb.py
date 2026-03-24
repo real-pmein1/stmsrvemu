@@ -145,7 +145,7 @@ def neuter_ccdb(req_type='dict'):
         )
         blob_dict = construct_blob_from_ccdb(config["database_host"], config["database_port"], config["database_username"], config["database_password"], timestamp)
         blob = blobs.blob_serialize(blob_dict)
-        if timestamp >= "2013-02-14 11_23_50":
+        if timestamp >= "2013-01-23 23_10_34":
             if not os.path.isfile(os.path.join(config["web_root"], "client", "steam_client_lan32")) or not os.path.isfile(os.path.join(config["web_root"], "client", "steam_client_wan32")):
                 try:
                     steam3_client_neuter(config["database_host"], config["database_port"], config["database_username"], config["database_password"], timestamp)
