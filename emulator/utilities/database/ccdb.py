@@ -147,7 +147,10 @@ def neuter_ccdb(req_type='dict'):
         blob = blobs.blob_serialize(blob_dict)
         if timestamp >= "2013-02-14 11_23_50":
             if not os.path.isfile(os.path.join(config["web_root"], "client", "steam_client_lan32")) or not os.path.isfile(os.path.join(config["web_root"], "client", "steam_client_wan32")):
-                steam3_client_neuter(config["database_host"], config["database_port"], config["database_username"], config["database_password"], timestamp)
+                try:
+                    steam3_client_neuter(config["database_host"], config["database_port"], config["database_username"], config["database_password"], timestamp)
+                except:
+                    log.debug("No steam3 client found for this date") # don't really care if they don't have the steam3 client package
     except Exception as e:
         log.warn("Client configuration creation from ClientConfigurationDB failed")
         log.debug(f"DB error: {str(e)}")
