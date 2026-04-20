@@ -482,7 +482,7 @@ def replace_string(islan: bool) -> tuple:
         (b"207.173.176.132", b"888.888.888.890", b"CAS IP 3"),
         (b"207.173.176.131", b"888.888.888.891", b"CAS IP 4"),
         (b"207.173.176.216" + b'\x00' + b"207.173.179.87" + b'\x00\x00' + b"207.173.178.127" + b'\x00' + b"207.173.178.178",
-         conn_ip + b":" + dir_server_port + b'\x00' + conn_ip + b":" + dir_server_port + b'\x00' + conn_ip + b":" + dir_server_port, b"DNS extra directory servers"),
+         conn_ip + b'\x00' + conn_ip + b'\x00\x00' + conn_ip + b'\x00' + conn_ip, b"DNS extra directory servers"),
         (b"103.28.54.11::27017\x00103.28.54.10::27017\x00209.197.29.197:27017\x00\x00\x00\x00",
          conn_ip + b":" + cm_server_port + b"\x00" + conn_ip + b":" + cm_server_port + b"\x00" + conn_ip + b":" + cm_server_port + b"\x00\x00\x00\x00", b"Steam3 CM server list 1"),
         (b"209.197.29.196:27017\x00\x00\x00\x00",
