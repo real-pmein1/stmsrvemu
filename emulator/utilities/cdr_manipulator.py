@@ -22,7 +22,7 @@ import utilities.blobs
 from config import get_config as read_config
 from utilities import blobs, encryption
 from utilities.contentdescriptionrecord import ContentDescriptionRecord
-from utilities.time import steamtime_to_datetime
+from utilities.time import steamtime_to_datetime, steamtime_to_unixtime
 
 config = read_config()
 log = logging.getLogger('CDDB')
@@ -1013,20 +1013,25 @@ def neuter_unlock_times(execdict):
         for app in execdict["blob"][b'\x01\x00\x00\x00']:
             if b'\x0e\x00\x00\x00' in execdict["blob"][b'\x01\x00\x00\x00'][app]:
                 for info in execdict["blob"][b'\x01\x00\x00\x00'][app][b'\x0e\x00\x00\x00']:
-                    if info == 'PreloadCountdownTextTime':
-                        if b'days' in execdict["blob"][b'\x01\x00\x00\x00'][app][b'\x0e\x00\x00\x00'][info]:
-                            preload_count = int(execdict["blob"][b'\x01\x00\x00\x00'][app][b'\x0e\x00\x00\x00'][info].decode()[:-6])
-                    else:
-                        preload_count = 5
                     if info == 'PreloadUnlockTime':
                         unlock_time = execdict["blob"][b'\x01\x00\x00\x00'][app][b'\x0e\x00\x00\x00'][info].decode()[:-1]
+                        blob_date = datetime.fromtimestamp(int(steamtime_to_unixtime(execdict["blob"][b'\x03\x00\x00\x00'])))
                         if ":" in unlock_time:
-                            current_datetime = datetime.now()
-                            new_datetime = current_datetime + timedelta(days=preload_count)
+                            unlock_time_dt = datetime.strptime(unlock_time, "%Y:%m:%d:%H:%M")
+                            preload_count = (unlock_time_dt.date() - blob_date.date()).days
+                            new_datetime = datetime.now() + timedelta(days=preload_count)
                             new_datetime = new_datetime.strftime("%Y:%m:%d:%H:%M").replace(":0", ":")
+                            dt_array = new_datetime.split(":")
+                            dt_array2 = unlock_time.split(":")
+                            dt_array[3] = dt_array2[3]
+                            dt_array[4] = dt_array2[4]
+                            new_datetime = ":".join(dt_array)
                         else:
-                            current_datetime = int(datetime.now().timestamp())
-                            new_datetime = current_datetime + (((preload_count * 24) * 60) * 60)
+                            unlock_time_dt = datetime.fromtimestamp(int(unlock_time))
+                            preload_count = (unlock_time_dt.date() - blob_date.date()).days
+                            current_datetime = datetime.today()
+                            new_datetime = unlock_time_dt.replace(year=current_datetime.year, month=current_datetime.month, day=current_datetime.day) + timedelta(days=preload_count)
+                            new_datetime = int(new_datetime.timestamp())
                         execdict["blob"][b'\x01\x00\x00\x00'][app][b'\x0e\x00\x00\x00'][info] = str(new_datetime).encode() + b'\x00'
 
 
