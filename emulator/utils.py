@@ -960,6 +960,7 @@ def autoupdate():
                         cur = conn.cursor()
 
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ClientConfigurationDB.sql'")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'BetaContentDescriptionDB.sql'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ContentDescriptionDB.sql'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ProductInformationDB.sql'")
                         conn.close()
