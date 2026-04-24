@@ -794,7 +794,6 @@ class BlobManager(object):
                 'secondblob.bin.2003-01-13 23_03_03',
                 'secondblob.bin.2003-01-20 03_39_01',
                 'secondblob.bin.2003-06-10 05_01_47',
-                'secondblob.bin.2003-07-08 15_01_47',
         }
 
     def _resolve_package_paths(self, packages_dir, steam_version, steamui_version, blob_filename = None):
