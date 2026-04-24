@@ -959,9 +959,9 @@ def autoupdate():
                         # Get Cursor
                         cur = conn.cursor()
 
-                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ClientConfigurationDB'")
-                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ContentDescriptionDB'")
-                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ProductInformationDB'")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ClientConfigurationDB.sql'")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ContentDescriptionDB.sql'")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ProductInformationDB.sql'")
                         conn.close()
                     except mariadb.Error as e:
                         if not globalvars.mdb_ver == "0":
