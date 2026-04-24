@@ -963,6 +963,19 @@ def autoupdate():
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'BetaContentDescriptionDB.sql'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ContentDescriptionDB.sql'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ProductInformationDB.sql'")
+                        if os.path.isfile('files/sql/acheivement_master.sql') or os.path.isfile('files/sql/acheivements.sql'):
+                            try:
+                                os.remove('files/sql/acheivement_master.sql')
+                            except:
+                                pass
+                            try:
+                                os.remove('files/sql/acheivements.sql')
+                            except:
+                                pass
+                            cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivement_master.sql'")
+                            cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivements.sql'")
+                            cur.execute(f"DROP TABLE achievement_master")
+                            cur.execute(f"DROP TABLE achievement_percent")
                         conn.close()
                     except mariadb.Error as e:
                         if not globalvars.mdb_ver == "0":
