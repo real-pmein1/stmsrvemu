@@ -1,1 +1,2 @@
 pyperclip
+PyQt5~=5.15.11
