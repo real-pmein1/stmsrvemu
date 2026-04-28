@@ -6,27 +6,46 @@ from datetime import datetime
 import struct
 import zlib
 import traceback
-from tkinter import filedialog, font as tkfont
-import PySimpleGUI as psg
 import configparser
 from pathlib import Path
 from shutil import copystat
-from threading import Thread
 from time import sleep, monotonic
 from os import path, mkdir, utime, remove as osremove
 from json import dumps as jsondump
 from json import loads as jsonload
 from bisect import bisect_right
 
-from PySimpleGUI import WIN_CLOSED
 from pyperclip import copy as clipboardcopy
-from GenerateDB import FinalFileReaderv0, FinalFileReaderv1
 
-from blobreader import ReadBlob, ReadBytes
+from blobreader import ReadBlob
 
-import pymysql
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QFontMetrics
+from PyQt5.QtWidgets import (
+        QApplication,
+        QAbstractItemView,
+        QCheckBox,
+        QDialog,
+        QFileDialog,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QMenu,
+        QProgressBar,
+        QSlider,
+        QTableWidget,
+        QTableWidgetItem,
+        QTabWidget,
+        QVBoxLayout,
+        QWidget,
+)
+
+from sbgui import ImageCheckBox, ImageRadioButton, NineSliceButton, NineSliceLineEdit, SbMainQWindow, SbMessageBox, SteamSeparator
 
 
 # Ensure repository root (contains `utilities`, `config.py`, etc.) is importable.
@@ -119,27 +138,642 @@ def normalize_time_format(steam_time):
     return None  # No match or invalid time format
 
 
+class _SqlAlchemyCursorCompat:
+    def __init__(self, connection):
+        self.connection = connection
+        self._rows = []
+
+    def execute(self, query, params = None):
+        if params is None:
+            result = self.connection._connection.exec_driver_sql(query)
+        else:
+            result = self.connection._connection.exec_driver_sql(query, params)
+
+        if result.returns_rows:
+            self._rows = result.fetchall()
+        else:
+            self._rows = []
+            if self.connection.autocommit:
+                self.connection.commit()
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _SqlAlchemyConnectionCompat:
+    def __init__(self, engine):
+        self._engine = engine
+        self._connection = engine.connect()
+        self.autocommit = False
+
+    def cursor(self):
+        return _SqlAlchemyCursorCompat(self)
+
+    def commit(self):
+        self._connection.commit()
+
+    def close(self):
+        self._connection.close()
+
+    def ping(self):
+        self._connection.exec_driver_sql("SELECT 1")
+        return True
+
+
+class _SqlAlchemyMariaDBCompat:
+    Error = SQLAlchemyError
+
+    def __init__(self):
+        self._engines = {}
+
+    def connect(self, user, password, host, port, database = None, **kwargs):
+        connect_args = {}
+        if 'connect_timeout' in kwargs:
+            connect_args['connect_timeout'] = kwargs['connect_timeout']
+
+        key = (host, int(port), user, password, database, tuple(sorted(connect_args.items())))
+        engine = self._engines.get(key)
+        if engine is None:
+            url = URL.create(
+                    "mysql+pymysql",
+                    username = user,
+                    password = password,
+                    host = host,
+                    port = int(port),
+                    database = database
+            )
+            engine = create_engine(url, connect_args = connect_args)
+            self._engines[key] = engine
+        return _SqlAlchemyConnectionCompat(engine)
+
+
+_SQLALCHEMY_MARIADB_COMPAT = _SqlAlchemyMariaDBCompat()
+
+
+def _install_sqlalchemy_mariadb_adapter(*modules):
+    sys.modules['mariadb'] = _SQLALCHEMY_MARIADB_COMPAT
+    for module in modules:
+        if module is not None:
+            module.mariadb = _SQLALCHEMY_MARIADB_COMPAT
+
+
+APP = QApplication.instance() or QApplication(sys.argv)
+
+BTN_STYLE = """
+QPushButton {
+    font-family: Tahoma;
+    font-size: 9pt;
+    font-weight: bold;
+    color: white;
+    padding: 0px;
+    margin: 0px;
+}
+"""
+
+LABEL_STYLE = "font-family: Tahoma; font-size: 9pt; font-weight: bold; color: #d5dbcf;"
+TITLE_LABEL_STYLE = "font-family: Tahoma; font-size: 9pt; font-weight: bold; color: #c4b451;"
+STATUS_STYLE = "font-family: Tahoma; font-size: 9pt; font-weight: bold; color: #c4b451;"
+
+PROGRESS_STYLE = """
+QProgressBar {
+    border: 1px solid #444;
+    border-radius: 2px;
+    background-color: #2b2b2b;
+    text-align: center;
+}
+QProgressBar::chunk {
+    background-color: #c4b451;
+    width: 10px;
+    margin: 2 2px;
+}
+"""
+
+TABLE_STYLE = """
+QTableWidget {
+    background-color: #3e4637;
+    alternate-background-color: #484f49;
+    color: #ffffff;
+    gridline-color: #293021;
+    border: 1px solid #292e23;
+    font-family: Tahoma;
+    font-size: 8pt;
+    font-weight: bold;
+    selection-background-color: #958831;
+    selection-color: #ffffff;
+}
+QHeaderView::section {
+    background-color: #4c5844;
+    color: #ffffff;
+    border: 1px solid #292e23;
+    padding: 3px;
+    font-family: Tahoma;
+    font-size: 8pt;
+    font-weight: bold;
+}
+QTableWidget::item:selected {
+    background-color: #958831;
+    color: #ffffff;
+}
+QScrollBar:vertical { border: none; background: #464646; width: 24px; margin: 0px; }
+QScrollBar::handle:vertical { background: #686b64; min-height: 25px; border-radius: 3px; margin: 24px 4px; width: 16px; }
+QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical { background: #686b64; height: 16px; border-radius: 3px; width: 16px; margin: 4px; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+"""
+
+MENU_STYLE = """
+QMenu {
+    background-color: #4c5844;
+    color: #d5dbcf;
+    border: 1px solid #292e23;
+    padding: 3px;
+    font-family: Tahoma;
+    font-size: 9pt;
+    font-weight: bold;
+}
+QMenu::item {
+    padding: 5px 24px 5px 12px;
+    background-color: transparent;
+    color: #d5dbcf;
+}
+QMenu::item:selected {
+    background-color: #958831;
+    color: #ffffff;
+}
+QMenu::separator {
+    height: 1px;
+    background: #292e23;
+    margin: 4px 6px;
+}
+"""
+
+
+def pump_qt_events():
+    APP.processEvents()
+
+
+def show_error(message, title = "Error", parent = None):
+    SbMessageBox.critical(parent, title, str(message))
+
+
+def show_info(message, title = "Alert", parent = None):
+    SbMessageBox.info(parent, title, str(message))
+
+
+class _QtElement:
+    def __init__(self, widget):
+        self.Widget = widget
+        self.widget = widget
+
+    def update(self, value = None, disabled = None, select_rows = None, values = None, **kwargs):
+        if value is None and 'current_count' in kwargs:
+            value = kwargs['current_count']
+        if value is not None:
+            if isinstance(self.Widget, QCheckBox):
+                self.Widget.setChecked(bool(value))
+            elif isinstance(self.Widget, QProgressBar):
+                self.Widget.setValue(int(value))
+            elif hasattr(self.Widget, "setText"):
+                self.Widget.setText(str(value))
+            elif hasattr(self.Widget, "setValue"):
+                self.Widget.setValue(value)
+            elif hasattr(self.Widget, "setChecked"):
+                self.Widget.setChecked(bool(value))
+        if disabled is not None:
+            self.Widget.setEnabled(not disabled)
+        pump_qt_events()
+
+    def Update(self, **kwargs):
+        return self.update(**kwargs)
+
+    def get(self):
+        if hasattr(self.Widget, "text"):
+            return self.Widget.text()
+        if hasattr(self.Widget, "value"):
+            return self.Widget.value()
+        if hasattr(self.Widget, "isChecked"):
+            return self.Widget.isChecked()
+        return None
+
+    def set_focus(self):
+        self.Widget.setFocus()
+
+    def bind(self, *args, **kwargs):
+        return None
+
+
+class _QtTableElement(_QtElement):
+    def __init__(self, table, manager):
+        super().__init__(table)
+        self.manager = manager
+
+    def update(self, value = None, values = None, select_rows = None, **kwargs):
+        if values is not None:
+            self.manager.window.populate_table(values)
+        if select_rows is not None:
+            self.manager.window.select_rows(select_rows)
+        pump_qt_events()
+
+    def get(self):
+        return self.manager.window.selected_rows()
+
+    def expand(self, *args, **kwargs):
+        return None
+
+
+class LoadingWindow(SbMainQWindow):
+    def __init__(self):
+        super().__init__(500, 162, "Loading Blob Information")
+        self.set_resize_enabled(False)
+        self.setFixedSize(500, 162)
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 50, 40, 18)
+        layout.setSpacing(8)
+        layout.addStretch(1)
+        self.status = QLabel("Loading")
+        self.status.setAlignment(Qt.AlignCenter)
+        self.status.setStyleSheet(TITLE_LABEL_STYLE)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.setStyleSheet(PROGRESS_STYLE)
+        layout.addWidget(self.status)
+        layout.addWidget(self.progress)
+        layout.addStretch(1)
+        self.show()
+        pump_qt_events()
+
+    def __getitem__(self, key):
+        if key == '-STATUS-':
+            return _QtElement(self.status)
+        if key == '-PBAR-':
+            return _QtElement(self.progress)
+        raise KeyError(key)
+
+    def bring_to_front(self):
+        self.raise_()
+        self.activateWindow()
+        pump_qt_events()
+
+    def close(self):
+        super().close()
+        pump_qt_events()
+
+
+class DataSourceDialog(SbMainQWindow):
+    def __init__(self):
+        super().__init__(420, 190, "Choose Data Source")
+        self.set_resize_enabled(False)
+        self.choice = None
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 72, 40, 28)
+        layout.setSpacing(8)
+        label = QLabel("Would you like to read the blobs from the database or from files?")
+        label.setWordWrap(True)
+        label.setStyleSheet(LABEL_STYLE)
+        layout.addWidget(label)
+
+        self.files = ImageRadioButton("Files", size=22)
+        self.database = ImageRadioButton("Database", size=22)
+        self.database.setChecked(True)
+        layout.addWidget(self.files)
+        layout.addWidget(self.database)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        ok = NineSliceButton("OK")
+        cancel = NineSliceButton("Cancel")
+        for btn in (ok, cancel):
+            btn.setFixedSize(80, 24)
+            btn.setStyleSheet(BTN_STYLE)
+            buttons.addWidget(btn)
+        layout.addLayout(buttons)
+        ok.clicked.connect(self._ok)
+        cancel.clicked.connect(self.close)
+
+    def _ok(self):
+        self.choice = 'files' if self.files.isChecked() else 'database'
+        self.close()
+
+    def exec_choice(self):
+        self.show()
+        while self.isVisible():
+            pump_qt_events()
+            sleep(0.01)
+        return self.choice
+
+
+class BlobManagerWindow(SbMainQWindow):
+    def __init__(self, manager, title):
+        super().__init__(1157, 780, title)
+        self.manager = manager
+        self._queue = []
+        self._closed = False
+        self.elements = {}
+        self._build()
+        self.center_window()
+
+    def center_window(self):
+        screen = APP.primaryScreen()
+        if not screen:
+            return
+        geo = screen.availableGeometry()
+        self.move(geo.center().x() - self.width() // 2, geo.center().y() - self.height() // 2)
+
+    def _build(self):
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(40, 72, 40, 44)
+        root.setSpacing(7)
+
+        self.ifb = QLabel(f"{self.manager.GetLocale('label_installed_blob1')} {self.manager.GetLocale('label_installed_blob1_none')}")
+        self.isb = QLabel(f"{self.manager.GetLocale('label_installed_blob2')} {self.manager.GetLocale('label_installed_blob2_none')}")
+        for label in (self.ifb, self.isb):
+            label.setStyleSheet(LABEL_STYLE)
+            root.addWidget(label)
+        root.addWidget(SteamSeparator())
+
+        top = QHBoxLayout()
+        self.status = QLabel("")
+        self.status.setStyleSheet(STATUS_STYLE)
+        top.addStretch(1)
+        top.addWidget(self.status, 2)
+        top.addStretch(1)
+        self.search_input = NineSliceLineEdit()
+        self.search_input.setPlaceholderText("Filter blobs")
+        self.search_input.setFixedWidth(220)
+        self.search_input.setFixedHeight(24)
+        self.swap_btn = NineSliceButton(self.manager.GetLocale('label_swap'))
+        self.swap_btn.setEnabled(False)
+        search_shim = QWidget()
+        search_shim_layout = QVBoxLayout(search_shim)
+        search_shim_layout.setContentsMargins(0, 2, 0, 0)
+        search_shim_layout.setSpacing(0)
+        search_shim_layout.addWidget(self.search_input)
+        top.addWidget(search_shim)
+        for btn, width in ((self.swap_btn, 80),):
+            btn.setFixedSize(width, 24)
+            btn.setStyleSheet(BTN_STYLE)
+            top.addWidget(btn)
+        root.addLayout(top)
+
+        self.table = QTableWidget(0, len(self.manager.TopRow))
+        self.table.setHorizontalHeaderLabels(self.manager.TopRow)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet(TABLE_STYLE)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionsClickable(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        for idx, width in enumerate((70, 70, 95, 145, 430)):
+            self.table.setColumnWidth(idx, width)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        root.addWidget(self.table, 1)
+
+        bottom_widget = QWidget()
+        bottom_widget.setStyleSheet("background-color: #5c5a58;")
+        bottom = QHBoxLayout(bottom_widget)
+        bottom.setContentsMargins(0, 6, 0, 6)
+        self.selected_label = QLabel(f"{self.manager.GetLocale('label_selected')} {self.manager.GetLocale('label_selected_none')}")
+        self.selected_label.setStyleSheet("font-family: Tahoma; font-size: 9pt; font-weight: bold; color: #d5dbcf; text-decoration: underline;")
+        bottom.addWidget(self.selected_label, 1)
+
+        speed_label = QLabel("Speed")
+        speed_label.setStyleSheet(LABEL_STYLE)
+        bottom.addWidget(speed_label)
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(1, 10)
+        self.speed_slider.setValue(1)
+        self.speed_slider.setFixedWidth(120)
+        self.speed_slider.setStyleSheet("""
+        QSlider::groove:horizontal {
+            height: 4px;
+            background: #d5dbcf;
+        }
+        QSlider::sub-page:horizontal {
+            background: #c4b451;
+        }
+        QSlider::add-page:horizontal {
+            background: #d5dbcf;
+        }
+        QSlider::handle:horizontal {
+            background: #c4b451;
+            width: 10px;
+            margin: -5px 0;
+            border: 1px solid #8f8437;
+        }
+        QSlider::handle:horizontal:hover {
+            background: #d8cb65;
+        }
+        """)
+        bottom.addWidget(self.speed_slider)
+        self.speed_text = QLabel("1x")
+        self.speed_text.setStyleSheet(LABEL_STYLE)
+        self.speed_text.setFixedWidth(28)
+        bottom.addWidget(self.speed_text)
+        self.countdown = QLabel("Next swap: --:--:--")
+        self.countdown.setStyleSheet(LABEL_STYLE)
+        self.countdown.setFixedWidth(145)
+        bottom.addWidget(self.countdown)
+        self.autoswap = ImageCheckBox("Auto Swap")
+        bottom.addWidget(self.autoswap)
+        root.addWidget(bottom_widget)
+
+        self.elements = {
+                '-IFB-': _QtElement(self.ifb),
+                '-ISB-': _QtElement(self.isb),
+                '-STATEMSG-': _QtElement(self.status),
+                '-SEARCH-': _QtElement(self.search_input),
+                '-SWAP-': _QtElement(self.swap_btn),
+                '-LIST-': _QtTableElement(self.table, self.manager),
+                '-SELECTTEXT-': _QtElement(self.selected_label),
+                '-AUTOSWAP-SPEED-': _QtElement(self.speed_slider),
+                '-AUTOSWAP-SPEEDTXT-': _QtElement(self.speed_text),
+                '-AUTOSWAP-COUNTDOWN-': _QtElement(self.countdown),
+                '-AUTOSWAP-ENABLE-': _QtElement(self.autoswap),
+        }
+
+        self.swap_btn.clicked.connect(lambda: self.enqueue('-SWAP-'))
+        self.search_input.textChanged.connect(self.apply_filter)
+        self.search_input.returnPressed.connect(lambda: self.apply_filter(self.search_input.text()))
+        self.speed_slider.valueChanged.connect(lambda _: self.enqueue('-AUTOSWAP-SPEED-'))
+        self.autoswap.stateChanged.connect(lambda _: self.enqueue('-AUTOSWAP-ENABLE-'))
+        self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.cellDoubleClicked.connect(lambda *_: self.enqueue('-LIST- Double'))
+        self.table.horizontalHeader().sectionClicked.connect(lambda col: self.enqueue(('-LIST-', '+CLICKED+', (-1, col))))
+        self.table.customContextMenuRequested.connect(self._context_menu)
+        self.selected_label.mouseDoubleClickEvent = lambda event: self.enqueue('-SELECTTEXT- Double')
+        self.selected_label.mousePressEvent = lambda event: self.enqueue('-SELECTTEXT-')
+        self.filtered_indices = list(range(len(self.manager.Rows)))
+        self.populate_table(self.manager.Rows)
+
+    def __getitem__(self, key):
+        return self.elements[key]
+
+    def enqueue(self, event):
+        self._queue.append(event)
+
+    def read(self, timeout = None):
+        deadline = monotonic() + (float(timeout or 0) / 1000.0)
+        while True:
+            pump_qt_events()
+            if self._closed:
+                return 'Exit', self.values()
+            if self._queue:
+                return self._queue.pop(0), self.values()
+            if timeout is None:
+                sleep(0.01)
+                continue
+            if monotonic() >= deadline:
+                return '__TIMEOUT__', self.values()
+            sleep(0.005)
+
+    def values(self):
+        return {
+                '-LIST-': self.selected_rows(),
+                '-AUTOSWAP-SPEED-': self.speed_slider.value(),
+                '-AUTOSWAP-ENABLE-': self.autoswap.isChecked(),
+        }
+
+    def refresh(self):
+        pump_qt_events()
+
+    def bind(self, *args, **kwargs):
+        return None
+
+    def closeEvent(self, event):
+        self._closed = True
+        super().closeEvent(event)
+
+    def populate_table(self, rows):
+        if len(rows) == len(self.manager.Rows) and all(row is self.manager.Rows[idx] for idx, row in enumerate(rows)):
+            self.filtered_indices = list(range(len(rows)))
+        elif not hasattr(self, 'filtered_indices') or len(self.filtered_indices) != len(rows):
+            self.filtered_indices = list(range(len(rows)))
+        self.table.setRowCount(0)
+        for row_idx, row in enumerate(rows):
+            self.table.insertRow(row_idx)
+            source_idx = self.filtered_indices[row_idx] if row_idx < len(self.filtered_indices) else row_idx
+            for col_idx, value in enumerate(row[:len(self.manager.TopRow)]):
+                item = QTableWidgetItem(str(value))
+                item.setData(Qt.UserRole, source_idx)
+                self.table.setItem(row_idx, col_idx, item)
+        self.apply_missing_package_marks()
+
+    def apply_filter(self, text):
+        query = (text or "").strip().lower()
+        if not query:
+            self.filtered_indices = list(range(len(self.manager.Rows)))
+        else:
+            terms = [term for term in query.split() if term]
+            self.filtered_indices = []
+            for idx, row in enumerate(self.manager.Rows):
+                haystack = " ".join(str(value) for value in row).lower()
+                if all(term in haystack for term in terms):
+                    self.filtered_indices.append(idx)
+
+        rows = [self.manager.Rows[idx] for idx in self.filtered_indices]
+        self.populate_table(rows)
+
+    def apply_missing_package_marks(self):
+        if not hasattr(self.manager, 'emulator_config'):
+            return
+        packages_dir = self.manager.emulator_config.get('config', 'packagedir', fallback = "files/packages/")
+        packages_dir = packages_dir.split(';', 1)[0].strip()
+        if packages_dir.startswith(("'", '"')) and packages_dir.endswith(("'", '"')):
+            packages_dir = packages_dir[1:-1]
+
+        steam_pkgs = set()
+        steamui_pkgs = set()
+        red = QColor("#ff4040")
+        visible_rows = [self.manager.Rows[idx] for idx in getattr(self, 'filtered_indices', range(len(self.manager.Rows)))]
+        for row_idx, row in enumerate(visible_rows):
+            steam_pkg_path, steamui_pkg_path = self.manager._resolve_package_paths(packages_dir, row[1], row[2], row[-1] if len(row) > 5 else None)
+            missing = False
+            steam_key = steam_pkg_path.lower()
+            steamui_key = steamui_pkg_path.lower()
+            if steam_key not in steam_pkgs:
+                if not os.path.exists(steam_pkg_path):
+                    missing = True
+                else:
+                    steam_pkgs.add(steam_key)
+            if steamui_key not in steamui_pkgs:
+                if not os.path.exists(steamui_pkg_path):
+                    missing = True
+                else:
+                    steamui_pkgs.add(steamui_key)
+            if missing:
+                for col_idx in range(self.table.columnCount()):
+                    item = self.table.item(row_idx, col_idx)
+                    if item:
+                        item.setForeground(red)
+
+    def selected_rows(self):
+        selected = []
+        for idx in self.table.selectionModel().selectedRows():
+            item = self.table.item(idx.row(), 0)
+            if item is not None:
+                selected.append(item.data(Qt.UserRole))
+        return sorted(set(selected))
+
+    def select_rows(self, rows):
+        self.table.clearSelection()
+        visible = getattr(self, 'filtered_indices', list(range(len(self.manager.Rows))))
+        for source_row in rows:
+            if source_row in visible:
+                display_row = visible.index(source_row)
+                if 0 <= display_row < self.table.rowCount():
+                    self.table.selectRow(display_row)
+                    self.table.scrollToItem(self.table.item(display_row, 0), QAbstractItemView.PositionAtCenter)
+
+    def _selection_changed(self):
+        rows = self.selected_rows()
+        if rows:
+            self.manager.multiple_rows = rows
+            self.manager.row = rows[0]
+            self.enqueue(('-LIST-', '+CLICKED+', (rows[0], 0)))
+
+    def _context_menu(self, pos):
+        menu = QMenu(self)
+        menu.setStyleSheet(MENU_STYLE)
+        export_action = menu.addAction(self.manager.GetLocale('label_menu1_item3'))
+        action = menu.exec_(self.table.viewport().mapToGlobal(pos))
+        if action == export_action:
+            self.enqueue('Export Blob')
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_F and event.modifiers() & Qt.ControlModifier:
+            self.search_input.setFocus()
+            self.search_input.selectAll()
+            return
+        if event.key() == Qt.Key_Up:
+            self.enqueue('UP_KEY')
+            return
+        if event.key() == Qt.Key_Down:
+            self.enqueue('DOWN_KEY')
+            return
+        super().keyPressEvent(event)
+
+
 class BlobManager(object):
     window = None
 
     def __init__(self) -> None:
-        # Initialize GUI settings
         self.windowico = path.join(path.dirname(__file__), "icon.ico")
-        psg.LOOK_AND_FEEL_TABLE['SteamGreen.json'] = {
-                "BACKGROUND":    "#4c5844",
-                "TEXT":          "#ffffff",
-                "INPUT":         "#ffffff",
-                "TEXT_INPUT":    "#000000",
-                "SCROLL":        "#5a6a50",
-                "BUTTON":        ("#889180", "#4c5844"),
-                "PROGRESS":      ("#958831", "#3e4637"),
-                "BORDER":        1,
-                "SLIDER_DEPTH":  0,
-                "PROGRESS_DEPTH":0,
-                "COLOR_LIST":    ["#ff00fd", "#ff00fd", "#ff00fd", "#ff00fd"],
-                "DESCRIPTION":   ["Grey", "Green", "Vintage"],
-        }
-        psg.set_options(font = ('Verdana', 9), icon = self.windowico)
 
         self.FilesFolder = './files/'
         self.BlobsFolder = f'{self.FilesFolder}blobs/'
@@ -177,33 +811,12 @@ class BlobManager(object):
         self.Language = ""
         self.config = configparser.ConfigParser()
 
-        psg.theme('SteamGreen.json')
-
-        # Show initial dialog to choose between 'Files' and 'Database'
-        choice_layout = [
-                [psg.Text('Would you like to read the blobs from the database or from files?')],
-                [psg.Radio('Files', 'RADIO1', key = '-FILES-')],
-                [psg.Radio('Database', 'RADIO1', default = True, key = '-DATABASE-')],
-                [psg.Button('OK'), psg.Button('Cancel')]
-        ]
-        choice_window = psg.Window('Choose Data Source', choice_layout, finalize = True)
-        event, values = choice_window.read()
-        if event == 'Cancel' or event == psg.WIN_CLOSED:
-            choice_window.close()
+        choice = DataSourceDialog().exec_choice()
+        if choice is None:
             sys.exit(0)
-        elif event == 'OK':
-            if values['-FILES-']:
-                self.load_from_database = False
-            elif values['-DATABASE-']:
-                self.load_from_database = True
-        choice_window.close()
+        self.load_from_database = (choice == 'database')
 
-        loadinglayout = [
-                [psg.Push(), psg.Text("Loading", justification = 'center', key = '-STATUS-'), psg.Push()],
-                [psg.ProgressBar(100, orientation = 'h', expand_x = True, size = (20, 20), border_width = 1, key = '-PBAR-', relief = psg.RELIEF_SUNKEN, style = 'xpnative')]
-        ]
-
-        loader = psg.Window("Loading Blob Information", loadinglayout, size = (500, 100), finalize = True, disable_close = True)
+        loader = LoadingWindow()
 
         EnglishDefault = {
                 'label_swap':                'Swap',
@@ -284,13 +897,10 @@ class BlobManager(object):
                     except:
                         pass
             except Exception as ex:
-                psg.popup('Legacy configuration detected.\r\nPlease delete blobmanager.ini')
+                show_info('Legacy configuration detected.\r\nPlease delete blobmanager.ini')
         if self.config.getboolean('settings', 'DebugMode'):
-            # psg.show_debugger_window() # Comment me out!!
-            psg.Print('Re-routing the stdout', do_not_reroute_stdout = False)
+            print('DebugMode enabled.')
         loader['-PBAR-'].update(current_count = 10)
-        self.PackReader = None
-        self.VersionPak = 'Unknown'
         # Manually read the emulator.ini and remove comments starting with ';'
         with open('./emulator.ini', 'r') as f:
             lines = f.readlines()
@@ -306,7 +916,7 @@ class BlobManager(object):
         if self.load_from_database:
             # Read emulator.ini
             if not self.DoesFileExist('./emulator.ini'):
-                psg.PopupError(self.GetLocale('label_error_text1'), title = self.GetLocale('label_error_title'))
+                show_error(self.GetLocale('label_error_text1'), self.GetLocale('label_error_title'))
                 exit(2)
             else:
                 if 'config' in self.emulator_config:
@@ -316,7 +926,7 @@ class BlobManager(object):
                     self.database_username = db_config.get('database_username', 'stmserver')
                     self.database_password = db_config.get('database_password', 'stmserver')
                 else:
-                    psg.PopupError('Missing [config] section in emulator.ini', title = 'Error')
+                    show_error('Missing [config] section in emulator.ini', 'Error')
                     exit(2)
 
                 # Read steam_date and steam_time from emulator.ini
@@ -349,9 +959,9 @@ class BlobManager(object):
                         except ValueError as e:
                             # Debug: Show specific error message
                             print(f"Error while parsing datetime: {e}")
-                            psg.PopupError("Invalid date/time format in emulator.ini", title = "Error")
+                            show_error("Invalid date/time format in emulator.ini", "Error")
                     else:
-                        psg.PopupError("Unable to normalize date/time format in emulator.ini", title = "Error")
+                        show_error("Unable to normalize date/time format in emulator.ini", "Error")
 
         loader['-PBAR-'].update(current_count = 35)
 
@@ -389,20 +999,11 @@ class BlobManager(object):
             loader['-PBAR-'].update(current_count = 75)
         else:
             loader['-STATUS-'].update(value = 'Sorting blobs by date...')
-            self.BlobsFiles = None
-
-            # Handle packed vs loose
-            if self.PackReader is None:
-                try:
-                    self.BlobsFiles = sorted(Path('./files/blobs/').iterdir(), key = lambda x:x.name)
-                except:
-                    psg.PopupError('No files/blobs/ folder found. Cannot continue.')
-                    exit(2)
-            else:
-                print('Attempt to parse packed blob data..')
-                self.BlobsFiles = []
-                for item in self.PackReader.SecondData.keys():
-                    self.BlobsFiles.append(item)
+            try:
+                self.BlobsFiles = sorted(Path('./files/blobs/').iterdir(), key = lambda x:x.name)
+            except:
+                show_error('No files/blobs/ folder found. Cannot continue.')
+                exit(2)
             loader['-PBAR-'].update(current_count = 35)
 
             loader['-STATUS-'].update(value = 'Processing table data...')
@@ -412,208 +1013,27 @@ class BlobManager(object):
             loader['-STATUS-'].update(value = 'Parsing firstblob data...')
             self.FirstBlobThread()
             loader['-PBAR-'].update(current_count = 100)
-        # PySimpleGUI layout and table
-        tbl1 = None
-        layout = None
-
-        psg.theme("SteamGreen.json")
-
-        tbl1 = psg.Table(
-                values = self.Rows,
-                headings = self.TopRow,
-                auto_size_columns = False,
-                max_col_width = 15,
-                def_col_width = 3,
-                hide_vertical_scroll = False,
-                display_row_numbers = False,
-                background_color = '#3e4637',
-                justification = 'left',
-                key = '-LIST-',
-                selected_row_colors = ('#ffffff', '#958831'),
-                header_background_color = '#4c5844',
-                header_text_color = '#ffffff',
-                col_widths = [3, 6, 8, 14, 40],
-                enable_events = True,
-                expand_x = True,
-                expand_y = True,
-                enable_click_events = True,  # Enable click events for the table
-                right_click_menu = [
-                        self.GetLocale('label_menu1_item1'),
-                        [
-                                self.GetLocale('label_menu1_item3'),
-                                self.GetLocale('label_menu1_item4'),
-                        ]
-                ],
-                right_click_selects = True
-        )
-
-        autoswap_controls = psg.Column(
-                [[
-                        psg.Text('Speed'),
-                        psg.Slider(
-                                range = (1, 10),
-                                default_value = 1,
-                                resolution = 1,
-                                orientation = 'h',
-                                size = (12, 12),
-                                key = '-AUTOSWAP-SPEED-',
-                                enable_events = True
-                        ),
-                        psg.Text('1x', key = '-AUTOSWAP-SPEEDTXT-', size = (3, 1)),
-                        psg.Text('Next swap: --:--:--', key = '-AUTOSWAP-COUNTDOWN-', size = (19, 1)),
-                        psg.Checkbox('Auto Swap', key = '-AUTOSWAP-ENABLE-', enable_events = True),
-                ]],
-                pad = (0, 0),
-                element_justification = 'right'
-        )
-
-        layout = [
-                [psg.Text(f"{self.GetLocale('label_installed_blob1')} {self.GetLocale('label_installed_blob1_none')}", key = '-IFB-')],
-                [psg.Text(f"{self.GetLocale('label_installed_blob2')} {self.GetLocale('label_installed_blob2_none')}", key = '-ISB-')],
-                # [psg.Text()],
-                # [psg.Push(), psg.Input(key='-SEARCHIN-', background_color='#4c5844', text_color='#c4b550'), psg.Button("Search", key='-SEARCHBTN-'), psg.Button("Cancel"), psg.Push()],
-                [psg.HSep(color = '#4c5844')],
-                [
-                        psg.Push(),
-                        psg.Text("", key = '-STATEMSG-', text_color = '#c4b550'),
-                        psg.Push(),
-                        psg.Button('Search', key = '-SEARCH-', button_color = ('#c4b550', '#4c5844')),
-                        #psg.Button('Settings', key = '-SETTINGS-', button_color = ('#c4b550', '#4c5844')),  # Added Settings button
-                        psg.Button(self.GetLocale('label_swap'), key = '-SWAP-', disabled = True, button_color = ('#c4b550', '#4c5844')),
-                ],
-
-                [tbl1],
-                [
-                        psg.Text(
-                                f"{self.GetLocale('label_selected')} {self.GetLocale('label_selected_none')}",
-                                key = '-SELECTTEXT-',
-                                font = ('Verdana underline', 9),
-                                size = (1, 1),
-                                auto_size_text = False,
-                                justification = 'left',
-                                enable_events = True,
-                                expand_x = True
-                        ),
-                        autoswap_controls
-                ],
-        ]
         if self.load_from_database:
             blob_base = "Database Blobs"
         else:
             blob_base = "File Based Blobs"
 
-        self.window = psg.Window(
-                f"Billy {self.GetLocale('label_blobmgr')} - {self.GetLocale('label_version')} 1.14 --- {blob_base}",
-                layout,
-                size = (1000, 500),
-                finalize = True,
-                resizable = True,
-                return_keyboard_events = True
-        )
-        #self.window.hide()
-        self.window.TKroot.withdraw()
-        # Access the Treeview widget directly
-        treeview = self.window['-LIST-'].Widget  # Access the underlying Treeview widget
-
-        # Define styles for missing Steam and SteamUI cells
-        treeview.tag_configure('missing_steam', foreground = '#ff0000')
-        treeview.tag_configure('missing_steamui', foreground = '#ff0000')
-
-        packages_dir = self.emulator_config.get('config', 'packagedir', fallback = "files/packages/")
-        packages_dir = packages_dir.split(';', 1)[0].strip()  # Split at first semicolon and strip any outer spaces
-
-        # Remove quotes if they surround the directory path
-        if packages_dir.startswith(("'", '"')) and packages_dir.endswith(("'", '"')):
-            packages_dir = packages_dir[1:-1]
-
-        print(packages_dir)
-
-        pkgs_list = list(enumerate(treeview.get_children()))
-        total_count = len(pkgs_list)
-        next_progress_update = 5
         loader['-STATUS-'].update(value = 'Checking package files...')
         loader['-PBAR-'].update(current_count = 75)
         loader.bring_to_front()
-        steam_pkgs = set()
-        steamui_pkgs = set()
-
-        # Iterate over the existing Treeview items and apply tags based on criteria
-        for idx, item_id in pkgs_list: #enumerate(treeview.get_children()):
-            row = self.Rows[idx]
-            steam_version = row[1]
-            steamui_version = row[2]
-            blob_filename = row[-1] if len(row) > 5 else None
-            #print(steam_version, steamui_version)
-            steam_pkg_path, steamui_pkg_path = self._resolve_package_paths(packages_dir, steam_version, steamui_version, blob_filename)
-            steam_pkg_key = steam_pkg_path.lower()
-            steamui_pkg_key = steamui_pkg_path.lower()
-
-            # Determine tags based on file existence
-            tags = []
-            if steam_pkg_key not in steam_pkgs:
-                if not os.path.exists(steam_pkg_path):
-                    tags.append('missing_steam')
-                else:
-                    steam_pkgs.add(steam_pkg_key)
-            if steamui_pkg_key not in steamui_pkgs:
-                if not os.path.exists(steamui_pkg_path):
-                    tags.append('missing_steamui')
-                else:
-                    steamui_pkgs.add(steamui_pkg_key)
-
-            if tags:
-                treeview.item(item_id, tags = tags)
-
-            # Throttle loader updates to every 5% completion for startup responsiveness.
-            if total_count > 0:
-                phase_percent = int(((idx + 1) * 100) / total_count)
-                if phase_percent >= next_progress_update or phase_percent == 100:
-                    overall_percent = 75 + int((phase_percent * 25) / 100)
-                    loader['-STATUS-'].update(value = f'Checking package files... {phase_percent}%')
-                    loader['-PBAR-'].update(current_count = overall_percent)
-                    next_progress_update = ((phase_percent // 5) + 1) * 5
-
+        self.window = BlobManagerWindow(
+                self,
+                f"Billy {self.GetLocale('label_blobmgr')} - {self.GetLocale('label_version')} 1.14 --- {blob_base}"
+        )
+        loader['-STATUS-'].update(value = 'Checking package files... 100%')
         loader['-PBAR-'].update(current_count = 100)
         loader.close()
-
-        self.window.TKroot.deiconify()
-        # Refresh the window to apply the changes
+        self.window.show()
         self.window.refresh()
-        self.window.bind('<Control-f>', 'CTRL+F')
-
-        # Dirty hack for steam green theme.
-        self.set_heading_color(self.window['-LIST-'].widget.configure("style")[-1], '#4c5844', '#4c5844', '#4c5844')
-
-        self.window['-LIST-'].bind("<Double-Button-1>", " Double")
-        self.window['-SELECTTEXT-'].bind("<Double-Button-1>", " Double")
-        treeview.bind('<ButtonPress-1>', self._on_treeview_button_press, add = '+')
-        treeview.bind('<B1-Motion>', self._on_treeview_drag, add = '+')
-        treeview.bind('<ButtonRelease-1>', self._on_treeview_button_release, add = '+')
-        thread = Thread(target = self.WindowRefresher)
-        thread.daemon = True
-        thread.start()
-        # Refresh window even when main thread is blocked.
-        # Apply fixed startup column widths (non-dynamic) to match legacy layout.
-        char_width = psg.Text.char_width_in_pixels(('Verdana', 9))  # Get character width in pixel
-        table = self.window['-LIST-']
-        table_widget = table.Widget
-        table.expand(expand_x = True, expand_y = True)  # Expand table in both directions of 'x' and 'y'
-        fixed_char_widths = [3, 6, 8, 14, 40]
-        table_widget.pack_forget()
-        for idx, cid in enumerate(self.TopRow):
-            if idx >= len(fixed_char_widths):
-                break
-            min_chars = max(fixed_char_widths[idx], len(str(cid)) + 1)
-            width_px = round(min_chars * char_width)
-            is_description = (idx == len(self.TopRow) - 1)
-            table_widget.column(cid, width = width_px, minwidth = width_px, stretch = is_description)
-        table_widget.pack(side = 'left', fill = 'both', expand = True)
 
         self.LastSelected = None
         self.LastSelectedFirstBlob = None
 
-        if self.PackReader is not None:
-            self.window['-STATEMSG-'].Update(value = f'{self.GetLocale("label_use_preprocessed")} ({self.VersionPak})')
         self.sort_state = {header:False for header in self.TopRow}  # Initialize sort state for each column
 
         self.last_message_row = None  # Initialize the tracking attribute
@@ -736,20 +1156,7 @@ class BlobManager(object):
         return (monotonic() - self._last_header_resize_at) < 0.35
 
     def set_heading_color(self, element, pressed_color, highlight_color, disabled_color):
-        print('Hacking table colours.')
-        psg.ttk.Style().map(
-                element + ".Heading",
-                background = [
-                        ('pressed', '!focus', pressed_color),
-                        ('active', highlight_color),
-                        ('disabled', disabled_color),
-                ],
-                foreground = [
-                        ('pressed', '!focus', '#ffffff'),  # Set font color to white (or any visible color)
-                        ('active', '#ffffff'),  # Set font color during hover to white
-                        ('disabled', '#ffffff'),  # Set font color for disabled state
-                ]
-        )
+        return None
 
     def DoesFileExist(self, file):
         try:
@@ -964,19 +1371,15 @@ class BlobManager(object):
             return text
 
         try:
-            font_ref = widget.cget('font')
-            font = tkfont.nametofont(font_ref)
+            metrics = QFontMetrics(widget.font())
         except Exception:
-            try:
-                font = tkfont.Font(font = widget.cget('font'))
-            except Exception:
-                return text
+            return text
 
-        if font.measure(text) <= max_width_px:
+        if metrics.horizontalAdvance(text) <= max_width_px:
             return text
 
         ellipsis = '...'
-        ellipsis_px = font.measure(ellipsis)
+        ellipsis_px = metrics.horizontalAdvance(ellipsis)
         if ellipsis_px >= max_width_px:
             return ellipsis
 
@@ -985,7 +1388,7 @@ class BlobManager(object):
         high = len(text)
         while low < high:
             mid = (low + high + 1) // 2
-            if font.measure(text[:mid]) <= target_px:
+            if metrics.horizontalAdvance(text[:mid]) <= target_px:
                 low = mid
             else:
                 high = mid - 1
@@ -1000,9 +1403,8 @@ class BlobManager(object):
 
         display_text = full_text
         try:
-            self.window.TKroot.update_idletasks()
             selected_widget = self.window['-SELECTTEXT-'].Widget
-            available_px = selected_widget.winfo_width() - 10
+            available_px = selected_widget.width() - 10
             if available_px > 20:
                 display_text = self._clip_text_to_pixels(selected_widget, full_text, available_px)
         except Exception:
@@ -1154,15 +1556,17 @@ class BlobManager(object):
 
     def _build_first_blob_from_database(self, first_blob_name):
         try:
-            from utilities.database.ccdb import construct_blob_from_ccdb
+            _install_sqlalchemy_mariadb_adapter()
+            from utilities.database import ccdb
             from utilities import blobs as util_blobs
+            _install_sqlalchemy_mariadb_adapter(ccdb)
         except Exception as ex:
             self.LogExportException("Import error while loading firstblob DB builders", ex)
-            raise RuntimeError("Unable to load DB firstblob builder modules. Check dependencies (mariadb).") from ex
+            raise RuntimeError("Unable to load DB firstblob builder modules. Check SQLAlchemy/PyMySQL dependencies.") from ex
 
         first_token = self._extract_datetime_token(first_blob_name, 'firstblob.bin.')
         self.LogExport(f"Building firstblob from DB using timestamp '{first_token}'")
-        blob_dict = construct_blob_from_ccdb(
+        blob_dict = ccdb.construct_blob_from_ccdb(
                 self.database_host,
                 self.database_port,
                 self.database_username,
@@ -1177,11 +1581,13 @@ class BlobManager(object):
 
     def _build_second_blob_from_database(self, second_blob_name):
         try:
+            _install_sqlalchemy_mariadb_adapter()
             from utilities import cdr_manipulator
             from utilities import blobs as util_blobs
+            _install_sqlalchemy_mariadb_adapter(cdr_manipulator)
         except Exception as ex:
             self.LogExportException("Import error while loading secondblob DB builders", ex)
-            raise RuntimeError("Unable to load DB secondblob builder modules. Check dependencies (mariadb).") from ex
+            raise RuntimeError("Unable to load DB secondblob builder modules. Check SQLAlchemy/PyMySQL dependencies.") from ex
 
         second_token = self._extract_datetime_token(second_blob_name, 'secondblob.bin.')
         cddb = "BetaContentDescriptionDB" if second_token < "2003-09-09 18_50_46" else "ContentDescriptionDB"
@@ -1251,12 +1657,6 @@ class BlobManager(object):
             self._write_export_pair(export_path, first_blob_name, second_blob_name, first_data, second_data, first_ts, second_ts)
             return first_blob_name
 
-        if self.PackReader is not None:
-            first_data = self.PackReader.ReadFirst(first_blob_name)
-            second_data = self.PackReader.ReadSecond(second_blob_name)
-            self._write_export_pair(export_path, first_blob_name, second_blob_name, first_data, second_data, first_ts, second_ts)
-            return first_blob_name
-
         first_source = Path(f'{self.BlobsFolder}{first_blob_name}')
         second_source = Path(f'{self.BlobsFolder}{second_blob_name}')
         self.LogExport(f"Reading file blobs from '{first_source}' and '{second_source}'")
@@ -1279,109 +1679,62 @@ class BlobManager(object):
     def PopulateRows(self):
         CurrentYear = None  # On slow drives we should start from a offset year.
         for item in self.BlobsFiles:
-            filename = None
-            temp = None
-            # Handle packed vs loose blobs
-            if self.PackReader is None:
-                if not item.is_file():
-                    continue
-                filename = item.name
-                if filename.startswith("secondblob.bin"):
+            if not item.is_file():
+                continue
+            filename = item.name
+            if filename.startswith("secondblob.bin"):
                     # Extract datetime from filename
                     # Expected format: "secondblob.bin.YYYY-MM-DD HH_MM_SS - description"
-                    try:
-                        # Remove 'secondblob.bin.' prefix
-                        name_part = filename[len("secondblob.bin."):]
-                        # Split by ' - ' to separate datetime and description
-                        parts = name_part.split(' - ', 1)
-                        date_str = parts[0]
-                        # Parse datetime from filename
-                        date_obj = datetime.strptime(date_str, '%Y-%m-%d %H_%M_%S')
-                        # Format the date and time separately
-                        date_part = date_obj.strftime('%Y/%m/%d')
-                        time_part = date_obj.strftime('%H:%M:%S')
+                try:
+                    # Remove 'secondblob.bin.' prefix
+                    name_part = filename[len("secondblob.bin."):]
+                    # Split by ' - ' to separate datetime and description
+                    parts = name_part.split(' - ', 1)
+                    date_str = parts[0]
+                    # Parse datetime from filename
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d %H_%M_%S')
+                    # Format the date and time separately
+                    date_part = date_obj.strftime('%Y/%m/%d')
+                    time_part = date_obj.strftime('%H:%M:%S')
 
-                        # Combine with a larger space between date and time
-                        date_display = f"{date_part}   {time_part}"  #
-                        description = parts[1] if len(parts) > 1 else ""
-                        # Check if custom
-                        is_custom = '(C)' in filename
-                        new_row = [
-                                self.GetLocale('label_yes') if is_custom else self.GetLocale('label_no'),
-                                '',  # Placeholder for Steam version
-                                '',  # Placeholder for SteamUI version
-                                date_display,
-                                description,
-                                filename
-                        ]
-                        self.SecondBlobs.append(filename)
-                        self.SecondBlobDates.append((date_obj.timestamp(), filename))
-                        self.Rows.append(new_row)
-                    except Exception as e:
-                        print(f"Error parsing secondblob filename '{filename}': {e}")
-                        continue
-                elif filename.startswith("firstblob.bin"):
-                    # Handle firstblob
-                    try:
-                        # Remove 'firstblob.bin.' prefix
-                        name_part = filename[len("firstblob.bin."):]
-                        # Remove ' (C)' suffix if present
-                        if ' (' in name_part:
-                            name_part = name_part.split(' (')[0]
-                        # Parse datetime from filename
-                        date_obj = datetime.strptime(name_part, '%Y-%m-%d %H_%M_%S')
-                        self.FirstBlobs.append(filename)
-                        self.FirstBlobDates.append((date_obj.timestamp(), filename))
-                        # Update landmarks based on year
-                        if CurrentYear != date_obj.year:
-                            self.LandMarks[date_obj.year] = filename
-                            CurrentYear = date_obj.year
-                    except Exception as e:
-                        print(f"Error parsing firstblob filename '{filename}': {e}")
-                        continue
-            else:
-                # Handle packed blobs (Assuming similar parsing logic)
-                filename = item
-                if filename.startswith('firstblob.bin'):
-                    try:
-                        date_obj = datetime.fromtimestamp(self.PackReader.FirstData[filename]['date'])
-                        self.FirstBlobs.append(filename)
-                        self.FirstBlobDates.append((date_obj.timestamp(), filename))
-                        # Update landmarks based on year
-                        if CurrentYear != date_obj.year:
-                            self.LandMarks[date_obj.year] = filename
-                            CurrentYear = date_obj.year
-                    except Exception as e:
-                        print(f"Error parsing packed firstblob '{filename}': {e}")
-                        continue
-                elif filename.startswith('secondblob.bin'):
-                    try:
-                        # Remove 'secondblob.bin.' prefix
-                        name_part = filename[len("secondblob.bin."):]
-                        # Split by ' - ' to separate datetime and description
-                        parts = name_part.split(' - ', 1)
-                        date_str = parts[0]
-                        # Parse datetime from filename
-                        date_obj = datetime.strptime(date_str, '%Y-%m-%d %H_%M_%S')
-                        date_display = date_obj.strftime('%Y/%m/%d %H:%M:%S')
-
-                        description = parts[1] if len(parts) > 1 else ""
-                        # Check if custom
-                        is_custom = '(C)' in filename
-                        new_row = [
-                                self.GetLocale('label_yes') if is_custom else self.GetLocale('label_no'),
-                                '',  # Placeholder for Steam version
-                                '',  # Placeholder for SteamUI version
-                                date_display,
-                                description,
-                                filename
-                        ]
-                        self.SecondBlobs.append(filename)
-                        self.SecondBlobDates.append((date_obj.timestamp(), filename))
-                        self.Rows.append(new_row)
-                    except Exception as e:
-                        print(f"Error parsing packed secondblob filename '{filename}': {e}")
-                        continue
+                    # Combine with a larger space between date and time
+                    date_display = f"{date_part}   {time_part}"  #
+                    description = parts[1] if len(parts) > 1 else ""
+                    # Check if custom
+                    is_custom = '(C)' in filename
+                    new_row = [
+                            self.GetLocale('label_yes') if is_custom else self.GetLocale('label_no'),
+                            '',  # Placeholder for Steam version
+                            '',  # Placeholder for SteamUI version
+                            date_display,
+                            description,
+                            filename
+                    ]
+                    self.SecondBlobs.append(filename)
+                    self.SecondBlobDates.append((date_obj.timestamp(), filename))
+                    self.Rows.append(new_row)
+                except Exception as e:
+                    print(f"Error parsing secondblob filename '{filename}': {e}")
+                    continue
+            elif filename.startswith("firstblob.bin"):
+                # Handle firstblob
+                try:
+                    # Remove 'firstblob.bin.' prefix
+                    name_part = filename[len("firstblob.bin."):]
+                    # Remove ' (C)' suffix if present
+                    if ' (' in name_part:
+                        name_part = name_part.split(' (')[0]
+                    # Parse datetime from filename
+                    date_obj = datetime.strptime(name_part, '%Y-%m-%d %H_%M_%S')
+                    self.FirstBlobs.append(filename)
+                    self.FirstBlobDates.append((date_obj.timestamp(), filename))
+                    # Update landmarks based on year
+                    if CurrentYear != date_obj.year:
+                        self.LandMarks[date_obj.year] = filename
+                        CurrentYear = date_obj.year
+                except Exception as e:
+                    print(f"Error parsing firstblob filename '{filename}': {e}")
+                    continue
 
         # After populating, sort the lists
         self.FirstBlobDates.sort()
@@ -1422,15 +1775,7 @@ class BlobManager(object):
             # Read first blob
             if FirstTarget is not None:
                 try:
-                    if self.PackReader is None:
-                        Info = ReadBlob(f'{self.BlobsFolder}{FirstTarget}')
-                    elif isinstance(self.PackReader, FinalFileReaderv0):
-                        Data = self.PackReader.ReadFirst(FirstTarget)
-                        Info = ReadBytes(Data)
-                    elif isinstance(self.PackReader, FinalFileReaderv1):
-                        Info = [self.PackReader.FirstData[FirstTarget]['Steam_Version'], self.PackReader.FirstData[FirstTarget]['SteamUI_Version']]
-                    else:
-                        Info = None
+                    Info = ReadBlob(f'{self.BlobsFolder}{FirstTarget}')
                 except Exception as e:
                     print(f"Error reading firstblob '{FirstTarget}': {e}")
                     Info = None
@@ -1551,45 +1896,24 @@ class BlobManager(object):
                 return
 
             try:
-                if self.PackReader is None:
-                    File1 = open(f'{self.BlobsFolder}{SecondTarget}', 'rb')
-                    File2 = open(f'{self.BlobsFolder}{FirstTarget}', 'rb')
+                File1 = open(f'{self.BlobsFolder}{SecondTarget}', 'rb')
+                File2 = open(f'{self.BlobsFolder}{FirstTarget}', 'rb')
 
-                    with open(f'{self.FilesFolder}secondblob.bin', 'wb') as f:
-                        f.write(File1.read())
-                        f.flush()
-                        File1.close()
+                with open(f'{self.FilesFolder}secondblob.bin', 'wb') as f:
+                    f.write(File1.read())
+                    f.flush()
+                    File1.close()
 
-                    with open(f'{self.FilesFolder}firstblob.bin', 'wb') as f:
-                        f.write(File2.read())
-                        f.flush()
-                        File2.close()
+                with open(f'{self.FilesFolder}firstblob.bin', 'wb') as f:
+                    f.write(File2.read())
+                    f.flush()
+                    File2.close()
 
-                    try:
-                        copystat(f'{self.BlobsFolder}{SecondTarget}', f'{self.FilesFolder}secondblob.bin')
-                        copystat(f'{self.BlobsFolder}{FirstTarget}', f'{self.FilesFolder}firstblob.bin')
-                    except:
-                        psg.popup(self.GetLocale('label_error_text2'))
-                else:
-                    FirstData = self.PackReader.ReadFirst(FirstTarget)
-                    SecondData = self.PackReader.ReadSecond(SecondTarget)
-
-                    with open(f'{self.FilesFolder}secondblob.bin', 'wb') as f:
-                        f.write(SecondData)
-                        f.flush()
-                        f.close()
-                    with open(f'{self.FilesFolder}firstblob.bin', 'wb') as f:
-                        f.write(FirstData)
-                        f.flush()
-                        f.close()
-
-                    try:
-                        utime(f'{self.FilesFolder}secondblob.bin', (SecondBlobDate, SecondBlobDate))
-                        # Assuming you have the date for firstblob as well
-                        FirstBlobDate = self.FirstBlobDates[idx][0]
-                        utime(f'{self.FilesFolder}firstblob.bin', (FirstBlobDate, FirstBlobDate))
-                    except:
-                        psg.popup(self.GetLocale('label_error_text2'))
+                try:
+                    copystat(f'{self.BlobsFolder}{SecondTarget}', f'{self.FilesFolder}secondblob.bin')
+                    copystat(f'{self.BlobsFolder}{FirstTarget}', f'{self.FilesFolder}firstblob.bin')
+                except:
+                    show_info(self.GetLocale('label_error_text2'))
             except Exception as ex:
                 self.window['-STATEMSG-'].Update(value = f"{self.GetLocale('label_swap_error3')}\r\n{ex}")
             else:
@@ -1610,12 +1934,18 @@ class BlobManager(object):
                 self.last_message_row = self.row
 
     def ConnectToDatabase(self):
-        db_url = f"mysql+pymysql://{self.database_username}:{self.database_password}@{self.database_host}:{self.database_port}/"
         try:
+            db_url = URL.create(
+                    "mysql+pymysql",
+                    username = self.database_username,
+                    password = self.database_password,
+                    host = self.database_host,
+                    port = self.database_port
+            )
             self.engine = create_engine(db_url)
             self.connection = self.engine.connect()
         except Exception as e:
-            psg.popup(f"Failed to connect to database: {e}")
+            show_error(f"Failed to connect to database: {e}")
             sys.exit(1)
 
     def PopulateRowsFromDatabase(self):
@@ -1658,7 +1988,7 @@ class BlobManager(object):
                         print(f"Skipping invalid filename format: {filename}")
                         continue
         except Exception as e:
-            psg.PopupError(f"Failed to query configurations table: {e}")
+            show_error(f"Failed to query configurations table: {e}")
             exit(1)
         # Sort and initialize timestamps for blobs
         self.FirstBlobDates.sort()
@@ -1745,7 +2075,7 @@ class BlobManager(object):
                     self.Rows.append(new_row)
                     self.SecondBlobs.append(filename)  # Add this line to keep track of secondblob filenames
         except Exception as e:
-            psg.PopupError(f"Failed to query filename table: {e}")
+            show_error(f"Failed to query filename table: {e}")
             exit(1)
         # After populating the table rows, find matching first and second blob based on steam_date and steam_time
         # Update the text at the top of the window after finding matching blobs
@@ -1830,7 +2160,7 @@ Manager._set_auto_swap_speed_text()
 # Date validation function (only accepts mm/dd/yyyy or yyyy)
 def validate_date(date_str):
     # Match mm/dd/yyyy or yyyy
-    date_pattern = r"^\d{4}/\d{2}/\d{2}$"
+    date_pattern = r"^(\d{4}/\d{2}/\d{2}|\d{4})$"
     if re.match(date_pattern, date_str):
         try:
             # If it's just a year, it's valid
@@ -1847,9 +2177,6 @@ def select_row(row_index):
     # Highlight the row in the table
     Manager.window['-LIST-'].update(select_rows=[row_index])
     Manager.row = row_index
-    treeview = Manager.window['-LIST-'].Widget
-    treeview_id = treeview.get_children()[row_index]
-    treeview.see(treeview_id)
     Manager.UpdateSelectedTextElement()
     Manager.window['-SWAP-'].Update(disabled=False)
 
@@ -1877,7 +2204,7 @@ def search_date_func(search_date_str, start_index):
             continue  # Skip rows with invalid or incorrectly formatted dates
 
         # If searching by year
-        if len(search_date_str) == 4 and search_year == table_date[6:10]:  # Compare year
+        if len(search_date_str) == 4 and search_year == table_date[0:4]:  # Compare year
             select_row(i)
             return True
 
@@ -1917,257 +2244,93 @@ def search_description(search_phrase, start_index):
 
 
 def custom_popup(message):
-    layout = [[psg.Text(message)], [psg.Button('OK', key = '-OK-', bind_return_key = True)]]
-
-    # Create the popup window
-    window = psg.Window('Alert', layout, modal = True, keep_on_top = True, finalize = True)
-
-    # Set the focus on the OK button
-    window['-OK-'].set_focus()
-
-    # Event loop for the popup
-    while True:
-        event, _ = window.read()
-        if event == '-OK-' or event == psg.WIN_CLOSED:
-            break
-
-    # Close the window
-    window.close()
+    show_info(message, "Alert", Manager.window if 'Manager' in globals() else None)
 
 
 def open_search_dialog():
-    # Define the layouts for the tabs
-    tab1_layout = [
-        [psg.Text('Type in a search phrase (use * as a wildcard):')],
-        [psg.Input(key='-SEARCH_PHRASE-', focus=True)],
-        [psg.Button('Search', key='-SEARCH_DESC-'), psg.Button('Cancel', key='-CANCEL-DESC-BTN-')],
-    ]
-    tab2_layout = [
-        [psg.Text('Type a date to search (formats: yyyy/mm/dd or yyyy):')],
-        [psg.Input(key='-SEARCH_DATE-')],
-        [psg.Button('Search', key='-SEARCH_DATE_BTN-'), psg.Button('Cancel', key='-CANCEL-DATE-BTN-')],
-    ]
-    tab_group = psg.TabGroup([
-        [psg.Tab('Description Search', tab1_layout, key='-TAB1-'),
-         psg.Tab('Date Search', tab2_layout, key='-TAB2-')],
-    ], key='-TABGROUP-', enable_events=True)
+    dialog = QDialog(Manager.window)
+    dialog.setWindowTitle("Search")
+    dialog.setModal(True)
+    layout = QVBoxLayout(dialog)
+    tabs = QTabWidget()
+    layout.addWidget(tabs)
 
-    search_layout = [
-        [tab_group]
-    ]
+    desc_tab = QWidget()
+    desc_layout = QVBoxLayout(desc_tab)
+    desc_label = QLabel('Type in a search phrase (use * as a wildcard):')
+    desc_input = NineSliceLineEdit()
+    desc_btns = QHBoxLayout()
+    desc_search = NineSliceButton("Search")
+    desc_cancel = NineSliceButton("Cancel")
+    for btn in (desc_search, desc_cancel):
+        btn.setFixedSize(80, 24)
+        btn.setStyleSheet(BTN_STYLE)
+        desc_btns.addWidget(btn)
+    desc_layout.addWidget(desc_label)
+    desc_layout.addWidget(desc_input)
+    desc_layout.addLayout(desc_btns)
 
-    search_window = psg.Window('Search', search_layout, modal=True, return_keyboard_events=True)
+    date_tab = QWidget()
+    date_layout = QVBoxLayout(date_tab)
+    date_label = QLabel('Type a date to search (formats: yyyy/mm/dd or yyyy):')
+    date_input = NineSliceLineEdit()
+    date_btns = QHBoxLayout()
+    date_search = NineSliceButton("Search")
+    date_cancel = NineSliceButton("Cancel")
+    for btn in (date_search, date_cancel):
+        btn.setFixedSize(80, 24)
+        btn.setStyleSheet(BTN_STYLE)
+        date_btns.addWidget(btn)
+    date_layout.addWidget(date_label)
+    date_layout.addWidget(date_input)
+    date_layout.addLayout(date_btns)
 
-    search_window.finalize()
-    search_window['-SEARCH_PHRASE-'].set_focus()
+    tabs.addTab(desc_tab, "Description Search")
+    tabs.addTab(date_tab, "Date Search")
+    dialog.setStyleSheet("QDialog { background: #4c5844; } QLabel { color: #ffffff; font-family: Tahoma; font-weight: bold; } QTabWidget::pane { border: 1px solid #292e23; } QTabBar::tab { background: #5a6a50; color: #ffffff; padding: 4px 10px; } QTabBar::tab:selected { background: #6a6f68; }")
 
-    # Initialize search variables
-    search_phrase = ''
-    search_date = ''
-    search_index = 0
-    no_more_matches_found = False
+    state = {'index': 0, 'no_more': False}
 
-    while True:
-        event, values = search_window.read()
-
-        # Handle window close or cancel button
-        if event in ['-CANCEL-DESC-BTN-', '-CANCEL-DATE-BTN-'] or event == psg.WIN_CLOSED:
-            search_window.close()
-            break
-
-        # Handle Enter key press
-        if event == '\r':  # Enter key pressed
-            current_tab = values['-TABGROUP-']
-            if current_tab == '-TAB1-' and values['-SEARCH_PHRASE-']:  # Enter on Description Search
-                search_phrase = values['-SEARCH_PHRASE-']
-                if no_more_matches_found:
-                    search_index = 0
-                    no_more_matches_found = False
-                found = search_description(search_phrase, search_index)
-                if found:
-                    search_index = Manager.row + 1
-                else:
-                    custom_popup('No more matches found.')
-                    no_more_matches_found = True
-                    search_index = 0
-
-            elif current_tab == '-TAB2-' and values['-SEARCH_DATE-']:  # Enter on Date Search
-                search_date = values['-SEARCH_DATE-']
-                if no_more_matches_found:
-                    search_index = 0
-                    no_more_matches_found = False
-                if validate_date(search_date):
-                    found = search_date_func(search_date, search_index)
-                    if found:
-                        search_index = Manager.row + 1
-                    else:
-                        custom_popup('No more matches found.')
-                        no_more_matches_found = True
-                        search_index = 0
-                else:
-                    custom_popup('Invalid date format. Please enter yyyy/mm/dd or yyyy.')
-
-        # Handle the Description Search button
-        elif event == '-SEARCH_DESC-':
-            search_phrase = values['-SEARCH_PHRASE-']
-            if no_more_matches_found:
-                search_index = 0
-                no_more_matches_found = False
-            found = search_description(search_phrase, search_index)
-            if found:
-                search_index = Manager.row + 1
-            else:
-                # Update the popup in both the Date and Description search results
-                custom_popup('No more matches found.')
-
-                no_more_matches_found = True
-                search_index = 0
-
-        # Inside the Date Search button handler
-        elif event == '-SEARCH_DATE_BTN-':
-            search_date = values['-SEARCH_DATE-']
-
-            # Reset search_index to start from the beginning for the new search
-            search_index = 0
-            no_more_matches_found = False
-
-            if validate_date(search_date):
-                found = search_date_func(search_date, search_index)
-                if found:
-                    search_index = Manager.row + 1
-                else:
-                    custom_popup('No more matches found.')
-                    no_more_matches_found = True
-                    search_index = 0
-            else:
-                custom_popup('Invalid date format. Please enter yyyy/mm/dd or yyyy.')
-
-    search_window.close()
-def open_settings_dialog():
-    import configparser
-    import re
-    import tkinter as tk
-    from tkinter import ttk
-
-    # Read the emulator.ini file
-    config = configparser.ConfigParser(inline_comment_prefixes=(';',))
-    config.optionxform = str  # Preserve case sensitivity
-    config.read('emulator.ini')
-
-    # Read the emulator.ini file lines to get comments and headings
-    with open('emulator.ini', 'r') as f:
-        lines = f.readlines()
-
-    # Parse settings and associate comments and group under headings
-    sections = {}
-    current_heading = 'General'  # Default heading
-    current_comment = ''
-    for index, line in enumerate(lines):
-        line = line.rstrip('\n')
-        stripped_line = line.strip()
-        if stripped_line.startswith(';'):
-            # Check if this is a heading line followed by a separator
-            if index + 1 < len(lines):
-                next_line = lines[index + 1].strip()
-                if next_line.startswith(';') and set(next_line.strip(';')) == {'='}:
-                    # It's a heading
-                    heading = stripped_line.lstrip(';').strip()
-                    current_heading = heading
-                    if current_heading not in sections:
-                        sections[current_heading] = []
-                    continue
-            current_comment += stripped_line.lstrip(';').strip() + '\n'
-        elif '=' in stripped_line and not stripped_line.startswith('['):
-            key, value = stripped_line.split('=', 1)
-            key = key.strip()
-            value = value.split(';', 1)[0].strip()
-            # Determine the type of the setting
-            if value.lower() in ('true', 'false'):
-                setting_type = 'bool'
-            else:
-                setting_type = 'str'
-                # Special handling for log_level
-                if key == 'log_level':
-                    setting_type = 'log_level'
-                elif key.endswith('_port'):
-                    setting_type = 'port'
-                elif key.endswith('dir'):
-                    setting_type = 'dir'
-            setting_info = {'key': key, 'value': value, 'comment': current_comment.strip(), 'type': setting_type}
-            if current_heading not in sections:
-                sections[current_heading] = []
-            sections[current_heading].append(setting_info)
-            current_comment = ''
+    def run_desc():
+        phrase = desc_input.text()
+        if state['no_more']:
+            state['index'] = 0
+            state['no_more'] = False
+        found = search_description(phrase, state['index'])
+        if found:
+            state['index'] = Manager.row + 1
         else:
-            current_comment = ''  # Reset comment if other lines
+            custom_popup('No more matches found.')
+            state['no_more'] = True
+            state['index'] = 0
 
-    # Create the layout for the settings dialog
-    tab_layouts = []
-    for heading, settings_list in sections.items():
-        tab_layout = []
-        for setting in settings_list:
-            tooltip = setting['comment'] if setting['comment'] else None
-            if setting['type'] == 'bool':
-                tab_layout.append([psg.Checkbox(setting['key'], default=(setting['value'].lower() == 'true'), tooltip=tooltip, key=setting['key'])])
-            elif setting['type'] == 'log_level':
-                # Create combobox for log_level
-                options = ['DEBUG', 'WARNING', 'ERROR', 'INFO']
-                current_value = setting['value'].replace('logging.', '')
-                tab_layout.append([psg.Text(setting['key'], tooltip=tooltip), psg.Combo(options, default_value=current_value, key=setting['key'])])
-            elif setting['type'] == 'port':
-                # Create text input with a 7-character limit for ports
-                tab_layout.append([psg.Text(setting['key'], tooltip=tooltip), psg.InputText(setting['value'], size=(7, 1), key=setting['key'])])
-            elif setting['type'] == 'dir':
-                # Create text input with a "Select Directory" button for directory paths
-                tab_layout.append([
-                    psg.Text(setting['key'], tooltip=tooltip),
-                    psg.InputText(setting['value'], key=setting['key'], tooltip=tooltip),
-                    psg.FolderBrowse('Select Directory', key=f'{setting["key"]}_browse')
-                ])
+    def run_date():
+        date_value = date_input.text()
+        state['index'] = 0
+        state['no_more'] = False
+        if validate_date(date_value):
+            found = search_date_func(date_value, state['index'])
+            if found:
+                state['index'] = Manager.row + 1
             else:
-                tab_layout.append([psg.Text(setting['key'], tooltip=tooltip), psg.InputText(setting['value'], key=setting['key'])])
-        tab_layouts.append(psg.Tab(heading, tab_layout))
+                custom_popup('No more matches found.')
+                state['no_more'] = True
+        else:
+            custom_popup('Invalid date format. Please enter yyyy/mm/dd or yyyy.')
 
-    # Add Save and Cancel buttons
-    layout = [[psg.TabGroup([tab_layouts], tab_location='top', enable_events=True)],  # Increase tab width
-              [psg.Button('Save'), psg.Button('Cancel')]]
+    desc_search.clicked.connect(run_desc)
+    desc_input.returnPressed.connect(run_desc)
+    date_search.clicked.connect(run_date)
+    date_input.returnPressed.connect(run_date)
+    desc_cancel.clicked.connect(dialog.close)
+    date_cancel.clicked.connect(dialog.close)
+    dialog.resize(420, 160)
+    desc_input.setFocus()
+    dialog.exec_()
 
-    # Create the window with a scrollable tab bar to prevent squishing
-    window = psg.Window('Settings', layout, modal=True, resizable=True, size=(600, 400))  # Adjust window size
 
-    # Event loop for the settings window
-    while True:
-        event, values = window.read()
-        if event == 'Save':
-            # Save the settings back to emulator.ini
-            # Read the original file lines again to preserve comments and structure
-            with open('emulator.ini', 'r') as f:
-                ini_lines = f.readlines()
-
-            # Update the values in ini_lines
-            for index, line in ini_lines:
-                stripped_line = line.strip()
-                if '=' in stripped_line and not stripped_line.startswith(';') and not stripped_line.startswith('['):
-                    key, _ = stripped_line.split('=', 1)
-                    key = key.strip()
-                    if key in values:
-                        if key == 'log_level':
-                            new_value = f'logging.{values[key]}'
-                        else:
-                            new_value = str(values[key])
-                        # Replace the line with the new value
-                        ini_lines[index] = f'{key}={new_value}\n'
-
-            # Write back to emulator.ini
-            with open('emulator.ini', 'w') as f:
-                f.writelines(ini_lines)
-
-            psg.popup('Settings saved successfully.')
-            break
-        elif event in (psg.WIN_CLOSED, 'Cancel'):
-            break
-
-    window.close()
+def open_settings_dialog():
+    custom_popup('Settings are not exposed in this Blob Manager build.')
 
 
 # Function to handle selection changes
@@ -2181,19 +2344,15 @@ def update_selected_text():
             Manager.window['-STATEMSG-'].Update(value='')
             Manager.last_message_row = Manager.row
 
-# Bind custom events for Up and Down key handling
-Manager.window.bind('<Up>', 'UP_KEY')
-Manager.window.bind('<Down>', 'DOWN_KEY')
-
 # Event loop with adjusted event handling
 while True:
     event, values = Manager.window.read(Manager.WindowUpdateTime)
-    if event == psg.TIMEOUT_EVENT:
+    if event == '__TIMEOUT__':
         Manager.ProcessAutoSwap()
         if Manager.row is not None and Manager.row >= 0:
             Manager.UpdateSelectedTextElement()
 
-    if event in (psg.WIN_CLOSED, 'Exit'):
+    if event == 'Exit':
         break
     elif event == '-SEARCH-' or event == 'CTRL+F' or event == '^f':
         open_search_dialog()
@@ -2233,11 +2392,6 @@ while True:
         Manager.window['-LIST-'].update(select_rows = [new_index])
         Manager.row = new_index
 
-        # Scroll to the selected row manually using the Treeview widget
-        treeview = Manager.window['-LIST-'].Widget
-        treeview_id = treeview.get_children()[new_index]
-        treeview.see(treeview_id)
-
         update_selected_text()  # Update the text display after moving with arrows
 
     elif '-SWAP-' == event:
@@ -2276,7 +2430,7 @@ while True:
         except:
             pass
     elif 'Extract' in event or 'Export Blob' in event:
-        folder_selected = filedialog.askdirectory()
+        folder_selected = QFileDialog.getExistingDirectory(Manager.window, "Select extraction destination")
         if folder_selected == '' or folder_selected == ():
             print('cancel')
         else:
@@ -2335,8 +2489,6 @@ while True:
                         Manager.window['-STATEMSG-'].Update(value = Manager.GetLocale('label_extract_failure'))
             else:
                 custom_popup(Manager.GetLocale('label_error_text3'))
-                if event in (psg.WIN_CLOSED, 'Exit'):
-                    break
 
 if Manager.load_from_database:
     # Close database connection if open, with error handling

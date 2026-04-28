@@ -1,8 +1,4 @@
-python -m PyInstaller --noconsole -F -i icon.ico --hidden-import=tkinter ^
-  --hidden-import=tkinter.font ^
-  --hidden-import=tkinter.colorchooser ^
-  --hidden-import=tkinter.filedialog ^
-  --hidden-import=tkinter.simpledialog ^
+python -m PyInstaller --noconsole -F -i icon.ico ^
   --hidden-import=difflib ^
   --hidden-import=configparser ^
   --hidden-import=queue ^
@@ -14,5 +10,6 @@ python -m PyInstaller --noconsole -F -i icon.ico --hidden-import=tkinter ^
   --hidden-import=json ^
   --hidden-import=pydoc ^
   --hidden-import=ctypes ^
-  --hidden-import=platform --add-data "../../libs/PySimpleGUI/PySimpleGUI.py;." blobmgr.py
+  --hidden-import=platform ^
+  --add-data "resources;resources" blobmgr.py
 move dist\blobmgr.exe "..\..\"

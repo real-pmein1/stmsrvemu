@@ -1,2 +1,2 @@
 pyperclip
-PySimpleGUI==4.70.1
+PyQt5~=5.15.11
