@@ -24,12 +24,7 @@ jobs:
 
       - name: Build executable
         working-directory: emulator
-        run: |
-          python -m PyInstaller -F -i source-content.ico emulator.py ^
-            --add-data "steam3/protobufs;steam3/protobufs" ^
-            --add-data "files/icons/*.ico;files/icons/" ^
-            --hidden-import tkinter ^
-            --paths .
+        run: python -m PyInstaller -F -i source-content.ico emulator.py --add-data "steam3/protobufs;steam3/protobufs" --add-data "files/icons/*.ico;files/icons/" --hidden-import tkinter --paths .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
