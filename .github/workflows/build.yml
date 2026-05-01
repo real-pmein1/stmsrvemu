@@ -8,13 +8,14 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python 3.9 (64-bit)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.9"
           architecture: x64
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -27,7 +28,7 @@ jobs:
         run: python -m PyInstaller -F -i source-content.ico emulator.py --add-data "steam3/protobufs;steam3/protobufs" --add-data "files/icons/*.ico;files/icons/" --hidden-import tkinter --paths .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: emulator
           path: emulator/dist/emulator.exe
