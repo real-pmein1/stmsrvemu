@@ -2,7 +2,7 @@
 Source code for the server emulator for clients 2002-2011
 
 * Install the required dependencies in the ``emulator`` folder using:
-``python -m pip install -r requirements.txt``
+``py -3.9-64 -m pip install -r requirements.txt``
 
 * Compile on Python 3.9.13 if you want to run/build from source using:
 ``python -m PyInstaller -F -i source-content.ico emulator.py --add-data "steam3/protobufs/:steam3/protobufs/" --add-data "files/icons/*.ico;files/icons/" --hidden-import tkinter``
