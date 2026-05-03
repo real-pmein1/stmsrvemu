@@ -63,8 +63,17 @@ def load_email_template(template_name, **kwargs):
 
     kwargs['support_email'] = config['support_email']
     kwargs['network_name'] = config['network_name']
-    kwargs['network_url'] = config['http_ip']
     kwargs['logo_url'] = config['network_logo']
+
+    http_ip = config.get('http_ip', '').strip()
+    http_domainname = config.get('http_domainname', '').strip()
+    if http_ip:
+        kwargs['network_url'] = http_ip
+    elif http_domainname:
+        kwargs['network_url'] = f"http://{http_domainname}"
+    else:
+        kwargs['network_url'] = ''
+        print("WARNING: Neither 'http_ip' nor 'http_domainname' configured — email links will be broken!")
 
     if config['email_location_support'].lower() == "true":
         country, region_name = utils.get_location(kwargs['ipaddress'])
