@@ -49,7 +49,7 @@ def send_templated_email(to_email, subject, template_name, **kwargs):
     body = load_email_template(template_name, **kwargs)
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
     part = MIMEText(body, 'html')
     msg.attach(part)
@@ -82,7 +82,7 @@ def send_username_email(to_email, username, ipaddress):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -98,7 +98,7 @@ def send_reset_password_email(to_email, verification_code, question, ipaddress, 
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -138,7 +138,7 @@ def send_password_changed_email(to_email, ipaddress, username):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -153,7 +153,7 @@ def send_attempted_pw_change_email(to_email, ipaddress, username):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -168,7 +168,7 @@ def send_question_changed_confirmation(to_email, ipaddress, username):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -183,7 +183,7 @@ def send_email_changed_email(to_email, ipaddress, username):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -199,7 +199,7 @@ def send_friends_invite_email(to_email, ipaddress, username):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -214,7 +214,7 @@ def send_validation_code_email(to_email, verification_token, ipaddress, username
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     # Attach the HTML version of the body
@@ -265,7 +265,7 @@ def send_purchase_receipt_email(to_email, username, items, subtotal, tax, total,
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
@@ -315,7 +315,7 @@ def send_gift_purchase_receipt_email(to_email, username, items, subtotal, tax, t
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
@@ -343,7 +343,7 @@ def send_new_computer_access_email(to_email, username, access_code):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
@@ -403,7 +403,7 @@ def send_wishlist_sale_email(to_email, username, wishlist_items, unsubscribe_url
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
@@ -457,7 +457,7 @@ def send_gift_received_email(to_email, recipient_email, sender_username, sender_
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
@@ -487,7 +487,7 @@ def send_forgotten_password_email(to_email, username, verification_code):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
@@ -515,7 +515,7 @@ def send_query_account_by_email(to_email, username):
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config['support_email']
+    msg['From'] = f"{config['network_name']} <{config['support_email']}>"
     msg['To'] = to_email
 
     part = MIMEText(body, 'html')
