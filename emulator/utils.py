@@ -942,7 +942,7 @@ def autoupdate():
                         print("ERROR, something went wrong")
 
                     packages.package_unpack2('ServerDB_' + online_mdb_ver + '.pkg', ".", online_mdb_ver, "ServerDB")
-                    
+
                     if os.path.isfile('files/sql/ContentDescriptionDB.zip'):
                         with ZipFile('files/sql/ContentDescriptionDB.zip') as CDDB_ZIP:
                             CDDB_ZIP.extract('ContentDescriptionDB.sql', 'files/sql/')
@@ -976,6 +976,7 @@ def autoupdate():
                             cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivements.sql'")
                             cur.execute(f"DROP TABLE achievement_master")
                             cur.execute(f"DROP TABLE achievement_percent")
+                        conn.commit()
                         conn.close()
                     except mariadb.Error as e:
                         if not globalvars.mdb_ver == "0":
