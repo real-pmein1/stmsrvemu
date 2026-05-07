@@ -423,6 +423,10 @@ def replace_string(islan: bool) -> tuple:
     dir_server_port = config["dir_server_port"].encode('latin-1')
     cm_server_port = config["cm_encrypted_server_port"].encode('latin-1')
     community_ip = get_octal_ip_bytes(islan, True)
+    cser_port = config["cser_server_port"].encode('latin-1')
+    hl1master_port = config['masterhl1_server_port'].encode('latin-1')
+    hl2master_port = config['masterhl2_server_port'].encode('latin-1')
+    cser_port = config["cser_server_port"].encode('latin-1')
 
     return (
         # RSA Keys
@@ -492,8 +496,11 @@ def replace_string(islan: bool) -> tuple:
         (b'146.66.152.15:27019\x00146.66.152.15:27018\x00146.66.152.15:27017\x00146.66.152.14:27019\x00146.66.152.14:27018\x00146.66.152.14:27017\x00146.66.152.13:27019\x00146.66.152.13:27018\x00146.66.152.13:27017\x00146.66.152.12:27019\x00146.66.152.12:27018\x00146.66.152.12:27017\x0072.165.61.188:27018\x0072.165.61.188:27017\x0072.165.61.187:27018\x0072.165.61.187:27017\x0072.165.61.185:27018\x0072.165.61.185:27017\x0072.165.61.176:27018\x0072.165.61.176:27017\x0072.165.61.175:27018\x0072.165.61.175:27017\x0072.165.61.174:27018\x0072.165.61.174:27017',
          conn_ip + b":" + cm_server_port + b"\x00" + conn_ip + b":" + cm_server_port + b"\x00" + conn_ip + b":" + cm_server_port, b"Steam3 CM server list 4"),
         (b"http://207.173.176.210/community/", b"http://" + community_ip + b"/community/", b"Community IP URL"),
-        (b"207.173.177.11:27010", conn_ip + b":27010", b"HL Master Server 1"),
-        (b"207.173.177.12:27010", conn_ip + b":27010", b"HL Master Server 2"),
+        (b"207.173.177.11:27010", conn_ip + b':' + hl1master_port, b"HL Master Server 1"),
+        (b"207.173.177.12:27010", conn_ip + b':' + hl1master_port, b"HL Master Server 2"),
+        (b"207.173.177.12:27011", conn_ip + b':' + hl2master_port, b"Source Master Server 1"),
+        (b"207.173.177.11:27011", conn_ip + b':' + hl2master_port, b"Source Master Server 2"),
+        (b"207.173.179.87:27013", conn_ip + b':' + cser_port, b"Source Bug Reporter 1"),
         (b'207.173.177.45:27030 207.173.177.45:27030', conn_ip + b":" + dir_server_port + b" " + conn_ip + b":" + dir_server_port, b"Steam1 directory server 1"),
         (b'207.173.177.45:27030 207.173.177.46:27030', conn_ip + b":" + dir_server_port + b" " + conn_ip + b":" + dir_server_port, b"Steam1 directory server 2"),
         (b"gds1.steampowered.com:27030 gds2.steampowered.com:27030", conn_ip + b":" + dir_server_port + b" " + conn_ip + b":" + dir_server_port, b"DNS directory server fallback 2"),
