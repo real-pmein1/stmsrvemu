@@ -874,9 +874,20 @@ class Steam2Storage(object):
             appid, version = id[0], id[1]
         cache_dir = os.path.join("files", "cache", f"{appid}_{version}")
 
+        bad_pattern = os.path.join(cache_dir, "*.checksums") # FIXME Remove None checksums
+        for f in glob.glob(bad_pattern):
+            if "None" in os.path.basename(f):
+                os.remove(f)
+
         # Look for any cached .checksums file: e.g. "123_456_lan.checksums" or "123_456.checksums"
-        checksum_pattern = os.path.join(cache_dir, f"{appid}_{version}*.checksums")
-        checksum_files = glob.glob(checksum_pattern)
+        base = os.path.join(cache_dir, f"{appid}_{version}")
+
+        # Specify actual file patterns in case of erroneous files
+        checksum_files = (
+            glob.glob(f"{base}.checksums") +
+            glob.glob(f"{base}_lan.checksums") +
+            glob.glob(f"{base}_wan.checksums")
+        )
 
         # Look for any cached .manifest file
         manifest_pattern = os.path.join(cache_dir, f"{appid}_{version}*.manifest")
