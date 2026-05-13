@@ -156,6 +156,7 @@ from servers.contentlistserver import contentlistserver
 override_path = os.path.join(os.path.dirname(sys.executable), "servers/contentserver2.py")
 
 if os.path.exists(override_path):
+    print("ContentServer2 loaded")
     spec = importlib.util.spec_from_file_location("contentserver", override_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
