@@ -899,7 +899,7 @@ def autoupdate():
                     else:
                         subprocess.Popen([sys.executable, "emulator.py"])
                     sys.exit(0)
-                
+
                 if not online_serverui_ver == globalvars.ui_ver or not os.path.isfile("ServerUI_" + online_serverui_ver + ".mst"):
                     print("UI update found " + globalvars.ui_ver + " -> " + online_serverui_ver + ", downloading...")
                     response = requests.get(url + f"ServerUI_{online_serverui_ver}.pkg", headers=headers, stream=True)
@@ -926,7 +926,24 @@ def autoupdate():
                             os.remove(file)
                         elif file.endswith(".mst"):
                             os.remove(file)
-                
+
+                try:
+                    os.remove('files/sql/acheivement_master.sql')
+                except:
+                    pass
+                try:
+                    os.remove('files/sql/acheivements.sql')
+                except:
+                    pass
+                try:
+                    os.remove('files/sql/achievements.sql')
+                except:
+                    pass
+                try:
+                    os.remove('files/sql/achievements.sql')
+                except:
+                    pass
+
                 if not online_mdb_ver == globalvars.mdb_ver or not os.path.isfile("ServerDB_" + online_mdb_ver + ".mst"):
                     print("DB update found " + globalvars.mdb_ver + " -> " + online_mdb_ver + ", downloading...")
                     response = requests.get(url + f"ServerDB_{online_mdb_ver}.pkg", headers=headers, stream=True)
@@ -963,19 +980,10 @@ def autoupdate():
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'BetaContentDescriptionDB.sql'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ContentDescriptionDB.sql'")
                         cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'ProductInformationDB.sql'")
-                        if os.path.isfile('files/sql/acheivement_master.sql') or os.path.isfile('files/sql/acheivements.sql'):
-                            try:
-                                os.remove('files/sql/acheivement_master.sql')
-                            except:
-                                pass
-                            try:
-                                os.remove('files/sql/acheivements.sql')
-                            except:
-                                pass
-                            cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivement_master.sql'")
-                            cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivements.sql'")
-                            cur.execute(f"DROP TABLE achievement_master")
-                            cur.execute(f"DROP TABLE achievement_percent")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivement_master.sql'")
+                        cur.execute(f"DELETE FROM executed_sql_files WHERE filename = 'acheivements.sql'")
+                        cur.execute(f"DROP TABLE achievement_master")
+                        cur.execute(f"DROP TABLE achievement_percent")
                         conn.commit()
                         conn.close()
                     except mariadb.Error as e:
@@ -996,7 +1004,7 @@ def autoupdate():
                             os.remove(file)
                         elif file.startswith("MDB_"):
                             os.remove(file)
-                
+
                 if not online_serverweb_ver == globalvars.web_ver or not os.path.isfile("ServerWeb_" + online_serverweb_ver + ".mst"):
                     print("Web update found " + globalvars.web_ver + " -> " + online_serverweb_ver + ", downloading...")
                     response = requests.get(url + f"ServerWeb_{online_serverweb_ver}.pkg", headers=headers, stream=True)
