@@ -23,7 +23,7 @@ from utilities.database import statistics_db
 def handle_ConnectionStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Connection Stats Request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Connection Stats Request")
     data = request.data
 
     try:
@@ -103,7 +103,7 @@ def handle_GamesPlayedStats_deprecated(cmserver_obj, packet: CMPacket, client_ob
 
 def handle_GamesPlayedStats2(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Games Played 2 stats")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Games Played 2 stats")
     request = packet.CMRequest
     data = request.data
     first_part = '<QQIHHII'
@@ -269,7 +269,7 @@ def handle_ClientSteamUsageEvent(cmserver_obj, packet: CMPacket, client_obj: Cli
 
 def handle_GamesPlayedWithDataBlob(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Games Played (with blob) info")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Games Played (with blob) info")
     request = packet.CMRequest
     data = request.data
     try:
@@ -285,7 +285,7 @@ def handle_GamesPlayedWithDataBlob(cmserver_obj, packet: CMPacket, client_obj: C
 def handle_GetUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
     """Handles the ClientGetUserStats packet."""
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved User Stats Info")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received User Stats Info")
     request = packet.CMRequest
 
     try:
@@ -306,7 +306,7 @@ def handle_GetUserStats(cmserver_obj, packet: CMPacket, client_obj: Client):
 
 def handle_NoUDPConnectivity(cmserver_obj, packet, client_obj):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved No UDP Connectivity Info")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received No UDP Connectivity Info")
     request = packet.CMRequest
 
     message = MsgClientNoUDPConnectivity(request.data)
@@ -319,7 +319,7 @@ def handle_NoUDPConnectivity(cmserver_obj, packet, client_obj):
 
 def handle_ClientStat2(cmserver_obj, packet, client_obj):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Stats 2 Info")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Client Stats 2 Info")
     request = packet.CMRequest
 
     message = MsgClientStat2()

@@ -194,7 +194,7 @@ def read_config():
             'global_tracker_ip':                  "127.0.0.1",
             'global_tracker_port':                "1300",
             'local_network_name':                 "",
-            'force_beta1_specialkey':             "false",  # forces users to generate ore recieve a beta 1 generated key in order to register
+            'force_beta1_specialkey':             "false",  # forces users to generate or receive a beta 1 generated key in order to register
             'use_emu_console':                    "false",
             'use_ben_console':                    "false",  # Use simple console instead of TUI console
             'tinserver_ip':                       "127.0.0.1",  # only until we finish CM

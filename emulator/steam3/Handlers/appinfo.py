@@ -61,7 +61,7 @@ def handle_ClientAppInfoRequest(cmserver_obj, packet: CMPacket, client_obj: Clie
 def handle_ClientAppInfoupdate(cmserver_obj, packet: CMPacket, client_obj: Client):
     # 55/1040 request this packet
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"{client_address} Recieved ClientAppInfoUpdate Request")
+    cmserver_obj.log.info(f"{client_address} Received ClientAppInfoUpdate Request")
     request = packet.CMRequest
     data = request.data
     last_change_number, send_change_list, = struct.unpack_from("<i?", data, 0)

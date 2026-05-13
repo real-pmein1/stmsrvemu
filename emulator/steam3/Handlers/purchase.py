@@ -145,7 +145,7 @@ def _lookup_subscription_by_game_code(game_code: int, territory_code: int = None
 def handle_GetGiftTargetList(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     cmserver_obj.log.info(
-        f"({client_address[0]}:{client_address[1]}): Recieved Gift Target List Request"
+        f"({client_address[0]}:{client_address[1]}): Received Gift Target List Request"
     )
 
     # If guestpass system is disabled, return empty list

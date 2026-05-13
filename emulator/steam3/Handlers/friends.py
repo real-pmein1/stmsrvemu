@@ -18,7 +18,7 @@ def handle_InviteFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     b'\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00test@test.com\x00'"""
 
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Invite Friend Request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Invite Friend Request")
     request = packet.CMRequest
     requestcount = struct.unpack("!I", request[:4])[0] # Not used ATM, for ratelimiting possibly?
     email_start_index = 12  # Adjust based on actual structure knowledge
@@ -40,7 +40,7 @@ def handle_RemoveFriend(cmserver_obj, packet: CMPacket, client_obj: Client):
     # \x08\x00\x00\x00\x01\x00\x10\x01'
 
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Remove Friend Request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Remove Friend Request")
     request = packet.CMRequest
 
     friendID = struct.unpack_from('<I', request.data, 0)[0] // 2
@@ -116,7 +116,7 @@ def handle_RequestFriendData(cmserver_obj, packet: CMPacket, client_obj: Client)
     packetid: 815
     b'R\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00\x10\x01'"""
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Friend Data Request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Friend Data Request")
     request = packet.CMRequest
 
     accountIDs = []

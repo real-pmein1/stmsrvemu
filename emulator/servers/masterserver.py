@@ -338,7 +338,7 @@ class MasterServer(UDPNetworkHandler):
         pass
 
     def packet_Default(self, data, address):
-        self.log.info(f"Recieved Unknown Packet: {repr(data)}")
+        self.log.info(f"Received Unknown Packet: {repr(data)}")
 
     def packet_get_masterlist(self, input_bytes: bytes, address) -> bytes:
         # Write the initial response header

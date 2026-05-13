@@ -64,8 +64,8 @@ class directoryserver(TCPNetworkHandler):
         # We are a slave, request serverlist
         if globalvars.dir_ismaster != "true":  # request list from 'master' directory server
             self.log.info("Connecting to Master Directory Server")
-            recieved_list = send_listrequest()  # since we are a slave, get the full current list from the master
-            for wan_ip, lan_ip, port, server_type, _perm, _ts in recieved_list:
+            received_list = send_listrequest()  # since we are a slave, get the full current list from the master
+            for wan_ip, lan_ip, port, server_type, _perm, _ts in received_list:
                 manager.add_server_info(wan_ip, lan_ip, int(port), server_type)
 
         # Sync with any configured peer directory servers

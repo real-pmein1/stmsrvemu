@@ -422,7 +422,7 @@ class authserver(TCPNetworkHandler):
             client_socket.send(b"\x00")
 
     def unknown_1b(self, client_address, client_socket, clientid, command, pkt_version):
-        self.log.info(f"{clientid} Recieved Unknown Packet 0x1B - Not Operational")
+        self.log.info(f"{clientid} Received Unknown Packet 0x1B - Not Operational")
         # TODO Figure out if any clients actually send this packet, then handle it correctly if they do
         self.log.debug(command)
         client_socket.send(b"\x01")

@@ -776,7 +776,7 @@ Text 1 b'gotta get donald duck to run the cuntry'"""
         #else:
         #    # validate_msg(msg, ("challenge", "sessionID", "status", "build", "hrate"), ("PlatformVer",))
         try:
-            self.log.info(f"Recieved login request: clientid: {pkt.clientid}, sessionid: {pkt.sessionid}, sequence: {pkt.seqnum}, acked sequence: {pkt.seqack}, unknown: {pkt.totalpackets}")
+            self.log.info(f"Received login request: clientid: {pkt.clientid}, sessionid: {pkt.sessionid}, sequence: {pkt.seqnum}, acked sequence: {pkt.seqack}, unknown: {pkt.totalpackets}")
         except Exception as e:
             print(f"An exception occurred: {e}")
 
@@ -916,7 +916,7 @@ Text 1 b'gotta get donald duck to run the cuntry'"""
         if self.isbeta_tracker:
             client.challenge = secrets.randbits(32)
         else:
-            client.challenge = 0 # retail sets this to 0 as technically this message is still session 0 until the client recieves the sessionid from the key/value in this packet
+            client.challenge = 0 # retail sets this to 0 as technically this message is still session 0 until the client receives the sessionid from the key/value in this packet
 
         msg.add_int("challenge", client.challenge)
 

@@ -128,15 +128,15 @@ def handle_Heartbeat(cmserver_obj, packet, client_obj):
 def handle_SystemIMAck(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved System Message Acknowledgement")
-    # unpack 64bit messageid, this packet is just acknowledgement that it recieved the SystemIM, If the SystemIM had the ack flag set to true
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received System Message Acknowledgement")
+    # unpack 64bit messageid, this packet is just acknowledgement that it Received the SystemIM, If the SystemIM had the ack flag set to true
     messageID = struct.unpack('<Q', request.data)
     return -1  # we do nothing here
 
 
 def handle_VTTCert(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved VTTCert Message")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received VTTCert Message")
 
     request = packet.CMRequest
     # Validate input data length at minimum for 3 4-byte integers
@@ -170,7 +170,7 @@ def handle_VTTCert(cmserver_obj, packet: CMPacket, client_obj: Client):
 
 def handle_ServiceCallResponse(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Service Call Response")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Service Call Response")
     request = packet.CMRequest
 
     try:
@@ -190,7 +190,7 @@ def handle_ServiceCallResponse(cmserver_obj, packet: CMPacket, client_obj: Clien
 
 def handle_NatTraversalStatEvent(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Nat Traversal Stat Event")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Nat Traversal Stat Event")
     request = packet.CMRequest
     # packetid: 839, steamui 427
     # b'\x04\x00\x00\x00 \x02\x00\x00\x00 \x00\x00\x00\x00 \x00\x00 \x00\x00'
@@ -203,7 +203,7 @@ def handle_NatTraversalStatEvent(cmserver_obj, packet: CMPacket, client_obj: Cli
 
 def handle_RequestValidationMail(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Mail Validation Request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Mail Validation Request")
     if globalvars.config['auto_verify_steam3_email'].lower() == 'true':
         client_obj.set_email_verified()
     elif globalvars.config['smtp_enabled'].lower() == 'true':

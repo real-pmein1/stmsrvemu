@@ -33,7 +33,7 @@ from utilities.impsocket import is_lan_ip
 
 class Client:
     def __init__(self, ip_port: tuple = None,  symmetric_key = None, connectionid = None, steamid = None,  client_state = PlayerState.offline,
-            account_type = None, username = None, chatroom = None, email = '', ratelimit: int = 0, sequencenumber: int = 0, lastrecieved_seq: int = 0, serverconnectionid = 0):
+            account_type = None, username = None, chatroom = None, email = '', ratelimit: int = 0, sequencenumber: int = 0, lastreceived_seq: int = 0, serverconnectionid = 0):
         self.connectionid = connectionid
         self.isLan = False
         self.serverconnectionid = serverconnectionid
@@ -75,7 +75,7 @@ class Client:
 
         # Last sequence number we received FROM the client (equivalent to m_nTheirSeqReceived)
         # Used to ACK client packets and validate incoming sequence
-        self.last_recvd_sequence = lastrecieved_seq
+        self.last_recvd_sequence = lastreceived_seq
 
         # Last of OUR sequence numbers that the client has ACK'd (equivalent to m_nOurSeqAcked)
         # Updated when we receive a packet with last_recv_seq field
@@ -424,7 +424,7 @@ class Client:
         """Gets called during every heartbeat from the client
         This grabs all of the user's friends who updated their status since the last heartbeat
         and any messages clients sent to this user"""
-        # TODO get rid of this, send status and messages immedietly when recieved by the intended receipient
+        # TODO get rid of this, send status and messages immedietly when received by the intended receipient
         if self.process_heartbeat_callback:
             return self.process_heartbeat_callback(self.accountID)
         else:

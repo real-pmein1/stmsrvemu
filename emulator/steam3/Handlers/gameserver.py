@@ -24,7 +24,7 @@ from utilities.database import statistics_db
 def handle_GS_ServerType(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS Server Type Information")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received GS Server Type Information")
     # might contain the following:
     #   appid
     #   flags
@@ -69,7 +69,7 @@ def handle_GS_ServerType(cmserver_obj, packet: CMPacket, client_obj: Client):
 # b'\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00Half-Life 2: Deathmatch dedicated server\x00dm_lockdown\x00'
 def handle_GS_StatusUpdate(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS Status Update")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received GS Status Update")
     request = packet.CMRequest
     data = request.data
     format_str = '<IIII'  # Corresponds to four DWORDs
@@ -212,7 +212,7 @@ def handle_GS_UserPlaying2(cmserver_obj, packet: CMPacket, client_obj: Client):
 def handle_GS_DisconnectNotice(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS Disconnect Notice")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received GS Disconnect Notice")
     accountID = request.accountID
     statistics_db.record_gameplay('disconnect', accountID)
     client_obj.disconnect_Game(cmserver_obj)
@@ -222,7 +222,7 @@ def handle_GS_DisconnectNotice(cmserver_obj, packet: CMPacket, client_obj: Clien
 def handle_GS_GetUserAchievementStatus(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved GS User Achievement Status Request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received GS User Achievement Status Request")
 
     # Initialize offset to keep track of position in the buffer
     offset = 0

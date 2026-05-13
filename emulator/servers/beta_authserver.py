@@ -107,7 +107,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
                 self.log.error(f"{clientid}Tried to connect to Beta auth server, while emulator is using non beta CDR")
 
         elif cmd == 1:  # Create User
-            self.log.info(f"{clientid}Recieved Create User Request")
+            self.log.info(f"{clientid}Received Create User Request")
             data = bytes.fromhex("30819d300d06092a864886f70d010101050003818b0030818702818100") + encryption.network_key.n.to_bytes(128, byteorder = "big") + bytes.fromhex("020111")
 
             client_socket.send_withlen(data, is_short = True)
@@ -143,7 +143,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
                 client_socket.send(b"\x00")
         # login
         elif cmd == 2:
-            self.log.info(f"{clientid}Recieved Login Request")
+            self.log.info(f"{clientid}Received Login Request")
             bio = io.BytesIO(msg[1:])
 
             sz1, = struct.unpack(">H", bio.read(2))
@@ -311,7 +311,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
 
             # subscribe to sub
             elif cmd == 5:
-                self.log.info(f"{clientid}Subscription Request Recieved")
+                self.log.info(f"{clientid}Subscription Request Received")
                 binsubid = bio.read()
                 if len(binsubid) != 4:
                     self.log.info(f"{clientid}SubID Incorrect length (> 4 bytes) {binsubid}")
@@ -336,7 +336,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
 
             # unsubscribe to sub
             elif cmd == 6:
-                self.log.info(f"{clientid}Unsubscribe Request Recieved")
+                self.log.info(f"{clientid}Unsubscribe Request Received")
                 binsubid = bio.read()
                 if len(binsubid) != 4:
                     self.log.info(f"{clientid}SubID Incorrect length (> 4 bytes) {binsubid}")
@@ -361,7 +361,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
 
             # refresh info
             elif cmd == 9:
-                self.log.info(f"{clientid}Recieved Refresh User Blob")
+                self.log.info(f"{clientid}Received Refresh User Blob")
                 try:
                     userblob = userdb.get_user_blob(username1, self.dict_blob, version)
                     binblob = blobs.blob_serialize(userblob)
@@ -381,7 +381,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
 
             # Content Ticket
             elif cmd == 10:
-                self.log.info(f"{clientid}Recieved Content Ticket Request")
+                self.log.info(f"{clientid}Received Content Ticket Request")
 
                 currtime = time.time()
 
@@ -409,7 +409,7 @@ class Beta1_AuthServer(TCPNetworkHandler):
 
         # Client Registry Request
         elif msg[0] == 11:
-            self.log.info(f"{clientid}Recieved Client Registry Request")
+            self.log.info(f"{clientid}Received Client Registry Request")
             binblob = blobs.blob_serialize(self.dict_blob)
 
             binblob = struct.pack(">I", len(binblob)) + binblob

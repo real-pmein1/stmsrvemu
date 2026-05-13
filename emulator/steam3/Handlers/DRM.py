@@ -28,7 +28,7 @@ data: b'6\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
 def handle_DRMProblemReport(cmserver_obj, packet: CMPacket, client_obj: Client):
     client_address = client_obj.ip_port
     request = packet.CMRequest
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved DRM Problem Report")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received DRM Problem Report")
 
     # Later, deserialize it
     report = MsgClientDRMProblemReport()

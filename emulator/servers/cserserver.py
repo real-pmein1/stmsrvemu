@@ -805,7 +805,7 @@ class CSERServer(UDPNetworkHandler):
         self.serversocket.sendto(ack_payload, address)
 
     def parse_surveyresults(self, address, data, clientid):
-        self.log.info(f'{clientid}Recieved Survey Results')
+        self.log.info(f'{clientid}Received Survey Results')
 
         ice = IceKey(1, [27, 200, 13, 14, 83, 45, 184, 54])
         data_bin = bytes.fromhex(data[3:].hex())

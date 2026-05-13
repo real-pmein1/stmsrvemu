@@ -318,7 +318,7 @@ def handle_New_ClientLogin(cmserver_obj, packet: CMPacket, client_obj: Client):
       uint8 m_qosLevel;
     }; """
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved New Client Login [NoImp]")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received New Client Login [NoImp]")
     request = packet.CMRequest
     #user_id = client_ref.steamID
 
@@ -350,7 +350,7 @@ def handle_AnonGameServerLogin(cmserver_obj, packet, client_obj):
     client encrypt pct
     """
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Anonymous GameServer Login")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Anonymous GameServer Login")
     request = packet.CMRequest
 
     try:
@@ -379,7 +379,7 @@ def handle_AnonUserLogin(cmserver_obj, packet, client_obj):
     """This message is used during create account, password recovery, etc..."""
     client_address = client_obj.ip_port
 
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Anonymous User Login")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Anonymous User Login")
     request = packet.CMRequest
     try:
         #steamid_instance = request.clientId2.to_bytes(4, "little")
@@ -417,7 +417,7 @@ def handle_RegisterAuthTIcket(cmserver_obj, packet: CMPacket, client_obj: Client
     \xd1\x948\xb6\x1f\xb1\xd9m\xd59g\xd5\x0e\x8aZla\xd3c\xe3\xa0\xbc\x04x'"""
     client_address = client_obj.ip_port
 
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Register Auth Ticket With CM")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Client Register Auth Ticket With CM")
     request = packet.CMRequest
 
     # TODO hold this in the database? or validate? what can i do even if it isnt valid, the client does not expect a response
@@ -441,7 +441,7 @@ def handle_RegisterAuthTIcket(cmserver_obj, packet: CMPacket, client_obj: Client
 def handle_LogOff(cmserver_obj, packet: CMPacket, client_obj: Client):
     request = packet.CMRequest
     client_address = client_obj.ip_port
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Logoff request")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Client Logoff request")
     client_obj.logoff_User(cmserver_obj)
     if not client_obj.socket:
         return -1  # we do not respond to TCP versions of this packet
@@ -464,7 +464,7 @@ def handle_ClientLogOn_WithCredentials(cmserver_obj, packet: CMPacket, client_ob
     """
     client_address = client_obj.ip_port
 
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Login With Credentials")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Client Login With Credentials")
     request = packet.CMRequest
     data = request.data
 
@@ -573,7 +573,7 @@ def handle_ClientLogOn_WithHash(cmserver_obj, packet: CMPacket, client_obj: Clie
     """
     client_address = client_obj.ip_port
 
-    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Recieved Client Login With Hash")
+    cmserver_obj.log.info(f"({client_address[0]}:{client_address[1]}): Received Client Login With Hash")
     request = packet.CMRequest
     data = request.data
 

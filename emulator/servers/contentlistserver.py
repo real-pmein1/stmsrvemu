@@ -257,11 +257,11 @@ class contentlistserver(TCPNetworkHandler):
     # Handle storing client info
     def handle_client_info(self, server_socket, client_address, decrypted_data, key):
         chunk_count = int().from_bytes(decrypted_data[0:2], 'little')
-        print(f"Recieved chunk count: {chunk_count}")
+        print(f"Received chunk count: {chunk_count}")
         constructed_packet = b''
         i = 0
         while i < chunk_count:
-            print(f"Recieved chunk {i + 1} of {chunk_count}")
+            print(f"Received chunk {i + 1} of {chunk_count}")
             packet = server_socket.recv(600)
             constructed_packet += packet
             i += 1

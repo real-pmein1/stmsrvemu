@@ -11,7 +11,7 @@ class MsgClientVACStatusResponse:
         uint16  m_cVACInstances
         uint8   m_bOutstandingChallenge
         uint8   _pad0                    (assumed for 4-byte alignment)
-        uint32  m_RTime32ChallengeRecieved
+        uint32  m_RTime32ChallengeReceived
         uint32  m_RTime32ChallengeDelivered
         uint32  m_RTime32ChallengeAnswered
         uint32  m_cbInboundResponse
@@ -52,8 +52,8 @@ class MsgClientVACStatusResponse:
             self._pad0 = 0
         offset += 1
 
-        # uint32 m_RTime32ChallengeRecieved
-        self.m_RTime32ChallengeRecieved, = self._U32.unpack_from(self.data, offset)
+        # uint32 m_RTime32ChallengeReceived
+        self.m_RTime32ChallengeReceived, = self._U32.unpack_from(self.data, offset)
         offset += 4
 
         # uint32 m_RTime32ChallengeDelivered
@@ -77,7 +77,7 @@ class MsgClientVACStatusResponse:
             "m_cbOutboundChallenge": self.m_cbOutboundChallenge,
             "m_cVACInstances": self.m_cVACInstances,
             "m_bOutstandingChallenge": self.m_bOutstandingChallenge,
-            "m_RTime32ChallengeRecieved": self.m_RTime32ChallengeRecieved,
+            "m_RTime32ChallengeReceived": self.m_RTime32ChallengeReceived,
             "m_RTime32ChallengeDelivered": self.m_RTime32ChallengeDelivered,
             "m_RTime32ChallengeAnswered": self.m_RTime32ChallengeAnswered,
             "m_cbInboundResponse": self.m_cbInboundResponse,
