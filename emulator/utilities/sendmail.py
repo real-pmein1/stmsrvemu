@@ -70,7 +70,7 @@ def load_email_template(template_name, **kwargs):
     if http_ip:
         kwargs['network_url'] = http_ip
     elif http_domainname:
-        kwargs['network_url'] = f"http://{http_domainname}"
+        kwargs['network_url'] = f"{http_domainname}"
     else:
         kwargs['network_url'] = ''
         print("WARNING: Neither 'http_ip' nor 'http_domainname' configured — email links will be broken!")
