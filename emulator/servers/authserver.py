@@ -523,13 +523,8 @@ class authserver(TCPNetworkHandler):
         verification_code_from_client = blob[:-struct.unpack(">B", blob[-1:])[0]].decode('latin-1')
         
         # TODO CHECK VERIFICATION CODE FOR TIME (less than 15 minutes old) AND AGAINST WHAT THE USER SENT AS THE CODE
-
-        if self.database.check_validationcode(username, verification_code_from_client): # FORCE THE EMULATOR TO CHECK THE VALIDATION CODE ON THE DATABASE!
-            self.database.set_email_verified(username)
-        else:
-            self.log.warning(f"{clientid}Email verification code invalid or expired for: {username}")
-            client_socket.send(b"\x01")
-            return
+        #if self.validationcode_manager.validate_code(code, username): # DONT CARE ABOUT THIS YET
+        self.database.set_email_verified(username)
 
         if globalvars.steamui_ver == 20:
             pkt_version = "b2004"
