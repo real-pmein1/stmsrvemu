@@ -346,10 +346,11 @@ class contentserver(TCPNetworkHandler):
             islan = False
             suffix = "_wan"
 
-        # Moved this out of the loop to improve preformance
+        # Moved this out of the loop to improve performance
         custom = self.config['enable_custom_banner'][0].lower() == 't'
         static_url = self.config['custom_banner_url'] if custom \
                      else f"http://{globalvars.get_octal_ip(islan, False)}/platform/banner/random.php"
+        if static_url == "": static_url = f"http://{globalvars.get_octal_ip(islan, False)}/platform/banner/random.php"
         self.url_len = len(static_url)
         self.url_enc = static_url.encode("latin-1")
 
@@ -1565,7 +1566,7 @@ class contentserver(TCPNetworkHandler):
 
                     break
 
-        # \X07 FOR 2004+ - REENABLED
+        # \X07 FOR 2004+
         elif msg == b"\x00\x00\x00\x07":
             self.log.info(f"{clientid}2004 Storage mode entered")
 
