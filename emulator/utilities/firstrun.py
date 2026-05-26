@@ -81,7 +81,15 @@ def restart_script():
 
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         # For compiled executables
-        os.execv(globalvars.ORIGINAL_PYTHON_EXECUTABLE, [globalvars.ORIGINAL_PYTHON_EXECUTABLE] + globalvars.ORIGINAL_CMD_ARGS[1:])
+        if os.path.isfile("emulatorTmp.exe"):
+            os.remove("emulatorTmp.exe")
+        if globalvars.IS_WINDOWS:
+            import shutil
+            shutil.copy("emulator.exe", "emulatorTmp.exe")
+            subprocess.Popen("emulatorTmp.exe")
+            sys.exit(0)
+        else:
+            os.execv(globalvars.ORIGINAL_PYTHON_EXECUTABLE, [globalvars.ORIGINAL_PYTHON_EXECUTABLE] + globalvars.ORIGINAL_CMD_ARGS[1:])
     else:
         # For scripts run from source
         # If the script is run with a specific Python interpreter, use that
