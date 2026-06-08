@@ -1299,10 +1299,8 @@ def initialize(server_type: int = 0):
                     with open("config.ini", "r") as f:
                         lines = f.readlines()
                         for line in lines:
-                            if line.strip().startswith("server_ip="): server_ip = line
-                            if line.strip().startswith("database_host="): database_host = line
-                    if server_ip != database_host:
-                        save_config_value("database_host", server_ip)
+                            if line.strip().startswith("server_ip="): server_ip = line[10:]
+                    save_config_value("database_host", server_ip)
                 shutil.copy('emulator.ini', os.path.join(cache_dir, 'emulator.ini.cache'))
                 print()
         except:  # FAILURE, ASSUME CACHE CORRUPTED
