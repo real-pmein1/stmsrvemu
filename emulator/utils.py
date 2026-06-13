@@ -1278,6 +1278,7 @@ def initialize(server_type: int = 0):
                     line = line[:line.index("\t")]
                 cache_list.append(line)
 
+            server_ip = None
             for line1 in ini_list:
                 if "port" in line1 or "ip" in line1 or "http_domainname" in line1 or "enable_steam3_servers" in line1:
                     lineP1, lineP2 = line1.split("=")
@@ -1285,6 +1286,11 @@ def initialize(server_type: int = 0):
                         if (line2.startswith(lineP1 + "=") or line2.startswith(lineP1[1:] + "=")) and not line2.startswith(";" + lineP1[1:] + "="):
                             if line1 != line2:
                                 file_altered = True
+                                if line1.startswith("server_ip="):
+                                    if "#" in line1:
+                                        server_ip = line1[10:line1.index("#")
+                                    else
+                                        server_ip = line1[10:]
                             break
 
             if file_altered:
@@ -1295,11 +1301,6 @@ def initialize(server_type: int = 0):
                 os.mkdir(os.path.join(cache_dir, 'internal'))
                 os.mkdir(os.path.join(cache_dir, 'external'))
                 if ["use_builtin_mysql"].lower() == "true":
-                    lines = null
-                    with open("config.ini", "r") as f:
-                        lines = f.readlines()
-                        for line in lines:
-                            if line.strip().startswith("server_ip="): server_ip = line[10:]
                     save_config_value("database_host", server_ip)
                 shutil.copy('emulator.ini', os.path.join(cache_dir, 'emulator.ini.cache'))
                 print()
