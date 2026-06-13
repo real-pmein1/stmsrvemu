@@ -1289,7 +1289,7 @@ def initialize(server_type: int = 0):
                                 if line1.startswith("server_ip="):
                                     if "#" in line1:
                                         server_ip = line1[10:line1.index("#")
-                                    else
+                                    else:
                                         server_ip = line1[10:]
                             break
 
