@@ -487,6 +487,7 @@ def read_blob(islan, is2003=False):
     return blob
 
 def cache_cdr(islan, isAppApproval_merge = False):
+    config = get_config() # in case it's changed
     neuter_type = "LAN" if islan else "WAN"
     time.sleep(1)
     date_separator = ["-", "/", "_", "."]
