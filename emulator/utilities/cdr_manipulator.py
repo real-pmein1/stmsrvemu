@@ -487,7 +487,7 @@ def read_blob(islan, is2003=False):
     return blob
 
 def cache_cdr(islan, isAppApproval_merge = False):
-    config = get_config() # in case it's changed
+    config = read_config() # in case it's changed
     neuter_type = "LAN" if islan else "WAN"
     time.sleep(1)
     date_separator = ["-", "/", "_", "."]
@@ -678,11 +678,13 @@ def cache_cdr_unified(isAppApproval_merge=False):
         log.warning("Shutdown in progress, skipping CDR caching")
         return None, None
 
+    config = read_config() # in case it's changed
+
     # Clear replacement string caches to ensure fresh LAN/WAN IPs are used
     globalvars.clear_replacement_cache()
 
     # Debug: Show config IP values
-    log.debug(f"Config IPs - server_ip: {globalvars.config['server_ip']}, public_ip: {globalvars.config['public_ip']}, http_ip: {globalvars.config['http_ip']}, http_domainname: {globalvars.config['http_domainname']}")
+    log.debug(f"Config IPs - server_ip: {config['server_ip']}, public_ip: {config['public_ip']}, http_ip: {config['http_ip']}, http_domainname: {config['http_domainname']}, database_host: {config['database_host']}")
 
     log.info("Creating unified cached blob from ContentDescriptionDB (LAN + WAN)...")
     start_time = time.time()
