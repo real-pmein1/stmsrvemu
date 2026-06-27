@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime, date
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 
 import globalvars
@@ -82,29 +82,27 @@ class base_stats_dbdriver:
             return False
 
     def record_survey(self, results):
-        # store survey results and update aggregated totals
+        # store survey results and update aggregated totals atomically
         try:
             raw = self.SurveyRaw(
                 ts=datetime.utcnow(),
                 data=json.dumps(results, default=_json_default),
             )
             self.session.add(raw)
+            self.session.flush()
 
             for field, value in results.items():
                 if field == 'DecryptionOK':
                     continue
                 val = str(value)
-                tot = (
-                    self.session
-                        .query(self.SurveyTotals)
-                        .filter_by(field=field, option_value=val)
-                        .first()
+                self.session.execute(
+                    text(
+                        "INSERT INTO survey_totals (field, option_value, count) "
+                        "VALUES (:field, :option_value, 1) "
+                        "ON DUPLICATE KEY UPDATE count = count + 1"
+                    ),
+                    {"field": field, "option_value": val}
                 )
-                if tot:
-                    tot.count += 1
-                else:
-                    tot = self.SurveyTotals(field=field, option_value=val, count=1)
-                    self.session.add(tot)
 
             self.session.commit()
             return True
@@ -281,4 +279,3 @@ def _get_driver():
 def __getattr__(name):
     """Delegate attribute access to the underlying driver instance."""
     return getattr(_get_driver(), name)
-

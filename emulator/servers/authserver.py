@@ -523,7 +523,6 @@ class authserver(TCPNetworkHandler):
         verification_code_from_client = blob[:-struct.unpack(">B", blob[-1:])[0]].decode('latin-1')
         
         # TODO CHECK VERIFICATION CODE FOR TIME (less than 15 minutes old) AND AGAINST WHAT THE USER SENT AS THE CODE
-
         #if self.validationcode_manager.validate_code(code, username): # DONT CARE ABOUT THIS YET
         self.database.set_email_verified(username)
 
