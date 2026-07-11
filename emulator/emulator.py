@@ -270,7 +270,7 @@ if config["run_all_servers"].lower() == "true":
     #    gt_thread = GlobalTrackerThread(int(config.get("global_tracker_port", 1300)))
     #    start_server_thread(gt_thread, 'GlobalTrackerServer', 'Global Tracker Server')
 
-    tracker_server = TrackerServer(1200, config)
+    tracker_server = TrackerServer(int(config["tracker_server_port"]), config)
     start_server_thread(tracker_server, 'TrackerServer', 'Tracker Server')
 
     log.info("Made by ymgve Modified by STMServer Team")
@@ -295,7 +295,7 @@ if config["run_all_servers"].lower() == "true":
         start_server_thread(ftp_server_thread, 'FTPUpdateServer', '2002 Beta 1 Update FTP Server', extra_args={'port': ftp_port})
 else:
     if int(globalvars.steamui_ver) < 120:
-        tracker_server = TrackerServer(1200, config)
+        tracker_server = TrackerServer(int(config["tracker_server_port"]), config)
         start_server_thread(tracker_server, 'TrackerServer', 'Tracker Server')
         log.info("Made by ymgve Modified by STMServer Team")
 
