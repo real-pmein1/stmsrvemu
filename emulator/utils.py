@@ -886,7 +886,7 @@ def autoupdate():
                             os.remove(file)
                     if globalvars.emu_ver:
                         if int(globalvars.emu_ver, 16) <= 3: # For forcing cache flush from py27 to py39
-                            print("Config change detected, flushing cache...")
+                            print("Config change detected, flushing cache (Python update)...")
                             cache_dir = os.path.join('files', 'cache')
                             shutil.rmtree(cache_dir)
                             os.mkdir(cache_dir)
@@ -1245,7 +1245,7 @@ def initialize(server_type: int = 0):
 
     cache_ini_path = os.path.join('files', 'cache', 'emulator.ini.cache')
     if not os.path.isfile(cache_ini_path):
-        print("Config change detected, flushing cache...")
+        print("Config change detected, flushing cache (no cache)...")
         cache_dir = os.path.join('files', 'cache')
         shutil.rmtree(cache_dir)
         try:
@@ -1288,16 +1288,23 @@ def initialize(server_type: int = 0):
                             break
 
             if file_altered:
-                print("Config change detected, flushing cache...")
+                print("Config change detected, flushing cache (ini change)...")
                 cache_dir = os.path.join('files', 'cache')
                 shutil.rmtree(cache_dir)
                 os.mkdir(cache_dir)
                 os.mkdir(os.path.join(cache_dir, 'internal'))
                 os.mkdir(os.path.join(cache_dir, 'external'))
+                #if config["use_builtin_mysql"].lower() == "true": # fixed but now unused, left in case we ever want to use this again
+                #    lines = None
+                #    with open("emulator.ini", "r") as f:
+                #        lines = f.readlines()
+                #        for line in lines:
+                #            if line.strip().startswith("server_ip="): server_ip = line[10:].split(None, 1)[0]
+                #    save_config_value("database_host", server_ip)
                 shutil.copy('emulator.ini', os.path.join(cache_dir, 'emulator.ini.cache'))
                 print()
         except:  # FAILURE, ASSUME CACHE CORRUPTED
-            print("Config change detected, flushing cache...")
+            print("Config change detected, flushing cache (corruption)...")
             cache_dir = os.path.join('files', 'cache')
             shutil.rmtree(cache_dir)
             os.mkdir(cache_dir)
@@ -1324,11 +1331,21 @@ def check_autoip_config():
         setpublicip()
         # RELOAD THE CONFIG SO THE MEMORY CONTAINS THE LATEST CHANGES
         config = configurations.read_config()
+        # SET INTERNAL DB IP TO SERVER IP
+        if config["use_builtin_mysql"].lower() == "true": save_config_value("database_host", config["server_ip"])
+        # RELOAD THE CONFIG SO THE MEMORY CONTAINS THE LATEST CHANGES
+        config = configurations.read_config()
+        globalvars.config = configurations.read_config()
     else:
         #setcommunityip()
         config = configurations.read_config()
         checkip()
         setpublicip()
+        # SET INTERNAL DB IP TO SERVER IP
+        if config["use_builtin_mysql"].lower() == "true": save_config_value("database_host", config["server_ip"])
+        # RELOAD THE CONFIG SO THE MEMORY CONTAINS THE LATEST CHANGES
+        config = configurations.read_config()
+        globalvars.config = configurations.read_config()
 
 
 def finalinitialize(log, server_type: int = 0):

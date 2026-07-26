@@ -1326,6 +1326,7 @@ def grab_correct_steamworks_sdk():
 
     steamworks_data_root = os.path.join("files", "steamworks_data")
     archives_root = os.path.join("files", "steamworks_archives")
+    archives_root = config["sdktoolsdir"]
     archive_path = os.path.join(archives_root, f"steamworks_sdk_{sdk_suffix}.zip")
 
     # Marker file we expect for the required version
@@ -1408,6 +1409,8 @@ def auto_neuter(param1, param2, param3):
     halt_processing.clear()
     app_id = None
     app_ver = None
+
+    config = get_config() # in case of auto IP change
 
     #create folders
     for directory in [config["storagedir"], config["manifestdir"]]:

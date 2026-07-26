@@ -79,6 +79,7 @@ def load_blob_from_file(file_path):
 
 
 def neuter_ccdb(req_type='dict'):
+    config = get_config() # in case it's changed
     date_separator = ["-", "/", "_", "."]
     time_separator = [":", "_"]
     new_date = False

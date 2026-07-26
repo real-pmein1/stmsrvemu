@@ -84,8 +84,8 @@ class latencyaggregater:
 class latencychecker:
     """This class is meant to be called from the content server or client directory server to listen for packets from CSDS"""
     logger = logging.getLogger("latencychk")
-    def __init__(self, port):
-        self.server_ip = "0.0.0.0"
+    def __init__(self, ip, port):
+        self.server_ip = ip # "0.0.0.0"
         self.server_port = port
 
     def start(self):

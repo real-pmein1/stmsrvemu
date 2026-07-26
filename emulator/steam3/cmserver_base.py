@@ -389,7 +389,10 @@ class CMServer_Base:
                     # thread_local_data is not properly propagated
                     if hasattr(request_packet, 'sourceJobID') and request_packet.sourceJobID != -1:
                         client_obj.last_request_source_job_id = request_packet.sourceJobID
-                        self.log.debug(f"Cached sourceJobID={request_packet.sourceJobID:#x} on client")
+                        try:
+                            self.log.debug(f"Cached sourceJobID={request_packet.sourceJobID:#x} on client")
+                        except:
+                            self.log.debug("Failed debug message: Cached sourceJobID on client")
                     else:
                         client_obj.last_request_source_job_id = None
 

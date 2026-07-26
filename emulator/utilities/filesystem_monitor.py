@@ -226,6 +226,13 @@ class CustomEventHandler(FileSystemEventHandler):
         if os.path.join("files", "firstblob.") in file_path or os.path.join("files", "secondblob.") in file_path:
             self.working_now = True
             self.handle_blob_on_modified(event)
+        elif self._is_watched_directory_event(event):
+            if not event.is_directory and self._has_watched_extension(file_path):
+                changed = self._refresh_relevant_directory(file_path)
+                if changed:
+                    self.handle_directory_event(event, 'created')
+                else:
+                    log.debug(f"Ignored created directory event: No real change in {file_path}")
             
     def on_deleted(self, event):
         file_path = os.path.normpath(event.src_path)
@@ -266,14 +273,22 @@ class CustomEventHandler(FileSystemEventHandler):
         return file_path in self.files_to_monitor
 
     def _is_watched_directory_event(self, event):
-        # Check if the event is within any of the watched directories
+        # Check if the source or destination path is within any watched directory.
+        # Move events from temp into mod_blob have an external src_path and must
+        # be matched using dest_path.
+        event_paths = [event.src_path]
+        dest_path = getattr(event, "dest_path", None)
+        if dest_path:
+            event_paths.append(dest_path)
+
         for directory in self.directories_to_watch:
-            try:
-                if os.path.commonpath([directory, event.src_path]) == directory:
-                    return True
-            except ValueError:
-                # Edge case if the paths have no common prefix
-                pass
+            for event_path in event_paths:
+                try:
+                    if os.path.commonpath([directory, event_path]) == directory:
+                        return True
+                except ValueError:
+                    # Edge case if the paths have no common prefix
+                    pass
         return False
 
     def _has_watched_extension(self, file_path):
@@ -354,7 +369,9 @@ class CustomEventHandler(FileSystemEventHandler):
     # =====================
 
     def handle_directory_event(self, event, event_type):
-        file_path = os.path.normpath(event.src_path)
+        src_path = os.path.normpath(event.src_path)
+        dest_path = os.path.normpath(getattr(event, "dest_path", "")) if getattr(event, "dest_path", None) else ""
+        file_path = dest_path if dest_path and self._path_is_in_watched_directory(dest_path) else src_path
         log.debug(f"NOTICE: Detected {event_type} event in directory: {file_path}")
 
         # Find which monitored directory this file belongs to
@@ -370,6 +387,15 @@ class CustomEventHandler(FileSystemEventHandler):
         if target_dir:
             # Queue for batch processing instead of immediate handling
             self._queue_directory_event(target_dir, event_type)
+
+    def _path_is_in_watched_directory(self, file_path):
+        for directory in self.directories_to_watch:
+            try:
+                if os.path.commonpath([directory, file_path]) == directory:
+                    return True
+            except ValueError:
+                pass
+        return False
 
     def handle_blob_on_modified(self, event):
         # Skip processing if shutdown is in progress
