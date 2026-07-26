@@ -49,6 +49,7 @@ def read_config():
             'v3manifestdir2':                      "files/v3manifests2/",  # FIXME Eventually Deprecate After v.8 Release
             'v4manifestdir':                       "files/v4manifests/",  # FIXME Eventually Deprecate After v.8 Release
             'steam2sdkdir':                        "files/steam2_sdk_depots/",
+            'sdktoolsdir':                         "files/steamworks_archives/",
             'packagedir':                          "files/packages/",
             'blobdir':                             "files/blobs/",
             'vacmoduledir':                        "files/vacmodules/",

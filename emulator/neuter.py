@@ -1326,6 +1326,7 @@ def grab_correct_steamworks_sdk():
 
     steamworks_data_root = os.path.join("files", "steamworks_data")
     archives_root = os.path.join("files", "steamworks_archives")
+    archives_root = config["sdktoolsdir"]
     archive_path = os.path.join(archives_root, f"steamworks_sdk_{sdk_suffix}.zip")
 
     # Marker file we expect for the required version
