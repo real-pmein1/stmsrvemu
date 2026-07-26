@@ -144,11 +144,14 @@ class FTPMenuManager:
         """
         from utilities.database.base_dbdriver import AwaitingReview
         try:
-            # Expire cached data to ensure fresh read from database
-            self.database.session.expire_all()
+            self.database.reconcile_pending_uploads()
+            self.database._refresh_session()
             entries = self.database.session.query(AwaitingReview).all()
             pending = []
             for entry in entries:
+                if not self.database.pending_upload_has_xml(entry):
+                    log.debug(f"Hiding depot-only pending upload {entry.appid} until its app XML is uploaded")
+                    continue
                 pending.append({
                     "appid": entry.appid,
                     "uploader": entry.uploader,
@@ -165,19 +168,101 @@ class FTPMenuManager:
             log.error(f"Error getting pending applications: {e}")
             return []
 
+    def _get_app_record_id(self, app_record):
+        app_id = app_record.get("AppId")
+        if app_id:
+            return str(app_id)
+        app_id_elem = app_record.find("AppId")
+        if app_id_elem is not None and app_id_elem.text:
+            return app_id_elem.text.strip()
+        return None
+
+    def _extract_xml_appids(self, xml_path):
+        appids = set()
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            for app_record in root.findall(".//AppRecord"):
+                app_id = self._get_app_record_id(app_record)
+                if app_id:
+                    appids.add(str(app_id))
+        except Exception as e:
+            log.warning(f"Could not parse AppIds from XML {xml_path}: {e}")
+        return appids
+
+    def _pending_related_appids(self, appid, pending):
+        related_appids = {str(appid)}
+        for file_path in pending.get('file_paths', []):
+            if file_path and file_path.lower().endswith('.xml') and os.path.exists(file_path):
+                related_appids.update(self._extract_xml_appids(file_path))
+        return related_appids
+
+    def _find_xml_for_approval(self, appid, pending, temp_directory=None):
+        """
+        Locate the pending XML for an app, even if the database file_paths list is
+        stale or was created by an older build.
+        """
+        candidate_paths = []
+
+        for file_path in pending.get('file_paths', []):
+            if file_path and file_path.lower().endswith('.xml'):
+                candidate_paths.append(file_path)
+
+        uploader = pending.get('uploader') or ''
+        search_dirs = []
+        if temp_directory:
+            search_dirs.append(temp_directory)
+        if uploader:
+            search_dirs.append(os.path.join("files", "temp", uploader))
+        search_dirs.append(os.path.join("files", "temp"))
+
+        for directory in search_dirs:
+            if not directory:
+                continue
+            candidate_paths.append(os.path.join(directory, f"{appid}.xml"))
+            candidate_paths.append(os.path.join(directory, "ContentDescriptionDB.xml"))
+
+        seen = set()
+        for path in candidate_paths:
+            norm_path = os.path.normpath(path)
+            if norm_path in seen:
+                continue
+            seen.add(norm_path)
+            if os.path.exists(norm_path):
+                return norm_path
+
+        return None
+
+    def _move_xml_to_mod_blob(self, appid, xml_src_path, mod_blob_dir, modified_subscriptions=None):
+        """
+        Move an approved XML into mod_blob using "[appid] App Name.xml".
+        """
+        from utilities.cdr_manipulator import move_xml_to_mod_blob_with_backup
+
+        if modified_subscriptions:
+            self._update_xml_subscriptions(xml_src_path, modified_subscriptions)
+
+        dest, backups = move_xml_to_mod_blob_with_backup(xml_src_path, appid, mod_blob_dir)
+        if backups:
+            log.info(f"Backed up {len(backups)} existing XML blob(s) for AppID {appid}")
+        log.info(f"Approved: moved XML to {dest}")
+        return dest
+
     def approve_application(self, appid):
         """
         Approve a pending application upload.
         All files (XML, DAT, BLOB) are tracked in file_paths.
         XML files go to mod_blob directory, DAT/BLOB files go to steam2_sdk_depots.
         Auto-discovery is still performed as a fallback for any untracked files.
-        After moving, triggers blob merge via cache_cdr.
+        After moving, merges the XML into cached blobs and reloads memory.
         """
-        from utilities.cdr_manipulator import cache_cdr, load_blobs_to_memory
+        from utilities.cdr_manipulator import load_blobs_to_memory, merge_xml_into_cached_blobs
 
         pending = self.database.get_pending_upload_by_appid(appid)
         if not pending:
             return False, "Application not found"
+        if not self.database.pending_upload_has_xml(pending):
+            return False, "Application XML has not been uploaded yet. Depot files are waiting for the app-level ContentDescriptionDB.xml."
 
         sdk_dir = self.database.get_sdk_depot_directory()
         mod_blob_dir = self.database.get_mod_blob_directory()
@@ -208,8 +293,7 @@ class FTPMenuManager:
                 try:
                     if ext == '.xml':
                         # XML files go to mod_blob directory
-                        dest = os.path.join(mod_blob_dir, filename)
-                        shutil.move(file_path, dest)
+                        dest = self._move_xml_to_mod_blob(appid, file_path, mod_blob_dir)
                         moved_files.append(dest)
                         xml_dest_path = dest
                         log.info(f"Approved: moved {filename} to {dest}")
@@ -227,9 +311,10 @@ class FTPMenuManager:
             # Auto-discover any remaining depot files (fallback for untracked files)
             if temp_directory and os.path.isdir(temp_directory):
                 try:
+                    related_appids = self._pending_related_appids(appid, pending)
                     for filename in os.listdir(temp_directory):
-                        # Check if filename starts with appid followed by underscore
-                        if filename.startswith(f"{appid}_"):
+                        # Check if filename starts with app/depot id followed by underscore
+                        if any(filename.startswith(f"{related_appid}_") for related_appid in related_appids):
                             ext = os.path.splitext(filename)[1].lower()
                             if ext in {'.dat', '.blob'}:
                                 src_path = os.path.join(temp_directory, filename)
@@ -243,17 +328,30 @@ class FTPMenuManager:
                 except Exception as e:
                     errors.append(f"Error scanning temp directory: {e}")
 
-            # After moving XML, trigger blob merge via cache_cdr
+            # Fallback for stale pending rows: find the XML in temp even if it was
+            # not present in pending.file_paths when the admin session loaded.
+            if not xml_dest_path:
+                fallback_xml = self._find_xml_for_approval(appid, pending, temp_directory)
+                if fallback_xml:
+                    try:
+                        dest = self._move_xml_to_mod_blob(appid, fallback_xml, mod_blob_dir)
+                        moved_files.append(dest)
+                        xml_dest_path = dest
+                        log.info(f"Approved: found and moved untracked XML {fallback_xml} to {dest}")
+                    except Exception as e:
+                        errors.append(f"Error moving XML {fallback_xml}: {e}")
+
+            # After moving XML, merge it directly into the cached blobs and refresh memory.
             if xml_dest_path and os.path.exists(xml_dest_path):
                 try:
-                    log.info(f"Triggering cache_cdr for LAN after approval of appid {appid}")
-                    cache_cdr(islan=True, isAppApproval_merge=True)
-                    log.info(f"Triggering cache_cdr for WAN after approval of appid {appid}")
-                    cache_cdr(islan=False, isAppApproval_merge=True)
-                    log.info(f"Blob merge completed for appid {appid}")
-                    # Reload blobs into memory from the updated cache files
-                    load_blobs_to_memory()
-                    log.info(f"Memory blobs reloaded after approval of appid {appid}")
+                    merge_success, merge_msg = merge_xml_into_cached_blobs(xml_dest_path)
+                    if merge_success:
+                        log.info(f"Blob merge completed for appid {appid}: {merge_msg}")
+                        load_blobs_to_memory()
+                        log.info(f"Memory blobs reloaded after approval of appid {appid}")
+                    else:
+                        errors.append(f"Cache merge failed: {merge_msg}")
+                        log.error(f"Failed to merge appid {appid} into cached blobs: {merge_msg}")
                 except Exception as e:
                     errors.append(f"Cache merge failed: {e}")
                     log.error(f"Failed to merge appid {appid} into cached blobs: {e}")
@@ -284,6 +382,8 @@ class FTPMenuManager:
         pending = self.database.get_pending_upload_by_appid(appid)
         if not pending:
             return False, "Application not found"
+        if not self.database.pending_upload_has_xml(pending):
+            return False, "Application XML has not been uploaded yet. Depot files are waiting for the app-level ContentDescriptionDB.xml."
 
         deleted_files = []
         try:
@@ -455,8 +555,7 @@ class FTPMenuManager:
         """
         from utilities.database.base_dbdriver import AwaitingReview
         try:
-            # Expire cached data to ensure fresh read from database
-            self.database.session.expire_all()
+            self.database._refresh_session()
             entry = self.database.session.query(AwaitingReview).filter_by(appid=appid).first()
             if not entry:
                 return False, "Application not found", "", ""
@@ -575,9 +674,9 @@ class FTPMenuManager:
         All files (XML, DAT, BLOB) are tracked in file_paths.
         XML files go to mod_blob directory, DAT/BLOB files go to steam2_sdk_depots.
         Auto-discovery is still performed as a fallback for any untracked files.
-        After moving, triggers blob merge via cache_cdr.
+        After moving, merges the XML into cached blobs and reloads memory.
         """
-        from utilities.cdr_manipulator import cache_cdr, load_blobs_to_memory
+        from utilities.cdr_manipulator import load_blobs_to_memory, merge_xml_into_cached_blobs
 
         pending = self.database.get_pending_upload_by_appid(appid)
         if not pending:
@@ -610,11 +709,8 @@ class FTPMenuManager:
 
                 try:
                     if ext == '.xml':
-                        dest = os.path.join(mod_blob_dir, filename)
                         # If subscriptions were modified, update the XML before moving
-                        if modified_subscriptions:
-                            self._update_xml_subscriptions(file_path, modified_subscriptions)
-                        shutil.move(file_path, dest)
+                        dest = self._move_xml_to_mod_blob(appid, file_path, mod_blob_dir, modified_subscriptions)
                         moved_files.append(dest)
                         xml_dest_path = dest
                         log.info(f"Approved: moved {filename} to {dest}")
@@ -631,9 +727,10 @@ class FTPMenuManager:
             # Auto-discover any remaining depot files (fallback for untracked files)
             if temp_directory and os.path.isdir(temp_directory):
                 try:
+                    related_appids = self._pending_related_appids(appid, pending)
                     for filename in os.listdir(temp_directory):
-                        # Check if filename starts with appid followed by underscore
-                        if filename.startswith(f"{appid}_"):
+                        # Check if filename starts with app/depot id followed by underscore
+                        if any(filename.startswith(f"{related_appid}_") for related_appid in related_appids):
                             ext = os.path.splitext(filename)[1].lower()
                             if ext in {'.dat', '.blob'}:
                                 src_path = os.path.join(temp_directory, filename)
@@ -647,17 +744,30 @@ class FTPMenuManager:
                 except Exception as e:
                     errors.append(f"Error scanning temp directory: {e}")
 
-            # After moving XML, trigger blob merge via cache_cdr
+            # Fallback for stale pending rows: find the XML in temp even if it was
+            # not present in pending.file_paths when the admin session loaded.
+            if not xml_dest_path:
+                fallback_xml = self._find_xml_for_approval(appid, pending, temp_directory)
+                if fallback_xml:
+                    try:
+                        dest = self._move_xml_to_mod_blob(appid, fallback_xml, mod_blob_dir, modified_subscriptions)
+                        moved_files.append(dest)
+                        xml_dest_path = dest
+                        log.info(f"Approved: found and moved untracked XML {fallback_xml} to {dest}")
+                    except Exception as e:
+                        errors.append(f"Error moving XML {fallback_xml}: {e}")
+
+            # After moving XML, merge it directly into the cached blobs and refresh memory.
             if xml_dest_path and os.path.exists(xml_dest_path):
                 try:
-                    log.info(f"Triggering cache_cdr for LAN after approval of appid {appid}")
-                    cache_cdr(islan=True, isAppApproval_merge=True)
-                    log.info(f"Triggering cache_cdr for WAN after approval of appid {appid}")
-                    cache_cdr(islan=False, isAppApproval_merge=True)
-                    log.info(f"Blob merge completed for appid {appid}")
-                    # Reload blobs into memory from the updated cache files
-                    load_blobs_to_memory()
-                    log.info(f"Memory blobs reloaded after approval of appid {appid}")
+                    merge_success, merge_msg = merge_xml_into_cached_blobs(xml_dest_path)
+                    if merge_success:
+                        log.info(f"Blob merge completed for appid {appid}: {merge_msg}")
+                        load_blobs_to_memory()
+                        log.info(f"Memory blobs reloaded after approval of appid {appid}")
+                    else:
+                        errors.append(f"Cache merge failed: {merge_msg}")
+                        log.error(f"Failed to merge appid {appid} into cached blobs: {merge_msg}")
                 except Exception as e:
                     errors.append(f"Cache merge failed: {e}")
                     log.error(f"Failed to merge appid {appid} into cached blobs: {e}")
