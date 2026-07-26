@@ -15,6 +15,7 @@ Table definitions are in base_dbdriver.py:
 
 import os
 import logging
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -85,53 +86,188 @@ class ftp_dbdriver:
             self.session.rollback()
             return f"Error adding pending upload: {e}"
 
-    def add_or_update_pending_upload(self, appid, uploader, upload_datetime, file_size, uploader_ip, uploader_port, new_file, file_dir, app_names="", subscriptions=""):
+    def add_or_update_pending_upload(self, appid, uploader, upload_datetime, file_size, uploader_ip, uploader_port, new_file, file_dir, app_names="", subscriptions="", related_appids=None):
         """
         If an entry for appid exists, update its total_size and append the new file path.
         Otherwise, create a new entry.
+
+        Depot DAT/BLOB uploads may arrive before the XML and are initially keyed
+        by the depot id from the filename. Once the XML arrives, related_appids
+        lets us fold those depot rows into the app-level pending review row.
         """
         try:
-            self.session.expire_all()
+            self._refresh_session()
+            appid = str(appid)
+            related_appids = {str(app_id) for app_id in (related_appids or []) if str(app_id)}
+            if not related_appids:
+                parent_appid = self._find_parent_appid_for_upload(appid, uploader)
+                if parent_appid:
+                    appid = parent_appid
+
             entry = self.session.query(AwaitingReview).filter_by(appid=appid).first()
             new_full_path = os.path.join(file_dir, new_file)
             if entry:
                 entry.total_size += file_size
-                if entry.file_paths:
-                    entry.file_paths += "|" + new_full_path
-                else:
-                    entry.file_paths = new_full_path
+                entry.file_paths = self._append_file_path(entry.file_paths, new_full_path)
                 # Always update app_names and subscriptions if provided - XML is the
                 # authoritative source for this metadata and should take precedence
                 if app_names:
                     entry.app_names = app_names
                 if subscriptions:
                     entry.subscriptions = subscriptions
+                self._merge_related_pending_entries(entry, related_appids)
                 self.session.commit()
                 return True
             else:
-                record = {
-                    "appid": appid,
-                    "uploader": uploader,
-                    "upload_datetime": upload_datetime,
-                    "total_size": file_size,
-                    "uploader_ip": uploader_ip,
-                    "uploader_port": uploader_port,
-                    "file_paths": new_full_path,
-                    "app_names": app_names,
-                    "subscriptions": subscriptions
-                }
-                return self.add_pending_upload(record)
+                entry = AwaitingReview(
+                    appid=appid,
+                    uploader=uploader,
+                    upload_datetime=upload_datetime,
+                    total_size=file_size,
+                    uploader_ip=uploader_ip,
+                    uploader_port=str(uploader_port),
+                    file_paths=new_full_path,
+                    app_names=app_names,
+                    subscriptions=subscriptions
+                )
+                self.session.add(entry)
+                self.session.flush()
+                self._merge_related_pending_entries(entry, related_appids)
+                self.session.commit()
+                return True
         except SQLAlchemyError as e:
             self.session.rollback()
             return f"Error updating pending upload: {e}"
 
+    def reconcile_pending_uploads(self):
+        """
+        Fold depot-only pending rows into app-level rows when an XML upload is
+        available. Safe to call before displaying or approving pending apps.
+        """
+        try:
+            self._refresh_session()
+            changed = False
+            entries = self.session.query(AwaitingReview).all()
+            for entry in entries:
+                xml_path = self._find_xml_path(entry)
+                if not xml_path:
+                    continue
+                related_appids = self._extract_xml_appids(xml_path)
+                if related_appids:
+                    changed = self._merge_related_pending_entries(entry, related_appids) or changed
+            if changed:
+                self.session.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            self.log.error(f"Error reconciling pending uploads: {e}")
+            return f"Error: {e}"
+
+    def _split_file_paths(self, file_paths):
+        return [path for path in (file_paths or "").split("|") if path]
+
+    def _append_file_path(self, file_paths, new_path):
+        paths = self._split_file_paths(file_paths)
+        if new_path not in paths:
+            paths.append(new_path)
+        return "|".join(paths)
+
+    def _find_xml_path(self, entry):
+        for file_path in self._split_file_paths(entry.file_paths):
+            if file_path.lower().endswith(".xml") and os.path.exists(file_path):
+                return file_path
+        return None
+
+    def pending_upload_has_xml(self, pending):
+        """
+        Return True when a pending upload dict/row has XML metadata and is ready
+        to be reviewed at the application level.
+        """
+        file_paths = pending.get("file_paths", []) if isinstance(pending, dict) else self._split_file_paths(pending.file_paths)
+        return any(file_path.lower().endswith(".xml") and os.path.exists(file_path) for file_path in file_paths)
+
+    def _get_app_record_id(self, app_record):
+        app_id = app_record.get("AppId")
+        if app_id:
+            return str(app_id)
+        app_id_elem = app_record.find("AppId")
+        if app_id_elem is not None and app_id_elem.text:
+            return app_id_elem.text.strip()
+        return None
+
+    def _extract_xml_appids(self, xml_path):
+        appids = set()
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            for app_record in root.findall(".//AppRecord"):
+                app_id = self._get_app_record_id(app_record)
+                if app_id:
+                    appids.add(str(app_id))
+        except Exception as e:
+            self.log.warning(f"Could not parse AppIds from XML {xml_path}: {e}")
+        return appids
+
+    def _find_parent_appid_for_upload(self, upload_appid, uploader=None):
+        """
+        Return an app-level pending row id when a depot id belongs to a pending
+        app XML that has already been uploaded.
+        """
+        entries = self.session.query(AwaitingReview).all()
+        for entry in entries:
+            if uploader and entry.uploader and entry.uploader != uploader:
+                continue
+            xml_path = self._find_xml_path(entry)
+            if not xml_path:
+                continue
+            if str(upload_appid) in self._extract_xml_appids(xml_path):
+                return str(entry.appid)
+        return None
+
+    def _merge_related_pending_entries(self, target_entry, related_appids):
+        """
+        Merge depot rows whose appid appears in the XML into the app-level row.
+        """
+        if not related_appids:
+            return False
+
+        target_appid = str(target_entry.appid)
+        related_appids = {str(app_id) for app_id in related_appids}
+        changed = False
+
+        related_entries = (
+            self.session.query(AwaitingReview)
+            .filter(AwaitingReview.appid.in_(related_appids - {target_appid}))
+            .all()
+        )
+
+        target_paths = self._split_file_paths(target_entry.file_paths)
+        for related_entry in related_entries:
+            target_entry.total_size = (target_entry.total_size or 0) + (related_entry.total_size or 0)
+            for file_path in self._split_file_paths(related_entry.file_paths):
+                if file_path not in target_paths:
+                    target_paths.append(file_path)
+            if not target_entry.app_names and related_entry.app_names:
+                target_entry.app_names = related_entry.app_names
+            if not target_entry.subscriptions and related_entry.subscriptions:
+                target_entry.subscriptions = related_entry.subscriptions
+            self.session.delete(related_entry)
+            changed = True
+
+        if changed:
+            target_entry.file_paths = "|".join(target_paths)
+
+        return changed
+
     def get_pending_uploads(self):
         try:
-            # Expire cached data to ensure fresh read from database
-            self.session.expire_all()
+            self.reconcile_pending_uploads()
+            self._refresh_session()
             entries = self.session.query(AwaitingReview).all()
             summary = ""
             for entry in entries:
+                if not self.pending_upload_has_xml(entry):
+                    continue
                 summary += (f"AppID: {entry.appid}, Uploader: {entry.uploader}, "
                             f"Date: {entry.upload_datetime}, Total Size: {entry.total_size} bytes, "
                             f"IP: {entry.uploader_ip}, Port: {entry.uploader_port}, "
@@ -142,8 +278,8 @@ class ftp_dbdriver:
 
     def get_pending_upload_by_appid(self, appid):
         try:
-            # Expire cached data to ensure fresh read from database
-            self.session.expire_all()
+            self.reconcile_pending_uploads()
+            self._refresh_session()
             entry = self.session.query(AwaitingReview).filter_by(appid=appid).first()
             if entry:
                 return {
@@ -163,7 +299,7 @@ class ftp_dbdriver:
 
     def remove_pending_upload(self, appid):
         try:
-            self.session.expire_all()
+            self._refresh_session()
             entry = self.session.query(AwaitingReview).filter_by(appid=appid).first()
             if entry:
                 self.session.delete(entry)

@@ -33,6 +33,139 @@ EPHEMERAL_BLOB_DIR = os.path.join("files", "temp", "ephemeral_blobs")
 _subscription_changelog_initialized = False
 
 
+def _get_xml_app_record_id(app_record):
+    app_id = app_record.get("AppId")
+    if app_id:
+        return str(app_id)
+
+    app_id_elem = app_record.find("AppId")
+    if app_id_elem is not None and app_id_elem.text:
+        return app_id_elem.text.strip()
+
+    return None
+
+
+def get_app_name_from_xml(xml_path, appid=None):
+    """
+    Return the app name from a Steamworks ContentDescriptionDB.xml.
+
+    If appid is provided, prefer the matching AppRecord. Falls back to the first
+    AppRecord name, then a generic App <appid> label.
+    """
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        app_records = root.findall(".//AppRecord")
+
+        if appid is not None:
+            appid = str(appid)
+            for app_record in app_records:
+                if _get_xml_app_record_id(app_record) == appid:
+                    name_elem = app_record.find("Name")
+                    if name_elem is not None and name_elem.text:
+                        return name_elem.text.strip()
+
+        for app_record in app_records:
+            name_elem = app_record.find("Name")
+            if name_elem is not None and name_elem.text:
+                return name_elem.text.strip()
+    except Exception as e:
+        log.warning(f"Could not parse app name from XML {xml_path}: {e}")
+
+    return f"App {appid}" if appid is not None else "Unknown App"
+
+
+def _sanitize_filename_part(value):
+    value = (value or "").strip()
+    invalid_chars = '<>:"/\\|?*'
+    sanitized = "".join("_" if ch in invalid_chars or ord(ch) < 32 else ch for ch in value)
+    sanitized = sanitized.rstrip(" .")
+    return sanitized or "Unknown App"
+
+
+def _is_mod_blob_xml_for_app(filename, appid):
+    lower_name = filename.lower()
+    appid = str(appid)
+    return (
+        lower_name == f"{appid}.xml".lower()
+        or (filename.startswith(f"[{appid}]") and lower_name.endswith(".xml"))
+    )
+
+
+def _backup_existing_mod_blob_xmls(appid, mod_blob_dir, backup_dir, exclude_path=None):
+    """
+    Move existing mod_blob XMLs for appid into mod_blob_backups.
+    """
+    if not os.path.isdir(mod_blob_dir):
+        return []
+
+    os.makedirs(backup_dir, exist_ok=True)
+    exclude_abs = os.path.abspath(exclude_path) if exclude_path else None
+    backed_up = []
+
+    for filename in os.listdir(mod_blob_dir):
+        if not _is_mod_blob_xml_for_app(filename, appid):
+            continue
+
+        src_path = os.path.join(mod_blob_dir, filename)
+        if not os.path.isfile(src_path):
+            continue
+        if exclude_abs and os.path.abspath(src_path) == exclude_abs:
+            continue
+
+        modified = datetime.fromtimestamp(os.path.getmtime(src_path)).strftime("%Y-%m-%d_%H%M%S")
+        stem, ext = os.path.splitext(filename)
+        backup_name = f"{stem} ({modified}){ext}"
+        backup_path = os.path.join(backup_dir, backup_name)
+
+        counter = 1
+        while os.path.exists(backup_path):
+            backup_name = f"{stem} ({modified}_{counter}){ext}"
+            backup_path = os.path.join(backup_dir, backup_name)
+            counter += 1
+
+        shutil.move(src_path, backup_path)
+        backed_up.append(backup_path)
+        log.info(f"Backed up existing mod_blob XML {src_path} to {backup_path}")
+
+    return backed_up
+
+
+def move_xml_to_mod_blob_with_backup(xml_src_path, appid, mod_blob_dir=None, backup_dir=None):
+    """
+    Move a Steamworks XML into mod_blob using "[appid] App Name.xml".
+
+    Existing XMLs for the same appid are moved to files/mod_blob_backups with
+    their last modified date appended before the new XML is installed.
+    """
+    mod_blob_dir = mod_blob_dir or os.path.join("files", "mod_blob")
+    backup_dir = backup_dir or os.path.join(os.path.dirname(mod_blob_dir), "mod_blob_backups")
+
+    os.makedirs(mod_blob_dir, exist_ok=True)
+    os.makedirs(backup_dir, exist_ok=True)
+
+    app_name = get_app_name_from_xml(xml_src_path, appid)
+    filename = f"[{appid}] {_sanitize_filename_part(app_name)}.xml"
+    dest_path = os.path.join(mod_blob_dir, filename)
+
+    if os.path.abspath(xml_src_path) == os.path.abspath(dest_path):
+        return dest_path, []
+
+    backed_up = _backup_existing_mod_blob_xmls(appid, mod_blob_dir, backup_dir, exclude_path=xml_src_path)
+
+    if os.path.exists(dest_path):
+        backed_up.extend(_backup_existing_mod_blob_xmls(appid, mod_blob_dir, backup_dir, exclude_path=xml_src_path))
+        if os.path.exists(dest_path):
+            modified = datetime.fromtimestamp(os.path.getmtime(dest_path)).strftime("%Y-%m-%d_%H%M%S")
+            stem, ext = os.path.splitext(os.path.basename(dest_path))
+            fallback_backup = os.path.join(backup_dir, f"{stem} ({modified}){ext}")
+            shutil.move(dest_path, fallback_backup)
+            backed_up.append(fallback_backup)
+
+    shutil.move(xml_src_path, dest_path)
+    return dest_path, backed_up
+
+
 # ============================================================================
 # DATABASE QUERY RESULT CACHING (Phase 6 Optimization)
 # ============================================================================
@@ -1279,64 +1412,12 @@ def integrate_customs_files(execdict, islan):
                         # Existing key in execdict["blob"], need to handle duplicates
                         main_dict = execdict["blob"][k]
 
-                        if k in [b"\x01\x00\x00\x00", b"\x02\x00\x00\x00"] and customblobfile.endswith(".xml"):  # Application or Subscription Records
-                            # Get the set of existing keys as integers
-                            main_keys_int = set(int.from_bytes(key, 'little') for key in main_dict.keys())
-                            max_key = 30000  # Start from -1 if empty
-
-                            # Prepare new entries to merge
-                            new_entries = {}
-
-                            for key, subdict in execdict_update[k].items():
-                                if key in main_dict:
-                                    # Key exists; generate a new unique key
-                                    max_key += 1
-                                    new_key_int = max_key
-                                    new_key = new_key_int.to_bytes(4, 'little')
-                                    # Get the subscription name from the subdictionary (b"\x02\x00\x00\x00")
-                                    subscription_name = subdict.get(b"\x02\x00\x00\x00", b"").decode('latin-1').strip('\x00')
-
-                                    # TODO Should probably do the same for applicationid's and update the publickey ids as well
-                                    # Trigger message box to notify ID change, including subscription name
-                                    old_key_int = int().from_bytes(key, 'little')
-                                    new_key_int = int().from_bytes(new_key, 'little')
-                                    if key != new_key:
-                                        log.warning("=" * 60)
-                                        log.warning(f"SUBSCRIPTION ID CHANGED: {old_key_int} -> {new_key_int}")
-                                        log.warning(f"Subscription Name: {subscription_name}")
-                                        log.warning("=" * 60)
-
-                                        # Write to changelog file (overwrite on first write per session, append after)
-                                        global _subscription_changelog_initialized
-                                        changelog_path = "custom_subscription_id_changes.txt"
-                                        file_mode = "a" if _subscription_changelog_initialized else "w"
-                                        with open(changelog_path, file_mode, encoding="utf-8") as changelog:
-                                            if not _subscription_changelog_initialized:
-                                                changelog.write("Custom Subscription ID Changes Log\n")
-                                                changelog.write("=" * 40 + "\n\n")
-                                                _subscription_changelog_initialized = True
-                                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                            changelog.write(f"[{timestamp}] Subscription ID Change\n")
-                                            changelog.write(f"  Old ID: {old_key_int}\n")
-                                            changelog.write(f"  New ID: {new_key_int}\n")
-                                            changelog.write(f"  Subscription Name: {subscription_name}\n")
-                                            changelog.write(f"  Source File: {customblobfile}\n")
-                                            changelog.write("-" * 40 + "\n")
-
-                                    # Update the b"\x01\x00\x00\x00" key in the subdictionary
-                                    subdict[b"\x01\x00\x00\x00"] = new_key
-
-                                    # Add the subdictionary with the new key to new_entries
-                                    new_entries[new_key] = subdict
-
-                                    # **Update the XML file with the new subscription ID**
-                                    update_subscription_id_in_xml("files/mod_blob/" + customblobfile, old_key_int, new_key_int)
-                                else:
-                                    # Key does not exist; add it directly
-                                    new_entries[key] = subdict
-
-                            # Merge new entries into the main dictionary
-                            main_dict.update(new_entries)
+                        if k == b"\x02\x00\x00\x00" and customblobfile.endswith(".xml"):
+                            _merge_subscription_records_with_free_fallback(execdict["blob"], execdict_update, customblobfile)
+                        elif k == b"\x01\x00\x00\x00" and customblobfile.endswith(".xml"):
+                            # Application records may intentionally update an existing app with
+                            # new versions, so merge/replace them normally.
+                            main_dict.update(execdict_update[k])
                             execdict["blob"][k] = main_dict
                         else:
                             # For other keys, update directly
@@ -1357,8 +1438,8 @@ def merge_xml_into_cached_blobs(xml_path):
     parses the XML file, merges the new application/subscription data, applies
     restriction removal, and saves the updated blobs back to cache.
 
-    Note: This function is skipped for blob version 3 and earlier as the data
-    structures may not be compatible. Only blob version 4+ supports this merging.
+    Note: This function is skipped for blob version 1 and earlier as the data
+    structures used by mod_blob XML files require blob version 2+.
 
     Args:
         xml_path: Path to the XML file to merge (e.g., files/mod_blob/123.xml)
@@ -1368,7 +1449,7 @@ def merge_xml_into_cached_blobs(xml_path):
     """
     # Skip for blob version 1 and earlier - only version 2+ supported
     if globalvars.record_ver < 2:
-        return False, f"Skipped: mod_blob merging not supported for blob version {globalvars.record_ver} (requires version 4+)"
+        return False, f"Skipped: mod_blob merging not supported for blob version {globalvars.record_ver} (requires version 2+)"
 
     try:
         if not os.path.exists(xml_path):
@@ -1447,11 +1528,44 @@ def merge_xml_into_cached_blobs(xml_path):
                         pass
 
         success = all("successfully" in r for r in results)
+        if success:
+            _record_mod_blob_hash(xml_path)
         return success, "; ".join(results)
 
     except Exception as e:
         log.error(f"Error in merge_xml_into_cached_blobs: {e}")
         return False, str(e)
+
+
+def _record_mod_blob_hash(file_path):
+    """
+    Mark a mod_blob file as already merged.
+
+    FTP approvals merge XML explicitly. Recording the hash keeps the directory
+    watcher from immediately merging the same file a second time.
+    """
+    import hashlib
+    import json
+
+    hash_file_path = os.path.join(CACHE_DIR, "mod_blob_hashes.json")
+
+    try:
+        with open(file_path, "rb") as f:
+            file_hash = hashlib.sha256(f.read()).hexdigest()
+
+        existing_hashes = {}
+        if os.path.exists(hash_file_path):
+            try:
+                with open(hash_file_path, "r") as f:
+                    existing_hashes = json.load(f)
+            except Exception:
+                existing_hashes = {}
+
+        existing_hashes[file_path] = file_hash
+        with open(hash_file_path, "w") as f:
+            json.dump(existing_hashes, f, indent=2)
+    except Exception as e:
+        log.warning(f"Could not record mod_blob hash for {file_path}: {e}")
 
 
 def merge_custom_blob_into_cache(file_path, islan):
@@ -1575,9 +1689,8 @@ def check_and_merge_mod_blob_files():
     This function tracks which files have been merged using a hash file.
     Only new or modified files are merged, without triggering a full neuter.
 
-    Note: mod_blob merging is skipped for blob version 3 and earlier as the data
-    structures may not be compatible with modern mod_blob files. Only blob version
-    4+ supports mod_blob merging.
+    Note: mod_blob merging is skipped for blob version 1 and earlier as the data
+    structures used by mod_blob files require blob version 2+.
 
     Returns:
         int: Number of files merged
@@ -1585,10 +1698,10 @@ def check_and_merge_mod_blob_files():
     import hashlib
     import json
 
-    # Skip mod_blob merging for blob version 3 and earlier
-    # Only blob version 4+ have compatible data structures for mod_blob merging
+    # Skip mod_blob merging for blob version 1 and earlier.
+    # Only blob version 2+ have compatible data structures for mod_blob merging.
     if globalvars.record_ver < 2:
-        log.debug(f"Skipping mod_blob merge for blob version {globalvars.record_ver} (requires version 4+)")
+        log.debug(f"Skipping mod_blob merge for blob version {globalvars.record_ver} (requires version 2+)")
         return 0
 
     mod_blob_dir = "files/mod_blob"
@@ -1688,16 +1801,136 @@ def regenerate_app_to_subscription_index(blob_dict):
                     app_to_subs[app_id_bytes] = {}
                 app_to_subs[app_id_bytes][sub_id_bytes] = b''
 
-    # Update the index - merge new subscriptions into existing app entries
-    for app_id_bytes, sub_ids_dict in app_to_subs.items():
-        if app_id_bytes in blob_dict[APP_SUB_INDEX_KEY]:
-            # Merge with existing
-            blob_dict[APP_SUB_INDEX_KEY][app_id_bytes].update(sub_ids_dict)
-        else:
-            # Add new
-            blob_dict[APP_SUB_INDEX_KEY][app_id_bytes] = sub_ids_dict
+    # Replace the index with a fresh view of the subscription records. This
+    # removes stale custom index entries that may point to skipped clashing subs.
+    blob_dict[APP_SUB_INDEX_KEY] = app_to_subs
 
     log.debug(f"Regenerated app-to-subscription index for {len(app_to_subs)} apps")
+
+
+def _collect_app_ids_from_cdr_data(cdr_data):
+    """
+    Collect every AppId represented by a custom CDR fragment.
+
+    For Steamworks uploads this includes the main app plus depot/content app ids,
+    which must all be granted when falling back to subscription 0.
+    """
+    APPS_KEY = b"\x01\x00\x00\x00"
+    SUBS_KEY = b"\x02\x00\x00\x00"
+    SUB_APP_IDS_KEY = b"\x06\x00\x00\x00"
+
+    app_ids = set()
+
+    for app_id in cdr_data.get(APPS_KEY, {}).keys():
+        app_id_key = _normalize_cdr_id_key(app_id)
+        if app_id_key is not None:
+            app_ids.add(app_id_key)
+
+    for sub_data in cdr_data.get(SUBS_KEY, {}).values():
+        if isinstance(sub_data, dict):
+            for app_id in sub_data.get(SUB_APP_IDS_KEY, {}).keys():
+                app_id_key = _normalize_cdr_id_key(app_id)
+                if app_id_key is not None:
+                    app_ids.add(app_id_key)
+
+    return app_ids
+
+
+def _normalize_cdr_id_key(value):
+    if isinstance(value, bytes):
+        return value[:4] if len(value) >= 4 else value.ljust(4, b"\x00")
+    try:
+        return int(value).to_bytes(4, "little")
+    except Exception:
+        return None
+
+
+def _ensure_free_subscription(blob_dict):
+    """
+    Ensure subscription 0 exists and has a SubscriptionAppIdsRecord.
+    """
+    SUBS_KEY = b"\x02\x00\x00\x00"
+    SUB_ID_KEY = b"\x01\x00\x00\x00"
+    SUB_NAME_KEY = b"\x02\x00\x00\x00"
+    BILLING_TYPE_KEY = b"\x03\x00\x00\x00"
+    COST_KEY = b"\x04\x00\x00\x00"
+    SUB_APP_IDS_KEY = b"\x06\x00\x00\x00"
+    SUB_ZERO = (0).to_bytes(4, "little")
+
+    if SUBS_KEY not in blob_dict:
+        blob_dict[SUBS_KEY] = {}
+
+    if SUB_ZERO not in blob_dict[SUBS_KEY]:
+        blob_dict[SUBS_KEY][SUB_ZERO] = {
+            SUB_ID_KEY: SUB_ZERO,
+            SUB_NAME_KEY: b"Steam\x00",
+            BILLING_TYPE_KEY: struct.pack("<H", 0),
+            COST_KEY: SUB_ZERO,
+            SUB_APP_IDS_KEY: {},
+        }
+        log.warning("Subscription 0 was missing from CDR; created a NoCost fallback subscription")
+
+    sub_zero = blob_dict[SUBS_KEY][SUB_ZERO]
+    if SUB_APP_IDS_KEY not in sub_zero or not isinstance(sub_zero[SUB_APP_IDS_KEY], dict):
+        sub_zero[SUB_APP_IDS_KEY] = {}
+
+    return sub_zero[SUB_APP_IDS_KEY]
+
+
+def _add_app_ids_to_free_subscription(blob_dict, app_ids, source_label="custom XML"):
+    """
+    Add app/depot ids to subscription 0 without replacing the existing sub 0.
+    """
+    if not app_ids:
+        return 0
+
+    sub_zero_app_ids = _ensure_free_subscription(blob_dict)
+    added_count = 0
+
+    for app_id in sorted(app_ids):
+        if app_id not in sub_zero_app_ids:
+            sub_zero_app_ids[app_id] = b""
+            added_count += 1
+
+    if added_count:
+        readable_ids = ", ".join(str(int.from_bytes(app_id, "little")) for app_id in sorted(app_ids))
+        log.info(f"Added clashing subscription app/depot ids to subscription 0 from {source_label}: {readable_ids}")
+
+    return added_count
+
+
+def _merge_subscription_records_with_free_fallback(main_blob, new_data, source_label="custom XML"):
+    """
+    Merge custom subscription records.
+
+    If a custom subscription id already exists in the base CDR, Treat the uploaded app as
+    free by adding all uploaded app/depot ids to subscription 0.
+    """
+    SUBS_KEY = b"\x02\x00\x00\x00"
+
+    if SUBS_KEY not in new_data:
+        return False
+
+    if SUBS_KEY not in main_blob:
+        main_blob[SUBS_KEY] = {}
+
+    clashing_sub_ids = []
+    for sub_id, sub_data in new_data[SUBS_KEY].items():
+        if sub_id in main_blob[SUBS_KEY]:
+            clashing_sub_ids.append(sub_id)
+            continue
+        main_blob[SUBS_KEY][sub_id] = sub_data
+
+    if clashing_sub_ids:
+        app_ids = _collect_app_ids_from_cdr_data(new_data)
+        _add_app_ids_to_free_subscription(main_blob, app_ids, source_label)
+        readable_subs = ", ".join(str(int.from_bytes(sub_id, "little")) for sub_id in clashing_sub_ids)
+        log.warning(
+            f"Skipped clashing subscription id(s) from {source_label}: {readable_subs}; "
+            "added uploaded app/depot ids to subscription 0 instead"
+        )
+
+    return bool(clashing_sub_ids)
 
 
 def _merge_cdr_data(main_blob, new_data):
@@ -1730,15 +1963,14 @@ def _merge_cdr_data(main_blob, new_data):
             main_blob[key] = value
             continue
 
-        if key in [APPS_KEY, SUBS_KEY]:
-            # For applications and subscriptions, merge individual entries
+        if key == APPS_KEY:
+            # Application records may intentionally update an existing app with
+            # new versions, so merge/replace them normally.
             for entry_id, entry_data in value.items():
-                if entry_id in main_blob[key]:
-                    # Entry exists, update it (overwrite with new data)
-                    main_blob[key][entry_id] = entry_data
-                else:
-                    # New entry, add it
-                    main_blob[key][entry_id] = entry_data
+                main_blob[key][entry_id] = entry_data
+
+        elif key == SUBS_KEY:
+            _merge_subscription_records_with_free_fallback(main_blob, new_data)
 
         elif key in [PUBLIC_KEYS_KEY, PRIVATE_KEYS_KEY]:
             # For encryption keys, merge entries
@@ -1746,9 +1978,9 @@ def _merge_cdr_data(main_blob, new_data):
                 main_blob[key][entry_id] = entry_data
 
         elif key == APP_SUB_INDEX_KEY:
-            # For app-to-subscription index, merge entries
-            for app_id, sub_ids in value.items():
-                main_blob[key][app_id] = sub_ids
+            # Rebuilt from subscriptions after the merge so clashing custom subs
+            # cannot leave stale app-to-subscription mappings behind.
+            pass
 
         elif isinstance(value, dict) and isinstance(main_blob[key], dict):
             # For other dict values, update recursively
