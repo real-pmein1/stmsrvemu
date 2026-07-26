@@ -28,7 +28,11 @@ import json
 
 # Import our new FTP database functions
 from utilities.database.ftp_db import ftp_dbdriver
-from utilities.cdr_manipulator import merge_xml_into_cached_blobs
+from utilities.cdr_manipulator import (
+    load_blobs_to_memory,
+    merge_xml_into_cached_blobs,
+    move_xml_to_mod_blob_with_backup,
+)
 
 
 class DatabaseAuthorizer(DummyAuthorizer):
@@ -251,10 +255,10 @@ class CustomFTPHandler(FTPHandler):
                     try:
                         tree = ET.parse(temp_path)
                         root = tree.getroot()
-                        app_record = root.find('.//AppRecord')
-                        if app_record is None or 'AppId' not in app_record.attrib:
+                        appid = parse_xml_primary_appid(temp_path)
+                        if not appid:
                             raise ValueError("No AppId found in ContentDescriptionDB.xml")
-                        appid = app_record.attrib['AppId']
+                        related_appids = parse_xml_app_ids(temp_path)
                         new_filename = f"{appid}.xml"
                         self.log(f"Renaming ContentDescriptionDB.xml to {new_filename}")
 
@@ -276,14 +280,18 @@ class CustomFTPHandler(FTPHandler):
                                 appid, uploader, upload_datetime, file_size,
                                 uploader_ip, uploader_port,
                                 new_file=new_filename, file_dir=user_temp_directory,
-                                app_names=app_names, subscriptions=subscriptions
+                                app_names=app_names, subscriptions=subscriptions,
+                                related_appids=related_appids
                             )
                             self.log(f"Pending review record added/updated for AppID {appid}")
                             # Do not move the file now; leave it in temp for review.
                         else:
                             # Immediately move the XML file.
-                            new_path = os.path.join(MOD_BLOB_DIRECTORY, new_filename)
-                            shutil.move(temp_path, new_path)
+                            new_path, backups = move_xml_to_mod_blob_with_backup(
+                                temp_path, appid, MOD_BLOB_DIRECTORY
+                            )
+                            if backups:
+                                self.log(f"Backed up {len(backups)} existing XML blob(s) for AppID {appid}")
                             self.log(f"Moved XML file to {new_path}")
                             final_path = new_path
                             # Merge directly into cached blobs (no review required)
@@ -291,6 +299,8 @@ class CustomFTPHandler(FTPHandler):
                                 merge_success, merge_msg = merge_xml_into_cached_blobs(new_path)
                                 if merge_success:
                                     self.log(f"Merged AppID {appid} into cached blobs: {merge_msg}")
+                                    load_blobs_to_memory()
+                                    self.log(f"Reloaded in-memory CDR blobs after AppID {appid} merge")
                                 else:
                                     self.log(f"Warning: Failed to merge into cached blobs: {merge_msg}")
                             except Exception as merge_err:
@@ -403,6 +413,78 @@ def parse_xml_metadata(xml_path):
     except Exception as e:
         logging.error(f"Error parsing XML metadata: {e}")
         return "", ""
+
+def _get_app_record_id(app_record):
+    app_id = app_record.get('AppId')
+    if app_id:
+        return str(app_id)
+
+    app_id_elem = app_record.find('AppId')
+    if app_id_elem is not None and app_id_elem.text:
+        return app_id_elem.text.strip()
+
+    return None
+
+def _xml_flag_is_true(element, tag_name):
+    child = element.find(tag_name)
+    return child is not None and (child.text or "").strip().lower() in {"1", "true", "yes"}
+
+def parse_xml_primary_appid(xml_path):
+    """
+    Return the app-level AppId for an SDK ContentDescriptionDB.xml.
+
+    Depot/content-only records can appear alongside the actual game app. Review
+    needs to be keyed by the main app so subscriptions stay attached to the
+    product instead of being split across depot ids.
+    """
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+
+        app_records = root.findall('.//AppRecord')
+        app_ids = [_get_app_record_id(app_record) for app_record in app_records]
+        app_ids = [app_id for app_id in app_ids if app_id]
+
+        for tag_name in ("OnSubscribeRunAppId", "RunAppId"):
+            for elem in root.findall(f".//SubscriptionRecord/{tag_name}"):
+                if elem.text and elem.text.strip() in app_ids:
+                    return elem.text.strip()
+
+        for app_record in app_records:
+            app_id = _get_app_record_id(app_record)
+            if not app_id:
+                continue
+            if _xml_flag_is_true(app_record, "ManifestOnlyApp"):
+                continue
+            app_of_manifest_cache = app_record.find("AppOfManifestOnlyCache")
+            if app_of_manifest_cache is not None and (app_of_manifest_cache.text or "").strip() not in {"", "0"}:
+                continue
+            return app_id
+
+        return app_ids[0] if app_ids else None
+    except Exception as e:
+        logging.error(f"Error parsing primary AppId from XML: {e}")
+        return None
+
+def parse_xml_app_ids(xml_path):
+    """
+    Parse ContentDescriptionDB.xml and return all AppIds it defines.
+
+    Steamworks uploads can include the app plus depot/content AppIds. Review
+    approval is keyed by the primary app, but depot files uploaded earlier under
+    their own id need to be folded into that app-level pending record.
+    """
+    app_ids = []
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        for app_record in root.findall('.//AppRecord'):
+            app_id = _get_app_record_id(app_record)
+            if app_id and app_id not in app_ids:
+                app_ids.append(app_id)
+    except Exception as e:
+        logging.error(f"Error parsing XML app ids: {e}")
+    return app_ids
 
 def create_ftp_server(directory, anonymous_directory, address="0.0.0.0", port=21):
     import sys
