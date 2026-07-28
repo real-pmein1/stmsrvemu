@@ -60,6 +60,7 @@ class ConsoleCommandsBase:
             'info': self.cmd_info,
             'clear': self.cmd_clear,
             'ftpmenu': self.cmd_ftpmenu,
+            'neuter3': self.cmd_neuter3,
             'exit': self.cmd_exit,
             'quit': self.cmd_exit,
             'shutdown': self.cmd_exit,
@@ -303,6 +304,41 @@ class ConsoleCommandsBase:
             self._output("Make sure windows-curses is installed on Windows: pip install windows-curses")
         except Exception as e:
             self._output(f"Error opening FTP menu: {e}")
+
+    def cmd_neuter3(self, args):
+        """Pre-generate neutered Steam3 depot content. Usage: neuter3 [depotid [gid]] | neuter3 clear [depotid]"""
+        try:
+            from utilities.steam3_content import get_repository
+            from utilities import steam3_neuter
+        except Exception as e:
+            self._output(f"Steam3 content system not available: {e}")
+            return
+
+        repository = get_repository()
+
+        if args and args[0].lower() == "clear":
+            depot_id = int(args[1]) if len(args) > 1 else None
+            repository.clear_neutered(depot_id)
+            self._output(f"Cleared neutered content for {'depot ' + args[1] if depot_id else 'every depot'}")
+            return
+
+        if not steam3_neuter.is_enabled():
+            self._output("Steam3 content neutering is disabled (content3_neuter_enabled)")
+            return
+
+        if args:
+            depot_id = int(args[0])
+            gid = int(args[1]) if len(args) > 1 else None
+            self._output(f"Neutering depot {depot_id}...")
+            ok = steam3_neuter.neuter_depot(repository, depot_id, gid)
+            self._output(f"Depot {depot_id} neutered" if ok else f"Depot {depot_id} failed, see the log")
+            return
+
+        self._output("Neutering every Steam3 depot, this can take a while...")
+        results = steam3_neuter.neuter_all_depots(repository)
+        for depot_id, ok in sorted(results.items()):
+            self._output(f"  depot {depot_id}: {'ok' if ok else 'failed'}")
+        self._output(f"Done, {len(results)} depot(s) processed")
 
     def cmd_exit(self, args=None):
         """Shutdown server gracefully."""

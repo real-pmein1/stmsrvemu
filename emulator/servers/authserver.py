@@ -46,8 +46,8 @@ class authserver(TCPNetworkHandler):
         self.contentlist_manager = csdsmanager
         self.database = auth_dbdriver(config)
         self.innerIV = secrets.token_bytes(16)
-        blacklist_path = os.path.join(config['configsdir'], 'creditcard_blacklist.txt')
-        self.block_rules = auth_cc_blocker.load_block_rules(blacklist_path)
+        self.blacklist_path = os.path.join(config['configsdir'], 'creditcard_blacklist.txt')
+        self.block_rules = auth_cc_blocker.load_block_rules(self.blacklist_path)
         self.login_attempts = {}
 
         # Create an instance of NetworkHandler
@@ -268,6 +268,7 @@ class authserver(TCPNetworkHandler):
             # Extracting payment type
             payment_type = None
             additional_data = None
+            cc_card_number = None
             sub_dict = blobnew.get(b'\x02\x00\x00\x00', None)
             #pprint.pprint(sub_dict)
             if sub_dict:
@@ -291,31 +292,26 @@ class authserver(TCPNetworkHandler):
             if globalvars.steamui_ver == 20: # SO THAT THIS CLIENT CAN INSERT SUB 0
                 pkt_version = "b2004"
 
-            cc_blocked = False
-            if receipt_id == 5 and auth_cc_blocker.is_card_blocked(cc_card_number, self.block_rules):
-                cc_blocked = True
-                self.log.info(f"{clientid} {username} Tried to use a blocked Card {cc_card_number}.")
-                cc_card_type = payment_data[0]
-                cc_name = payment_data[2]
-                cc_zip = payment_data[9]
-            else:
-                # insert!
-                self.database.insert_subscription(username, subscription_id, receipt_id, client_socket.ip_to_bytes(client_address[0]), payment_data, pkt_version)
+            # Reloaded per purchase so the rules can be edited without a restart
+            self.block_rules = auth_cc_blocker.load_block_rules(self.blacklist_path)
+
+            blocked_status = None
+            if receipt_id == 5:
+                blocked_status = auth_cc_blocker.get_block_status(cc_card_number, self.block_rules)
+
+            if blocked_status is not None:
+                # The subscription is still written, but with the failure status
+                # the card was blacklisted with. SteamUI reads that status back
+                # through SteamGetSubscriptionReceipt and loads the matching
+                # steam/cached/Receipt_*.res dialog.
+                self.log.info(f"{clientid} {username} Tried to use a blocked Card {cc_card_number}. "
+                              f"Reporting status {blocked_status} "
+                              f"({auth_cc_blocker.get_receipt_dialog(blocked_status)})")
+
+            self.database.insert_subscription(username, subscription_id, receipt_id, client_socket.ip_to_bytes(client_address[0]),
+                                              payment_data, pkt_version, forced_status = blocked_status)
 
             execdict = self.database.get_userregistry_dict(username, pkt_version, client_address[0])
-
-            if cc_blocked:
-                blocked_sub_dict = {
-                        subscription_id.to_bytes(4, 'little'): {
-                        b'\x01\x00\x00\x00': b'\x05',
-                        b'\x02\x00\x00\x00': additional_data
-                        }
-                }
-
-                blocked_sub_dict[b'\x02\x00\x00\x00'] = cc_card_number[12:].encode('latin-1') + b'\x00'
-
-                # we add the information from the original packets x02 dictionary, but edit the cc to be the last 4 of the cc
-                execdict[b'\x0f\x00\x00\x00'].update(blocked_sub_dict)
 
             if globalvars.steamui_ver == 5:  # FOR NOV 2003
                 execdict.pop(b'\x0f\x00\x00\x00')
@@ -336,10 +332,11 @@ class authserver(TCPNetworkHandler):
             if pkt_version in ["b2003", "r2003"]:  # retail 2003, beta 2003
                 client_socket.send(blob_encrypted)
             else:
-                if not cc_blocked:
-                    client_socket.send(b"\x00" + blob_encrypted)
-                else:
-                    client_socket.send(b"\x03" + blob_encrypted)
+                # Always the success byte: the subscribe call itself succeeded,
+                # the decline lives in the subscription record inside the blob.
+                # Answering \x03 aborts the client before it fetches a receipt
+                # and it falls back to the generic #Steam_SubscribeFailedInfo box.
+                client_socket.send(b"\x00" + blob_encrypted)
 
     def ticket_login(self, client_address, client_socket, clientid, command, pkt_version):
         ticket_full = binascii.b2a_hex(command)

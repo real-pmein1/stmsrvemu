@@ -26,6 +26,7 @@ from steam3.Handlers.UFS import (
 )
 from steam3.Handlers.appinfo import handle_ClientAppInfoRequest,  handle_ClientAppInfoRequest_obsolete, handle_ClientAppInfoupdate
 from steam3.Handlers.authentication import handle_AnonGameServerLogin, handle_AnonUserLogin, handle_ClientChangePassword,  handle_ClientLogOn_WithCredentials, handle_ClientLogOn_WithHash, handle_ClientLogin, handle_ClientLogin_PB, handle_CreateAccount, handle_CreateAccount2, handle_GetAppOwnershipTicket, handle_InformOfCreateAccount, handle_LogOff, handle_NewLoginKeyAccepted, handle_RegisterAuthTIcket
+from steam3.Handlers.content import handle_GetCDNAuthToken, handle_GetDepotDecryptionKey
 from steam3.Handlers.chat import (
     handle_ClientCreateChat, handle_ClientJoinChat, handle_ClientChatMsg, handle_ClientChatAction,
     handle_ClientChatInvite, handle_FriendMessage
@@ -530,6 +531,9 @@ class CMServer_Base:
                         EMsg.GSDeleteAllTempItems:                 handle_GS_DeleteAllTempItems,
                         EMsg.GSUpdateItemQuantity:                 handle_GS_UpdateItemQuantity,
                         EMsg.GSAssociateWithClan:                  handle_GS_AssociateWithClan,
+
+                        EMsg.ClientGetDepotDecryptionKey:          handle_GetDepotDecryptionKey,
+                        EMsg.ClientGetCDNAuthToken:                handle_GetCDNAuthToken,
 
                         EMsg.ClientAppInfoRequest_obsolete:        handle_ClientAppInfoRequest_obsolete,
                         EMsg.ClientAppInfoRequest:                 handle_ClientAppInfoRequest,

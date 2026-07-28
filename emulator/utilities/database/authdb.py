@@ -10,6 +10,7 @@ from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 
 import globalvars
 import utilities.time
+from utilities import auth_cc_blocker
 from utilities.database import base_dbdriver, dbengine
 from utilities.database.base_dbdriver import AccountSubscriptionsRecord
 from utilities.database.userregistry import UserRegistry, UserRegistryBuilder
@@ -300,7 +301,16 @@ class auth_dbdriver:
             log.error(f"[create_user] Userid {uniqueid} Error occurred while inserting into accountsubscriptionsbillinginforecord: {e}")
             return -1
 
-    def insert_subscription(self, username, subid, paymenttype, userip, tuple_paymentrecord = None, pkt_version = None):
+    def insert_subscription(self, username, subid, paymenttype, userip, tuple_paymentrecord = None, pkt_version = None,
+                            forced_status = None, forced_previous_status = None):
+        """Insert a subscription record.
+
+        forced_status overrides the eSubscriptionStatus written to
+        AccountSubscriptionsRecord. It is used by the credit card block rules to
+        hand the client a failed subscription (declined / use limit / alert /
+        AVS / insufficient funds / restricted country) so SteamUI picks the
+        matching steam/cached/Receipt_*.res dialog instead of a generic error.
+        """
         user_uniqueid = self.get_uniqueuserid(username)
 
         if user_uniqueid == 0:
@@ -314,7 +324,7 @@ class auth_dbdriver:
 
         if subid == 0:
             log.debug(f"[insert_sub] Subscribing to default sub {subid}")
-        elif existing_subscriptions:
+        elif existing_subscriptions and forced_status is None:
             log.warning(f"[insert_sub] Subid: {subid} Already Exists For User: {username}")
             return True
 
@@ -338,7 +348,13 @@ class auth_dbdriver:
 # PURCHASE: MUST BE 0-0-0
 # CDKEY: MUST BE 0-0-0
 
-        if paymenttype == 7 and pkt_version not in ['b2003', 'r2003', 'b2004']:
+        if forced_status is not None:
+            # A blocked card: report the failure through the subscription record
+            # itself so the client can fetch a receipt for it.
+            subscription_status = forced_status
+            status_change_flag = 1 # there is a new receipt waiting for the client
+            previous_subscription_state = auth_cc_blocker.BLOCKED_PREVIOUS_STATUS if forced_previous_status is None else forced_previous_status
+        elif paymenttype == 7 and pkt_version not in ['b2003', 'r2003', 'b2004']:
             subscription_status = 1 # pending
             status_change_flag = 1 # client doesnt need to be informed yet
             previous_subscription_state = 31 # old status (unsubscribed)
@@ -361,8 +377,8 @@ class auth_dbdriver:
         max_retries = 3
         for attempt in range(max_retries):  # NOTE: This retry stuff is left-over code from when we used an SQLITE DB
             try:
-                if subid == 0 and pkt_version not in ['b2003', 'r2003', 'b2004']:
-                    self.db_driver.update_data(base_dbdriver.AccountSubscriptionsRecord, and_(base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == user_uniqueid, base_dbdriver.AccountSubscriptionsRecord.SubscriptionID == 0), data)
+                if (subid == 0 and pkt_version not in ['b2003', 'r2003', 'b2004']) or (existing_subscriptions and forced_status is not None):
+                    self.db_driver.update_data(base_dbdriver.AccountSubscriptionsRecord, and_(base_dbdriver.AccountSubscriptionsRecord.UserRegistry_UniqueID == user_uniqueid, base_dbdriver.AccountSubscriptionsRecord.SubscriptionID == subid), data)
                 else:
                     self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsRecord, data)
                 break
@@ -462,10 +478,21 @@ class auth_dbdriver:
         elif paymenttype == 6:
             data['AccountPrepurchasedInfoRecord_UniqueID'] = next_unique_prepurchase_id
 
+        # A blocked card can be retried with the same subid, in which case the
+        # billing info row already exists and has to point at the new receipt.
+        existing_billing_info = self.db_driver.select_data(base_dbdriver.AccountSubscriptionsBillingInfoRecord,
+                                                           (base_dbdriver.AccountSubscriptionsBillingInfoRecord.UserRegistry_UniqueID == user_uniqueid) &
+                                                           (base_dbdriver.AccountSubscriptionsBillingInfoRecord.SubscriptionID == int(subid))) if forced_status is not None else None
+
         for attempt in range(max_retries):  # NOTE: This retry stuff is left-over code from when we used an SQLITE DB
             try:
                 if subid != 0 or pkt_version in ['b2003', 'r2003', 'b2004']:
-                    self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsBillingInfoRecord, data)
+                    if existing_billing_info:
+                        self.db_driver.update_data(base_dbdriver.AccountSubscriptionsBillingInfoRecord,
+                                                   and_(base_dbdriver.AccountSubscriptionsBillingInfoRecord.UserRegistry_UniqueID == user_uniqueid,
+                                                        base_dbdriver.AccountSubscriptionsBillingInfoRecord.SubscriptionID == int(subid)), data)
+                    else:
+                        self.db_driver.insert_data(base_dbdriver.AccountSubscriptionsBillingInfoRecord, data)
                 break
             except Exception as e:
                 log.error(f"[insert_sub] Error occurred while inserting into accountsubscriptionsbillinginforecord: {e}")
@@ -475,7 +502,13 @@ class auth_dbdriver:
                 else:
                     return False  # Failed after retries
 
-        log.info(f"[insert_sub] User {username} successfully subscribed to {str(subid)}")
+        if forced_status is not None:
+            log.info(f"[insert_sub] User {username} subscription {str(subid)} recorded with status "
+                     f"{forced_status} -> {auth_cc_blocker.get_receipt_dialog(forced_status, previous_subscription_state)}")
+        else:
+            log.info(f"[insert_sub] User {username} successfully subscribed to {str(subid)}")
+
+        return True
 
     def get_userregistry_dict(self, username, clientver, ipaddress):
         user_registry = UserRegistry(self)

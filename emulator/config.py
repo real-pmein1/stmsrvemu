@@ -129,8 +129,21 @@ def read_config():
             'validation_port':                     "27040",
             'vtt_server_port':                     "27046",  # Formerly vss_server_port1
             'cafe_server_port':                    "27047",  # Formerly vss_server_port2
-            'admin_server_port':                   "32677",  
+            'admin_server_port':                   "32677",
             'ping_server_port':                    "27057",  # server used to ping clients to calculate latency
+            'content3_server_port':                "27042",  # Steam3 (SteamPipe) HTTP content server
+
+            # Steam3 (SteamPipe) Content Server Configurations
+            'enable_content3_server':              "true",
+            'content3_server_type':                "SteamCache",  # SteamCache, CS or CDN
+            'content3_auth_mode':                  "auto",        # auto, cs, cdn or none
+            'content3_require_cdn_token':          "false",
+            'content3_server_id':                  "1",
+            'content3_vhost':                      "cs.steamcontent.com",
+            'content3_content_dir':                "files/steam3content/",
+            'content3_cache_enabled':              "true",
+            'content3_cache_dir':                  "files/cache/steam3content/",
+            'content3_neuter_enabled':             "true",
 
             # Content Server and CM Related Configurations
             'cellid':                              "1",
