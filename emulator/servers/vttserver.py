@@ -76,7 +76,7 @@ class vttserver(TCPNetworkHandler):
                     username_enc = utilities.encryption.textxor(username_dec)
                     # print(username_dec)
                     # print(username_enc)
-                    reply = struct.pack("<L", len(username_enc)) + username_enc
+                    reply = struct.pack("<L", len(username_enc)) + username_enc.encode("UTF-8")
                     # print(binascii.b2a_hex(reply))
                     client_socket.send(reply)
 
