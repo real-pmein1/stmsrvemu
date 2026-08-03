@@ -803,9 +803,9 @@ class CSERServer(UDPNetworkHandler):
         ack_payload = reply_header + b"\x01" + struct.pack("<I", session_id)
 
         self.serversocket.sendto(ack_payload, address)
-
+        
     def parse_surveyresults(self, address, data, clientid):
-        self.log.info(f'{clientid}Received Survey Results')
+        self.log.info(f'{clientid}Recieved Survey Results')
 
         ice = IceKey(1, [27, 200, 13, 14, 83, 45, 184, 54])
         data_bin = bytes.fromhex(data[3:].hex())
@@ -1060,6 +1060,34 @@ class CSERServer(UDPNetworkHandler):
                     index += 4
                 result['drives'] = drives
 
+            elif data[0:1] == b"\x01":
+                result['clientid'], index = self.read_string(byte_string, index)
+                result['ramsize'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['processorspeed'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['netspeed'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['screensize'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['rendermode'], index = byte_string[index], index + 1
+                result['bitdepth'], index = struct.unpack('B', byte_string[index:index + 1])[0], index + 1
+                index += 1
+                result['videodriverdll'], index = self.read_string(byte_string, index)
+                index += 1
+                result['videocard'], index = self.read_string(byte_string, index)
+                result['highvidcardver'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['lowvidcardver'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['cardvendorid'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                result['deviceid'], index = struct.unpack('<I', byte_string[index:index + 4])[0], index + 4
+                for field in ['rdtsc', 'cmov', 'fcmov', 'sse', 'sse2', '3dnow', 'ntfs']:
+                    result[field], index = byte_string[index], index + 1
+                result['proctype'], index = self.read_string(byte_string, index)
+                result['logicalprocessorcount'], index = byte_string[index], index + 1
+                result['physicalproccesorcount'], index = byte_string[index], index + 1
+                result['hyperthreading'], index = byte_string[index], index + 1
+                result['winver'], index = self.read_string(byte_string, index)
+                ip_parts = struct.unpack('BBB', byte_string[index:index + 3])
+                result['ipaddress'], index = "{}.{}.{}.xxx".format(*ip_parts), index + 3
+                result['languageid'], index = byte_string[index], index + 1
+
             statistics_db.record_s3surveydata(result)
+            statistics_db.record_survey(result)
 
             self.serversocket.sendto(b"\xFF\xFF\xFF\xFF\x68\x01\x00\x00\x00" + b"thank you\x00", address)
