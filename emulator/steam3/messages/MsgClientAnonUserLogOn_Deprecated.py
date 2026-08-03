@@ -1,6 +1,7 @@
 import struct
 
 from steam3.Types.MessageObject import MessageObject
+from steam3.Types.MessageObject.MachineID import MachineID
 
 
 class ClientAnonUserLogOn_Deprecated:
@@ -20,7 +21,9 @@ class ClientAnonUserLogOn_Deprecated:
         self.machineIDInfoAvailable = None
         self.qosLevel = None
         self.interfaceLanguage = None
+        self.machineIDData = None
         self.machineIDInfo = None
+        self.machineID = None
 
         self._parse_byte_buffer()
 
@@ -71,14 +74,18 @@ class ClientAnonUserLogOn_Deprecated:
         offset += len(self.interfaceLanguage) + 1
 
         if bool(self.machineIDInfoAvailable):
-            self.machineIDInfo = MessageObject(self.data[offset:])
-            self.machineIDInfo.parse()
-            index = self.data.find(b"\x08\x08", offset)
+            index = self.byte_buffer.find(b"\x08\x08", offset)
             if index == -1:
                 raise ValueError("MachineID sequence not found")
+            self.machineIDData = self.byte_buffer[offset:index + 2]
+            # MessageObject parses the blob in its constructor
+            self.machineIDInfo = MessageObject(self.machineIDData)
+            self.machineID = MachineID(self.machineIDData)
             offset = index + 2
         else:
+            self.machineIDData = None
             self.machineIDInfo = None
+            self.machineID = None
 
     def __repr__(self):
         return (
@@ -87,7 +94,7 @@ class ClientAnonUserLogOn_Deprecated:
                 f"clientAppVersion={self.clientAppVersion}, bootStrapperVersion={self.bootStrapperVersion}, "
                 f"cellId={self.cellId}, unused={self.unused}, machineIDInfoAvailable={self.machineIDInfoAvailable}, "
                 f"qosLevel={self.qosLevel}, interfaceLanguage={self.interfaceLanguage}, "
-                f"machineIDInfo={self.machineIDInfo})"
+                f"machineID={self.machineID})"
         )
 
     def __str__(self):

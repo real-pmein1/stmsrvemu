@@ -165,6 +165,7 @@ elif os.path.exists("servers/contentserver2.py"):
     from servers.contentserver2 import contentserver
 else:
     from servers.contentserver import contentserver
+from servers.content3server import content3server
 from servers.cserserver import CSERServer
 from servers.directoryserver import directoryserver
 from servers.harvestserver import HarvestServer
@@ -239,6 +240,11 @@ cafe_server = cafeserver(config["cafe_server_port"], config)
 start_server_thread(cafe_server, 'CafeServer', 'Valve CyberCafe Master Server')
 
 if config["enable_steam3_servers"].lower() == "true":
+    # Steam3 (SteamPipe) Content Server
+    if config.get("enable_content3_server", "true").lower() == "true":
+        content3_server = content3server(int(config["content3_server_port"]), config)
+        start_server_thread(content3_server, 'Content3Server', 'Steam3 Content Server')
+
     # extra_args for CM servers that need master_server reference for restarts
     cm_extra_args = {'master_server': master_server}
 

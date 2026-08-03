@@ -1135,7 +1135,7 @@ def neuter_steamworks_SDK(islan):
         (b"ftp.valvesoftware.com", octal_ip, b"SteamWorks SDK Content Tool FTP Address")
     ]
 
-    steamworks_data_root = os.path.join("files", "steamworks_data", "sdk")
+    steamworks_data_root = os.path.join("files", "cache", "steamworks_data", "sdk")
 
     # This will hold all neutered outputs keyed by *relative* path from steamworks_data_root
     neutered_files = {}
@@ -1263,7 +1263,7 @@ def neuter_steamworks_SDK(islan):
     log.info(f"SteamWorks SDK has been neutered and saved as {zip_filename}.")
 
 def grab_correct_steamworks_sdk():
-    """Ensure the proper Steamworks SDK version is extracted into files/steamworks_data
+    """Ensure the proper Steamworks SDK version is extracted into files/cache/steamworks_data
        based on globalvars.CDDB_datetime.
     """
 
@@ -1324,7 +1324,7 @@ def grab_correct_steamworks_sdk():
     log.info("Selected Steamworks SDK version suffix %s for blob date %s",
              sdk_suffix, blob_date)
 
-    steamworks_data_root = os.path.join("files", "steamworks_data")
+    steamworks_data_root = os.path.join("files", "cache", "steamworks_data")
     archives_root = os.path.join("files", "steamworks_archives")
     archives_root = config["sdktoolsdir"]
     archive_path = os.path.join(archives_root, f"steamworks_sdk_{sdk_suffix}.zip")
@@ -1602,6 +1602,14 @@ def auto_neuter(param1, param2, param3):
     neuter_steamworks_sdk()
 
     log_blob_information()
+
+    # Steam3 (SteamPipe) depot content, gated on the blob being recent enough to
+    # have any. Run inline so a tool invocation finishes everything it started.
+    try:
+        from utilities.steam3_neuter import check_content3_neutering
+        check_content3_neutering(blob_changed = True, background = False)
+    except Exception as e:
+        log.error(f"Failed to neuter Steam3 content: {e}")
 
     # Rotate test log after blob change completes (if test logging is enabled)
     rotate_test_logging()

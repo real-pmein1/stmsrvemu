@@ -94,6 +94,12 @@ class AppInfoIndex:
             if len(magic_bytes) < 4:
                 raise ValueError(f"File too short: {vdf_path}")
 
+            # some appcache dumps are text VDF rather than the binary cache
+            # format, say so plainly instead of reporting a bogus magic
+            from utilities.binary_vdf import looks_like_text_vdf
+            if looks_like_text_vdf(magic_bytes):
+                raise ValueError(f"Text VDF, not a binary appinfo cache: {vdf_path}")
+
             magic = struct.unpack('<I', magic_bytes)[0]
             index.format_version = magic
 

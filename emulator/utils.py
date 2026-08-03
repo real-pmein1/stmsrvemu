@@ -535,7 +535,25 @@ def check_secondblob_changed():
         log.error(f"Failed to store current_datetime: {e}")
 
     check_appinfo_cache()
+
+    # Keep the neutered packageinfo caches in step with the source files in
+    # files/package_schemas, the same way the appinfo caches are maintained.
+    try:
+        from utilities.packageinfo_neuter import check_and_neuter_packageinfo
+        check_and_neuter_packageinfo(force = hash_needs_update)
+    except Exception as e:
+        log.error(f"Failed to update packageinfo caches: {e}")
+
     log_blob_information(True)
+
+    # Neuter the Steam3 (SteamPipe) depot content. Runs at startup and again
+    # whenever the blob changes, and skips itself for a blob that predates the
+    # Steam3 content system.
+    try:
+        from utilities.steam3_neuter import check_content3_neutering
+        check_content3_neutering(blob_changed = hash_needs_update)
+    except Exception as e:
+        log.error(f"Failed to start Steam3 content neutering: {e}")
 
     if hash_needs_update:
         # Call the parent initializer, which sets most of the global vars during init.  this allows the server to load any changes made to the ini during blob or ini change.

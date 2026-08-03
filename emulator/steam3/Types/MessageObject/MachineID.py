@@ -10,8 +10,8 @@ class MachineID:
        BBB: Bios Serial
     """
     def __init__(self, data):
+        # MessageObject already parses the blob in its constructor
         self.message_object = MessageObject(data)
-        self.message_object.parse()
         self.BB3 = self.message_object.get('BB3')
         self.FF2 = self.message_object.get('FF2')
         self._3B3 = self.message_object.get('3B3')

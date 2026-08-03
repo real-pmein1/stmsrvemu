@@ -71,6 +71,7 @@ contentdir_server_port=27037					; Content Server Directory Server Port (TCP) (D
 content_server_port=27030					; Content Server Port (TCP) (Default: 27030)
 clupd_server_port=27031						; Client Update / Package Content Server Port (TCP) (Default: 27031)
 validation_port=27040						; UserID Ticket Validation Server Port(TCP) (Default: 27040)
+content3_server_port=27042					; Steam3 (SteamPipe) Content Server Port (HTTP/TCP) (Default: 27042)
 
 ;   Game List Ports
 ;=======================
@@ -150,6 +151,22 @@ sdk_port=27030				 			; Port to SDK CS
 ;   Standalone Content Server
 ;=======================
 ;csds_ipport=127.0.0.1:27037	 				; Master Content Server List Server, Required for external CS Servers. this option requires matching peer_password with the csds (Format: IP:PORT)
+
+;   Steam3 (SteamPipe) Content Server
+;=======================
+; Serves depot manifests and depot chunks over HTTP out of files/steam3content/, reading the
+; .csm/.csd chunk stores and the .manif4/.manif5 manifests stored there. Depot keys handed to
+; clients over the CM are read from files/steam3content/keys/<depotid>.depotkey
+enable_content3_server=true					; Enable the Steam3 content server (Default: true)
+content3_server_type=SteamCache					; Type advertised in /serverlist : SteamCache, CS or CDN (Default: SteamCache)
+content3_auth_mode=auto						; Depot authentication : auto (accept both schemes), cs (app ownership ticket sessions), cdn (auth tokens) or none (Default: auto)
+content3_require_cdn_token=false				; Reject depot requests carrying an unknown CDN auth token (Default: false)
+content3_server_id=1						; Content server id reported by /server-status and /serverlist (Default: 1)
+content3_vhost=cs.steamcontent.com				; Virtual hostname advertised in /serverlist (Default: cs.steamcontent.com)
+content3_content_dir=files/steam3content/			; Root of the Steam3 content tree (Default: files/steam3content/)
+content3_cache_enabled=true					; Cache generated manifests on disk (Default: true)
+content3_cache_dir=files/cache/steam3content/			; Where generated manifests are cached (Default: files/cache/steam3content/)
+content3_neuter_enabled=true					; Neuter Steam3 depot content, serving neutered chunks from the cache folder. Runs at startup and on every blob change, and is skipped for blobs older than 2010-04-29 (Default: true)
 
 ;   CM Server
 ;=======================
