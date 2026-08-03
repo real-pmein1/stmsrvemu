@@ -90,16 +90,46 @@ def remove_user():
     username = input("Enter the username to remove: ")
     print()
     with Session() as session:
-        user = session.query(UserRegistry).filter_by(UniqueUserName = username).first()
+        user = session.query(UserRegistry).filter_by(UniqueUserName=username).first()
         if not user:
             print("User not found.")
             return
 
+        uid = user.UniqueID
+        from sqlalchemy import text
+        
         # Remove related records
-        session.query(AccountSubscriptionsRecord).filter_by(UserRegistry_UniqueID = user.UniqueID).delete()
-        session.query(AccountPaymentCardInfoRecord).filter_by(UserRegistry_UniqueID = user.UniqueID).delete()
-        session.query(AccountPrepurchasedInfoRecord).filter_by(UserRegistry_UniqueID = user.UniqueID).delete()
-        session.query(AccountSubscriptionsBillingInfoRecord).filter_by(UserRegistry_UniqueID = user.UniqueID).delete()
+        session.execute(text("DELETE FROM chatroom_members WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM chatroom_speakers WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM community_clan_members WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM community_profile WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM friends_friendslist WHERE friendRegistryID = :id OR friendsaccountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM friends_nickname_history WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM friends_offline_msgs WHERE from_accountID = :id OR to_AccountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM friends_chat_history WHERE from_accountID = :id OR to_accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM leaderboard_entry WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM rich_presence WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM client_inventory_items WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM vacbans WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("UPDATE friends_registry SET currently_playing = NULL WHERE accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM friends_play_history WHERE friendRegistryID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM friends_registry WHERE accountID = :id"), {"id": uid})
+
+        session.execute(text("DELETE FROM authenticationticketlog WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM authenticationticketsrecord WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM accountsubscriptionsbillinginforecord WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM accountsubscriptionsrecord WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM accountpaymentcardinforecord WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM accountprepurchasedinforecord WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM appownershipticket_registry WHERE accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM usermachineid_registry WHERE accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM userappaccessrightsrecord WHERE UserRegistry_UniqueID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM external_purchase_record WHERE AccountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM guestpasses_registry WHERE RecipientAccountID = :id OR SenderAccountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM steam3_gift_transaction_record WHERE sender_accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM steam3_transactions_record WHERE accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM steam3_transaction_address_record WHERE accountID = :id"), {"id": uid})
+        session.execute(text("DELETE FROM steam3_cc_record WHERE accountID = :id"), {"id": uid})
 
         # Remove the user
         session.delete(user)
