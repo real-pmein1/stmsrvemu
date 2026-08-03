@@ -76,7 +76,7 @@ class vttserver(TCPNetworkHandler):
                     username_enc = utilities.encryption.textxor(username_dec)
                     # print(username_dec)
                     # print(username_enc)
-                    reply = struct.pack("<L", len(username_enc)) + username_enc
+                    reply = struct.pack("<L", len(username_enc)) + username_enc.encode("UTF-8")
                     # print(binascii.b2a_hex(reply))
                     client_socket.send(reply)
 
@@ -88,14 +88,14 @@ class vttserver(TCPNetworkHandler):
 
                 elif command[0:8] == b"\x47\x45\x54\x49\x4e\x46\x4f\x20":  # GETINFO AGAIN
                     # print(binascii.b2a_hex(command))
-                    self.log.info(f"{clientid} GETINFO received")
+                    self.log.info(f"{clientid} GETINFO2 received")
                     cafeuser = self.config["cafeuser"]
                     cafepass = self.config["cafepass"]
                     username_dec = cafeuser + "%" + cafepass
                     username_enc = utilities.encryption.textxor(username_dec)
                     # print(username_dec)
                     # print(username_enc)
-                    reply = struct.pack("<L", len(username_enc)) + username_enc
+                    reply = struct.pack("<L", len(username_enc)) + username_enc.encode("UTF-8")
                     # print(binascii.b2a_hex(reply))
                     client_socket.send(reply)
 
