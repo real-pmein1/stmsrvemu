@@ -296,7 +296,11 @@ class CustomFTPHandler(FTPHandler):
                             final_path = new_path
                             # Merge directly into cached blobs (no review required)
                             try:
-                                merge_success, merge_msg = merge_xml_into_cached_blobs(new_path)
+                                merge_success, merge_msg = merge_xml_into_cached_blobs(
+                                    new_path,
+                                    replace_existing_subscriptions=bool(backups),
+                                    previous_xml_paths=backups,
+                                )
                                 if merge_success:
                                     self.log(f"Merged AppID {appid} into cached blobs: {merge_msg}")
                                     load_blobs_to_memory()

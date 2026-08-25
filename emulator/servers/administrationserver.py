@@ -76,7 +76,12 @@ import servers.managers.dirlistmanager as dirlistmanager
 import servers.managers.contentlistmanager as contentlistmanager
 from utilities.impsocket import ImpSocket
 from utilities import blobs, server_stats, thread_handler
-from utilities.cdr_manipulator import merge_xml_into_cached_blobs, cache_cdr
+from utilities.cdr_manipulator import (
+    cache_cdr,
+    load_blobs_to_memory,
+    merge_xml_into_cached_blobs,
+    move_xml_to_mod_blob_with_backup,
+)
 from servers.permissions import (
     EDIT_ADMINS,
     EDIT_USERS,
@@ -2861,6 +2866,7 @@ class administrationserver(TCPNetworkHandler):
         moved_files = []
         errors = []
         xml_dest_path = None
+        replaced_xml_paths = []
         temp_directory = None
 
         # Process all tracked files (XML, DAT, BLOB) and determine temp directory
@@ -2878,8 +2884,10 @@ class administrationserver(TCPNetworkHandler):
             try:
                 if ext == '.xml':
                     # XML files go to mod_blob directory
-                    dest_path = os.path.join(mod_blob_dir, filename)
-                    shutil.move(file_path, dest_path)
+                    dest_path, backups = move_xml_to_mod_blob_with_backup(
+                        file_path, appid, mod_blob_dir
+                    )
+                    replaced_xml_paths.extend(backups)
                     moved_files.append(dest_path)
                     xml_dest_path = dest_path
                 elif ext in {'.dat', '.blob'}:
@@ -2910,14 +2918,18 @@ class administrationserver(TCPNetworkHandler):
             except Exception as e:
                 errors.append(f"Error scanning temp directory: {e}")
 
-        # After moving XML, trigger blob merge via cache_cdr
+        # Merge the new XML while using its backups to remove obsolete custom subs.
         if xml_dest_path and os.path.exists(xml_dest_path):
             try:
-                logging.info(f"Triggering cache_cdr for LAN after approval of appid {appid}")
-                cache_cdr(islan=True, isAppApproval_merge=True)
-                logging.info(f"Triggering cache_cdr for WAN after approval of appid {appid}")
-                cache_cdr(islan=False, isAppApproval_merge=True)
-                logging.info(f"Blob merge completed for appid {appid}")
+                success, message = merge_xml_into_cached_blobs(
+                    xml_dest_path,
+                    replace_existing_subscriptions=bool(replaced_xml_paths),
+                    previous_xml_paths=replaced_xml_paths,
+                )
+                if not success:
+                    raise RuntimeError(message)
+                load_blobs_to_memory()
+                logging.info(f"Blob merge completed for appid {appid}: {message}")
             except Exception as e:
                 errors.append(f"Cache merge failed: {e}")
                 logging.warning(f"Failed to merge appid {appid} into cached blobs: {e}")
@@ -3083,6 +3095,7 @@ class administrationserver(TCPNetworkHandler):
         moved_files = []
         errors = []
         xml_dest_path = None
+        replaced_xml_paths = []
         temp_directory = None
 
         # Process all tracked files (XML, DAT, BLOB) and determine temp directory
@@ -3102,8 +3115,10 @@ class administrationserver(TCPNetworkHandler):
                     # Update subscriptions in XML before moving
                     if subscriptions:
                         self._update_xml_subscriptions(file_path, subscriptions)
-                    dest_path = os.path.join(mod_blob_dir, filename)
-                    shutil.move(file_path, dest_path)
+                    dest_path, backups = move_xml_to_mod_blob_with_backup(
+                        file_path, appid, mod_blob_dir
+                    )
+                    replaced_xml_paths.extend(backups)
                     moved_files.append(dest_path)
                     xml_dest_path = dest_path
                 elif ext in {'.dat', '.blob'}:
@@ -3134,14 +3149,18 @@ class administrationserver(TCPNetworkHandler):
             except Exception as e:
                 errors.append(f"Error scanning temp directory: {e}")
 
-        # After moving XML, trigger blob merge via cache_cdr
+        # Merge the new XML while using its backups to remove obsolete custom subs.
         if xml_dest_path and os.path.exists(xml_dest_path):
             try:
-                logging.info(f"Triggering cache_cdr for LAN after approval of appid {appid}")
-                cache_cdr(islan=True, isAppApproval_merge=True)
-                logging.info(f"Triggering cache_cdr for WAN after approval of appid {appid}")
-                cache_cdr(islan=False, isAppApproval_merge=True)
-                logging.info(f"Blob merge completed for appid {appid}")
+                success, message = merge_xml_into_cached_blobs(
+                    xml_dest_path,
+                    replace_existing_subscriptions=bool(replaced_xml_paths),
+                    previous_xml_paths=replaced_xml_paths,
+                )
+                if not success:
+                    raise RuntimeError(message)
+                load_blobs_to_memory()
+                logging.info(f"Blob merge completed for appid {appid}: {message}")
             except Exception as e:
                 errors.append(f"Cache merge failed: {e}")
                 logging.warning(f"Failed to merge appid {appid} into cached blobs: {e}")

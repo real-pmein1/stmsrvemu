@@ -336,12 +336,13 @@ class CustomEventHandler(FileSystemEventHandler):
             pending = dict(self._pending_dir_events)
             self._pending_dir_events.clear()
 
-        # Process each unique directory once
+        # Process each unique directory once. The originating event handler has
+        # already refreshed and compared the directory metadata before queuing
+        # this work. Refreshing again here makes the accepted change compare
+        # equal to itself and prevents the reload from ever running.
         for directory, (_, event_type) in pending.items():
-            changed = self._refresh_directory_metadata(directory)
-            if changed:
-                log.debug(f"Batch processing: {event_type} in {directory}")
-                self.wrap_reload_blobs()
+            log.debug(f"Batch processing: {event_type} in {directory}")
+            self.wrap_reload_blobs()
 
     def _queue_directory_event(self, directory, event_type):
         """Queue a directory event for batch processing."""
