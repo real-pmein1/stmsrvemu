@@ -246,7 +246,7 @@ class FTPMenuManager:
         if backups:
             log.info(f"Backed up {len(backups)} existing XML blob(s) for AppID {appid}")
         log.info(f"Approved: moved XML to {dest}")
-        return dest
+        return dest, backups
 
     def approve_application(self, appid):
         """
@@ -274,6 +274,7 @@ class FTPMenuManager:
         moved_files = []
         errors = []
         xml_dest_path = None
+        replaced_xml_paths = []
         temp_directory = None
 
         try:
@@ -293,7 +294,8 @@ class FTPMenuManager:
                 try:
                     if ext == '.xml':
                         # XML files go to mod_blob directory
-                        dest = self._move_xml_to_mod_blob(appid, file_path, mod_blob_dir)
+                        dest, backups = self._move_xml_to_mod_blob(appid, file_path, mod_blob_dir)
+                        replaced_xml_paths.extend(backups)
                         moved_files.append(dest)
                         xml_dest_path = dest
                         log.info(f"Approved: moved {filename} to {dest}")
@@ -334,7 +336,8 @@ class FTPMenuManager:
                 fallback_xml = self._find_xml_for_approval(appid, pending, temp_directory)
                 if fallback_xml:
                     try:
-                        dest = self._move_xml_to_mod_blob(appid, fallback_xml, mod_blob_dir)
+                        dest, backups = self._move_xml_to_mod_blob(appid, fallback_xml, mod_blob_dir)
+                        replaced_xml_paths.extend(backups)
                         moved_files.append(dest)
                         xml_dest_path = dest
                         log.info(f"Approved: found and moved untracked XML {fallback_xml} to {dest}")
@@ -344,7 +347,11 @@ class FTPMenuManager:
             # After moving XML, merge it directly into the cached blobs and refresh memory.
             if xml_dest_path and os.path.exists(xml_dest_path):
                 try:
-                    merge_success, merge_msg = merge_xml_into_cached_blobs(xml_dest_path)
+                    merge_success, merge_msg = merge_xml_into_cached_blobs(
+                        xml_dest_path,
+                        replace_existing_subscriptions=bool(replaced_xml_paths),
+                        previous_xml_paths=replaced_xml_paths,
+                    )
                     if merge_success:
                         log.info(f"Blob merge completed for appid {appid}: {merge_msg}")
                         load_blobs_to_memory()
@@ -691,6 +698,7 @@ class FTPMenuManager:
         moved_files = []
         errors = []
         xml_dest_path = None
+        replaced_xml_paths = []
         temp_directory = None
 
         try:
@@ -710,7 +718,10 @@ class FTPMenuManager:
                 try:
                     if ext == '.xml':
                         # If subscriptions were modified, update the XML before moving
-                        dest = self._move_xml_to_mod_blob(appid, file_path, mod_blob_dir, modified_subscriptions)
+                        dest, backups = self._move_xml_to_mod_blob(
+                            appid, file_path, mod_blob_dir, modified_subscriptions
+                        )
+                        replaced_xml_paths.extend(backups)
                         moved_files.append(dest)
                         xml_dest_path = dest
                         log.info(f"Approved: moved {filename} to {dest}")
@@ -750,7 +761,10 @@ class FTPMenuManager:
                 fallback_xml = self._find_xml_for_approval(appid, pending, temp_directory)
                 if fallback_xml:
                     try:
-                        dest = self._move_xml_to_mod_blob(appid, fallback_xml, mod_blob_dir, modified_subscriptions)
+                        dest, backups = self._move_xml_to_mod_blob(
+                            appid, fallback_xml, mod_blob_dir, modified_subscriptions
+                        )
+                        replaced_xml_paths.extend(backups)
                         moved_files.append(dest)
                         xml_dest_path = dest
                         log.info(f"Approved: found and moved untracked XML {fallback_xml} to {dest}")
@@ -760,7 +774,11 @@ class FTPMenuManager:
             # After moving XML, merge it directly into the cached blobs and refresh memory.
             if xml_dest_path and os.path.exists(xml_dest_path):
                 try:
-                    merge_success, merge_msg = merge_xml_into_cached_blobs(xml_dest_path)
+                    merge_success, merge_msg = merge_xml_into_cached_blobs(
+                        xml_dest_path,
+                        replace_existing_subscriptions=bool(replaced_xml_paths),
+                        previous_xml_paths=replaced_xml_paths,
+                    )
                     if merge_success:
                         log.info(f"Blob merge completed for appid {appid}: {merge_msg}")
                         load_blobs_to_memory()

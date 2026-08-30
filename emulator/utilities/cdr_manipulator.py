@@ -3,6 +3,7 @@ import binascii
 import copy
 import logging
 import os
+import posixpath
 import pprint
 import shutil
 import struct
@@ -28,9 +29,15 @@ config = read_config()
 log = logging.getLogger('CDDB')
 CACHE_DIR = os.path.join('files', 'cache')
 EPHEMERAL_BLOB_DIR = os.path.join("files", "temp", "ephemeral_blobs")
+MOD_BLOB_SNAPSHOT_DIR = os.path.join(CACHE_DIR, "mod_blob_snapshots")
 
 # Track if subscription changelog has been written this session (overwrite on first write, append after)
 _subscription_changelog_initialized = False
+
+
+def _normalize_mod_blob_hash_path(file_path):
+    """Return a stable, cross-platform path for the mod_blob hash ledger."""
+    return posixpath.normpath(str(file_path).replace("\\", "/"))
 
 
 def _get_xml_app_record_id(app_record):
@@ -780,7 +787,7 @@ def cache_cdr(islan, isAppApproval_merge = False):
     return blob_dict
 
 
-def cache_cdr_unified(isAppApproval_merge=False):
+def cache_cdr_unified(isAppApproval_merge=False, allow_cached_fallback=True):
     """
     OPTIMIZED: Build CDR blob ONCE and create both LAN and WAN variants.
 
@@ -794,6 +801,9 @@ def cache_cdr_unified(isAppApproval_merge=False):
     Args:
         isAppApproval_merge: If True, writes to .bin files directly (for app approval merges)
                             If False, writes to .temp files (normal neutering)
+        allow_cached_fallback: If False, fail instead of using an already-built
+                               LAN cache as the base. Used when removed mod_blob
+                               files require a genuinely clean rebuild.
 
     Returns:
         tuple: (lan_blob_dict, wan_blob_dict)
@@ -907,6 +917,12 @@ def cache_cdr_unified(isAppApproval_merge=False):
             if not os.path.isfile("files/secondblob.bin"):
                 # Try to use cached blob as fallback before waiting
                 cached_blob_path = os.path.join(CACHE_DIR, "secondblob_lan.bin")
+                if not allow_cached_fallback:
+                    log.warning(
+                        "A clean CDR rebuild was requested, but the database and "
+                        "files/secondblob.bin/py are unavailable"
+                    )
+                    return None, None
                 if os.path.isfile(cached_blob_path):
                     log.info("files/secondblob.bin not found, using cached blob as fallback")
                     with open(cached_blob_path, "rb") as g:
@@ -1042,6 +1058,11 @@ def cache_cdr_unified(isAppApproval_merge=False):
         f.write(lan_blob_final)
     with open(wan_path, "wb") as f:
         f.write(wan_blob_final)
+
+    # Direct-write builds are already finalized. Temp-file builds record this
+    # state later, after rename_temp_blobs() successfully finalizes the cache.
+    if isAppApproval_merge:
+        _save_current_mod_blob_hashes()
 
     log.debug(f"File writing took {time.time() - write_start:.2f}s")
 
@@ -1336,8 +1357,6 @@ def update_subscription_id_in_xml(xml_file_path, old_id, new_id):
 
 
 def integrate_customs_files(execdict, islan):
-    execdict_temp_01 = {}
-    execdict_temp_02 = {}
     # Skip mod_blob integration for blob version 1 and earlier
 
     # Only blob version 2+ have compatible data structures
@@ -1345,92 +1364,109 @@ def integrate_customs_files(execdict, islan):
         log.debug(f"Skipping mod_blob integration for blob version {globalvars.record_ver} (requires version 2+)")
         return
 
-    for file in os.walk("files/mod_blob"):
-        for customblobfile in file[2]:
+    for root, _, files in os.walk("files/mod_blob"):
+        for customblobfile in files:
             if (
                 customblobfile.endswith((".py", ".bin", ".xml"))
                 and customblobfile not in ["2ndcdr.py", "1stcdr.py"]
                 and not customblobfile.startswith(("firstblob", "secondblob"))
             ):
                 log.info("Found extra blob: " + customblobfile)
-                execdict_update = {}
-
-                if customblobfile.endswith(".bin"):
-                    with open("files/mod_blob/" + customblobfile, "rb") as f:
-                        blob = f.read()
-
-                    if blob[0:2] == b"\x01\x43":
-                        blob = zlib.decompress(blob[20:])
-                    # OPTIMIZATION: Use blob_unserialize directly, then blob_replace_dict_optimized
-                    execdict_update = blobs.blob_unserialize(blob)
-
-                    log.info("Integrating Custom Applications (bin)")
-                    blobs.blob_replace_dict_optimized(execdict_update, globalvars.replace_string_cdr(islan))
-
-                elif customblobfile.endswith(".py"):
-                    with open("files/mod_blob/" + customblobfile, 'r') as m:
-                        userblobstr_upd = m.read()
-                    log.info("Integrating Custom Applications (py)")
-                    # OPTIMIZATION: Parse first, then blob_replace_dict_optimized
-                    # Find the dict part after "blob = "
-                    eq_pos = userblobstr_upd.find("=")
-                    if eq_pos != -1:
-                        dict_str = userblobstr_upd[eq_pos + 1:].strip()
-                        execdict_update = ast.literal_eval(dict_str)
-                    else:
-                        execdict_update = ast.literal_eval(userblobstr_upd[7:])
-                    # Convert to bytes and then do replacements
-                    execdict_update = utilities.blobs.convert_to_bytes_deep(execdict_update)
-                    blobs.blob_replace_dict_optimized(execdict_update, globalvars.replace_string_cdr(islan))
-
-                elif customblobfile.endswith(".xml"):
-                    contentdescriptionrecord_file = ContentDescriptionRecord.from_xml_file("files/mod_blob/" + customblobfile)
-                    execdict_update = contentdescriptionrecord_file.to_dict(True)
-                    # XML files also need URL replacement
-                    execdict_update = utilities.blobs.convert_to_bytes_deep(execdict_update)
-                    blobs.blob_replace_dict_optimized(execdict_update, globalvars.replace_string_cdr(islan))
-                else:
-                    return  # Fail gracefully if an unknown file is encountered
-
-                # Ensure bytes conversion for .bin files (already done for .py and .xml above)
-                if customblobfile.endswith(".bin"):
-                    execdict_update = utilities.blobs.convert_to_bytes_deep(execdict_update)
-
-                # Keys to skip during merge (these are CDR metadata fields, not actual content)
-                # VersionNumber and LastChangedExistingAppOrSubscriptionTime should not be overwritten
-                SKIP_KEYS = {
-                    b"\x00\x00\x00\x00",  # VersionNumber
-                    b"\x03\x00\x00\x00",  # LastChangedExistingAppOrSubscriptionTime
-                }
-
-                # Integrate execdict_update into execdict["blob"]
-                for k in execdict_update:
-                    if k in SKIP_KEYS:
-                        continue  # Skip metadata keys during merge
-
-                    if k in execdict["blob"]:
-                        # Existing key in execdict["blob"], need to handle duplicates
-                        main_dict = execdict["blob"][k]
-
-                        if k == b"\x02\x00\x00\x00" and customblobfile.endswith(".xml"):
-                            _merge_subscription_records_with_free_fallback(execdict["blob"], execdict_update, customblobfile)
-                        elif k == b"\x01\x00\x00\x00" and customblobfile.endswith(".xml"):
-                            # Application records may intentionally update an existing app with
-                            # new versions, so merge/replace them normally.
-                            main_dict.update(execdict_update[k])
-                            execdict["blob"][k] = main_dict
-                        else:
-                            # For other keys, update directly
-                            execdict["blob"][k].update(execdict_update[k])
-                    else:
-                        # Key does not exist in execdict["blob"], add it directly
-                        execdict["blob"][k] = execdict_update[k]
+                customblobpath = os.path.join(root, customblobfile)
+                execdict_update = _load_custom_cdr_data(customblobpath, islan=islan)
+                log.info(
+                    f"Integrating Custom Applications ({os.path.splitext(customblobfile)[1][1:]})"
+                )
+                _merge_cdr_data(
+                    execdict["blob"], execdict_update, source_label=customblobfile
+                )
 
     # Regenerate app-to-subscription index after all custom files are merged
     regenerate_app_to_subscription_index(execdict["blob"])
 
 
-def merge_xml_into_cached_blobs(xml_path):
+def _load_xml_cdr_data(xml_path):
+    """Parse an XML CDR fragment and normalize all keys/values to bytes."""
+    cdr_record = ContentDescriptionRecord.from_xml_file(xml_path)
+    xml_data = cdr_record.to_dict(True)
+    return utilities.blobs.convert_to_bytes_deep(xml_data)
+
+
+def _load_custom_cdr_data(file_path, islan=None):
+    """Load a supported mod-blob file as a normalized CDR dictionary."""
+    import ast
+
+    if file_path.endswith(".xml"):
+        custom_data = _load_xml_cdr_data(file_path)
+    elif file_path.endswith(".py"):
+        with open(file_path, "r") as source_file:
+            content = source_file.read()
+        eq_pos = content.find("=")
+        custom_data = ast.literal_eval(
+            content[eq_pos + 1:].strip() if eq_pos != -1 else content[7:]
+        )
+        custom_data = utilities.blobs.convert_to_bytes_deep(custom_data)
+    elif file_path.endswith(".bin"):
+        with open(file_path, "rb") as source_file:
+            blob_data = source_file.read()
+        if blob_data[0:2] == b"\x01\x43":
+            blob_data = zlib.decompress(blob_data[20:])
+        custom_data = blobs.blob_unserialize(blob_data)
+        custom_data = utilities.blobs.convert_to_bytes_deep(custom_data)
+    else:
+        raise ValueError(f"Unsupported file type: {file_path}")
+
+    if islan is not None:
+        blobs.blob_replace_dict_optimized(
+            custom_data, globalvars.replace_string_cdr(islan)
+        )
+    return custom_data
+
+
+def _remove_replaced_custom_subscriptions(
+        main_blob, new_data, previous_file_paths, islan=None):
+    """Remove subscriptions owned by an older version of the same mod blob.
+
+    A changed XML can replace subscription 4000 with 90000. A normal dict merge
+    adds 90000 but cannot infer that 4000 is obsolete. The displaced XML is the
+    ownership record we need. For collision safety, an old ID is removed only
+    when the cached record still exactly matches the record from that old XML;
+    a base-CDR or unrelated record that won a collision is therefore preserved.
+    """
+    SUBS_KEY = b"\x02\x00\x00\x00"
+    current_subs = main_blob.get(SUBS_KEY, {})
+    new_sub_ids = set(new_data.get(SUBS_KEY, {}))
+    removed = []
+
+    for previous_file_path in previous_file_paths or ():
+        try:
+            old_data = _load_custom_cdr_data(previous_file_path, islan=islan)
+        except Exception as e:
+            log.warning(f"Could not inspect prior mod blob {previous_file_path}: {e}")
+            continue
+
+        for sub_id, old_record in old_data.get(SUBS_KEY, {}).items():
+            if sub_id in new_sub_ids:
+                continue
+            if current_subs.get(sub_id) == old_record:
+                del current_subs[sub_id]
+                removed.append(int.from_bytes(sub_id, "little"))
+            elif sub_id in current_subs:
+                log.warning(
+                    f"Preserved stale-looking subscription {int.from_bytes(sub_id, 'little')} "
+                    f"because the cached record is not owned by {previous_file_path}"
+                )
+
+    if removed:
+        log.info(
+            "Removed obsolete subscription id(s) from replaced XML: "
+            f"{_format_integer_ranges(removed)}"
+        )
+    return removed
+
+
+def merge_xml_into_cached_blobs(
+        xml_path, replace_existing_subscriptions=False, previous_xml_paths=None):
     """
     Merge an approved XML file directly into cached LAN and WAN blobs.
 
@@ -1443,6 +1479,11 @@ def merge_xml_into_cached_blobs(xml_path):
 
     Args:
         xml_path: Path to the XML file to merge (e.g., files/mod_blob/123.xml)
+        replace_existing_subscriptions: When True, matching subscription IDs are
+            replaced. This is only intended for a new version of an XML that
+            displaced an existing XML for the same application.
+        previous_xml_paths: Backups of the displaced XML. Subscription IDs found
+            only in these old XMLs are removed when the cached record matches.
 
     Returns:
         tuple: (success: bool, message: str)
@@ -1457,9 +1498,7 @@ def merge_xml_into_cached_blobs(xml_path):
 
         # Parse the XML file
         try:
-            cdr_record = ContentDescriptionRecord.from_xml_file(xml_path)
-            xml_data = cdr_record.to_dict(True)  # iscustom=True to skip VersionNumber etc.
-            xml_data = utilities.blobs.convert_to_bytes_deep(xml_data)
+            xml_data = _load_xml_cdr_data(xml_path)
         except Exception as e:
             return False, f"Failed to parse XML: {e}"
 
@@ -1485,8 +1524,17 @@ def merge_xml_into_cached_blobs(xml_path):
 
                 blob_dict = blobs.blob_unserialize(blob_data)
 
+                if replace_existing_subscriptions and previous_xml_paths:
+                    _remove_replaced_custom_subscriptions(
+                        blob_dict, xml_data, previous_xml_paths
+                    )
+
                 # Merge XML data into blob
-                _merge_cdr_data(blob_dict, xml_data)
+                _merge_cdr_data(
+                    blob_dict,
+                    xml_data,
+                    replace_existing_subscriptions=replace_existing_subscriptions,
+                )
 
                 # Ensure all version records have DepotEncryptionKey
                 _ensure_version_records_have_depot_encryption_key(blob_dict)
@@ -1561,14 +1609,93 @@ def _record_mod_blob_hash(file_path):
             except Exception:
                 existing_hashes = {}
 
-        existing_hashes[file_path] = file_hash
+        normalized_path = _normalize_mod_blob_hash_path(file_path)
+        existing_hashes = {
+            _normalize_mod_blob_hash_path(path): saved_hash
+            for path, saved_hash in existing_hashes.items()
+        }
+        existing_hashes[normalized_path] = file_hash
         with open(hash_file_path, "w") as f:
             json.dump(existing_hashes, f, indent=2)
+        _save_mod_blob_snapshot(file_path)
     except Exception as e:
         log.warning(f"Could not record mod_blob hash for {file_path}: {e}")
 
 
-def merge_custom_blob_into_cache(file_path, islan):
+def _mod_blob_snapshot_path(file_path):
+    """Return the private cached copy used to reconcile a future modification."""
+    import hashlib
+
+    normalized_path = _normalize_mod_blob_hash_path(file_path)
+    path_hash = hashlib.sha256(normalized_path.encode("utf-8")).hexdigest()
+    extension = os.path.splitext(file_path)[1].lower()
+    return os.path.join(MOD_BLOB_SNAPSHOT_DIR, path_hash + extension)
+
+
+def _save_mod_blob_snapshot(file_path):
+    """Save the successfully merged version of a .xml/.py/.bin mod blob."""
+    try:
+        os.makedirs(MOD_BLOB_SNAPSHOT_DIR, exist_ok=True)
+        snapshot_path = _mod_blob_snapshot_path(file_path)
+        temp_path = snapshot_path + ".temp"
+        shutil.copyfile(file_path, temp_path)
+        os.replace(temp_path, snapshot_path)
+        return snapshot_path
+    except Exception as e:
+        log.warning(f"Could not snapshot mod_blob file {file_path}: {e}")
+        return None
+
+
+def _save_current_mod_blob_hashes():
+    """Persist hashes for all mod_blob files included by a full CDR build."""
+    import hashlib
+    import json
+
+    mod_blob_dir = os.path.join("files", "mod_blob")
+    hash_file_path = os.path.join(CACHE_DIR, "mod_blob_hashes.json")
+    temp_hash_path = hash_file_path + ".temp"
+    current_hashes = {}
+
+    if os.path.isdir(mod_blob_dir):
+        for root, dirs, files in os.walk(mod_blob_dir):
+            for filename in files:
+                if (
+                    filename.endswith((".py", ".bin", ".xml"))
+                    and filename not in ["2ndcdr.py", "1stcdr.py"]
+                    and not filename.startswith(("firstblob", "secondblob"))
+                ):
+                    file_path = _normalize_mod_blob_hash_path(
+                        os.path.join(root, filename)
+                    )
+                    try:
+                        with open(file_path, "rb") as source_file:
+                            current_hashes[file_path] = hashlib.sha256(
+                                source_file.read()
+                            ).hexdigest()
+                        _save_mod_blob_snapshot(file_path)
+                    except Exception as e:
+                        log.warning(f"Could not hash mod_blob file {file_path}: {e}")
+                        return False
+
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(temp_hash_path, "w") as hash_file:
+            json.dump(current_hashes, hash_file, indent=2)
+        os.replace(temp_hash_path, hash_file_path)
+        return True
+    except Exception as e:
+        log.warning(f"Could not save current mod_blob hashes: {e}")
+        try:
+            if os.path.exists(temp_hash_path):
+                os.remove(temp_hash_path)
+        except Exception:
+            pass
+        return False
+
+
+def merge_custom_blob_into_cache(
+        file_path, islan, replace_existing_subscriptions=False,
+        previous_file_paths=None):
     """
     Merge a custom blob file (.xml, .py, or .bin) directly into cached blob.
 
@@ -1578,13 +1705,14 @@ def merge_custom_blob_into_cache(file_path, islan):
     Args:
         file_path: Path to the custom blob file
         islan: True for LAN blob, False for WAN blob
+        replace_existing_subscriptions: Replace matching subscription records
+            when this is a modified file already represented in the cache.
+        previous_file_paths: Cached prior versions used to remove subscription
+            IDs which disappeared from the modified file.
 
     Returns:
         tuple: (success: bool, message: str)
     """
-    import ast
-    import pprint
-
     try:
         if not os.path.exists(file_path):
             return False, f"File not found: {file_path}"
@@ -1599,36 +1727,8 @@ def merge_custom_blob_into_cache(file_path, islan):
             return False, f"{blob_type}: cache file not found"
 
         # Parse the custom file based on extension
-        # OPTIMIZATION: Use dict-based blob_replace_dict_optimized instead of string-based blob_replace
         try:
-            if file_path.endswith(".xml"):
-                cdr_record = ContentDescriptionRecord.from_xml_file(file_path)
-                custom_data = cdr_record.to_dict(True)
-                custom_data = utilities.blobs.convert_to_bytes_deep(custom_data)
-                blobs.blob_replace_dict_optimized(custom_data, globalvars.replace_string_cdr(islan))
-            elif file_path.endswith(".py"):
-                with open(file_path, 'r') as f:
-                    content = f.read()
-                # OPTIMIZATION: Parse first, then use blob_replace_dict_optimized
-                eq_pos = content.find("=")
-                if eq_pos != -1:
-                    dict_str = content[eq_pos + 1:].strip()
-                    custom_data = ast.literal_eval(dict_str)
-                else:
-                    custom_data = ast.literal_eval(content[7:])  # Skip "blob = "
-                custom_data = utilities.blobs.convert_to_bytes_deep(custom_data)
-                blobs.blob_replace_dict_optimized(custom_data, globalvars.replace_string_cdr(islan))
-            elif file_path.endswith(".bin"):
-                with open(file_path, "rb") as f:
-                    blob = f.read()
-                if blob[0:2] == b"\x01\x43":
-                    blob = zlib.decompress(blob[20:])
-                # OPTIMIZATION: Use blob_unserialize directly, then blob_replace_dict_optimized
-                custom_data = blobs.blob_unserialize(blob)
-                custom_data = utilities.blobs.convert_to_bytes_deep(custom_data)
-                blobs.blob_replace_dict_optimized(custom_data, globalvars.replace_string_cdr(islan))
-            else:
-                return False, f"Unsupported file type: {file_path}"
+            custom_data = _load_custom_cdr_data(file_path, islan=islan)
         except Exception as e:
             return False, f"Failed to parse {filename}: {e}"
 
@@ -1641,8 +1741,21 @@ def merge_custom_blob_into_cache(file_path, islan):
 
         blob_dict = blobs.blob_unserialize(blob_data)
 
+        if replace_existing_subscriptions and previous_file_paths:
+            _remove_replaced_custom_subscriptions(
+                blob_dict,
+                custom_data,
+                previous_file_paths,
+                islan=islan,
+            )
+
         # Merge custom data into blob
-        _merge_cdr_data(blob_dict, custom_data)
+        _merge_cdr_data(
+            blob_dict,
+            custom_data,
+            replace_existing_subscriptions=replace_existing_subscriptions,
+            source_label=filename,
+        )
 
         # Ensure all version records have DepotEncryptionKey
         _ensure_version_records_have_depot_encryption_key(blob_dict)
@@ -1712,10 +1825,19 @@ def check_and_merge_mod_blob_files():
 
     # Load existing hashes
     existing_hashes = {}
+    hashes_initialized = False
     if os.path.exists(hash_file_path):
         try:
             with open(hash_file_path, 'r') as f:
                 existing_hashes = json.load(f)
+            hashes_initialized = isinstance(existing_hashes, dict)
+            if not hashes_initialized:
+                existing_hashes = {}
+            else:
+                existing_hashes = {
+                    _normalize_mod_blob_hash_path(path): saved_hash
+                    for path, saved_hash in existing_hashes.items()
+                }
         except:
             existing_hashes = {}
 
@@ -1729,7 +1851,9 @@ def check_and_merge_mod_blob_files():
                 filename not in ["2ndcdr.py", "1stcdr.py"] and
                 not filename.startswith(("firstblob", "secondblob"))):
 
-                file_path = os.path.join(root, filename)
+                file_path = _normalize_mod_blob_hash_path(
+                    os.path.join(root, filename)
+                )
 
                 # Calculate file hash
                 try:
@@ -1741,19 +1865,88 @@ def check_and_merge_mod_blob_files():
 
                 new_hashes[file_path] = file_hash
 
-                # Check if file is new or modified
-                if file_path not in existing_hashes or existing_hashes[file_path] != file_hash:
-                    log.info(f"Found new/modified mod_blob file: {filename}")
+    # Removed files require rebuilding from a canonical source because their
+    # records cannot be safely subtracted from an already-flattened cache.
+    removed_paths = set(existing_hashes) - set(new_hashes)
+    needs_initial_rebuild = bool(new_hashes) and not hashes_initialized
+    modified_without_snapshot = {
+        path for path, file_hash in new_hashes.items()
+        if path in existing_hashes
+        and existing_hashes[path] != file_hash
+        and not os.path.exists(_mod_blob_snapshot_path(path))
+    }
+    if removed_paths or needs_initial_rebuild or modified_without_snapshot:
+        if removed_paths:
+            readable_paths = ", ".join(sorted(removed_paths))
+            log.info(f"Removed mod_blob file(s) detected; rebuilding CDR cache: {readable_paths}")
+        elif modified_without_snapshot:
+            readable_paths = ", ".join(sorted(modified_without_snapshot))
+            log.info(
+                "Modified mod_blob file(s) lack a prior snapshot; rebuilding "
+                f"CDR cache safely: {readable_paths}"
+            )
+        else:
+            log.info("mod_blob hash state is uninitialized; rebuilding CDR cache once")
 
-                    # Merge into both LAN and WAN blobs
-                    for islan in [True, False]:
-                        success, message = merge_custom_blob_into_cache(file_path, islan)
-                        if success:
-                            log.info(message)
-                        else:
-                            log.error(f"Failed to merge {filename}: {message}")
+        lan_blob, wan_blob = cache_cdr_unified(
+            isAppApproval_merge=True,
+            allow_cached_fallback=False,
+        )
+        if lan_blob is None or wan_blob is None:
+            log.warning(
+                "Could not rebuild CDR after mod_blob removal; retaining existing "
+                "LAN/WAN caches and hash state"
+            )
+            return 0
 
-                    files_merged += 1
+        try:
+            with open(hash_file_path, 'w') as f:
+                json.dump(new_hashes, f, indent=2)
+            for file_path in new_hashes:
+                _save_mod_blob_snapshot(file_path)
+        except Exception as e:
+            log.warning(f"CDR rebuilt, but mod_blob hashes could not be saved: {e}")
+
+        load_blobs_to_memory()
+        return max(1, len(removed_paths))
+
+    # New files keep normal collision protection. Modified files replace records
+    # contributed by their prior snapshotted version, regardless of format.
+    for file_path, file_hash in list(new_hashes.items()):
+        filename = os.path.basename(file_path)
+        previous_hash = existing_hashes.get(file_path)
+        if previous_hash is None or previous_hash != file_hash:
+            log.info(f"Found new/modified mod_blob file: {filename}")
+            is_modified = previous_hash is not None
+            previous_file_paths = []
+            if is_modified:
+                snapshot_path = _mod_blob_snapshot_path(file_path)
+                if os.path.exists(snapshot_path):
+                    previous_file_paths.append(snapshot_path)
+
+            merge_succeeded = True
+            for islan in [True, False]:
+                success, message = merge_custom_blob_into_cache(
+                    file_path,
+                    islan,
+                    replace_existing_subscriptions=is_modified,
+                    previous_file_paths=previous_file_paths,
+                )
+                if success:
+                    log.info(message)
+                else:
+                    merge_succeeded = False
+                    log.error(f"Failed to merge {filename}: {message}")
+
+            if merge_succeeded:
+                files_merged += 1
+                _save_mod_blob_snapshot(file_path)
+            else:
+                # Preserve the previous hash so a failed merge is retried.
+                if previous_hash is None:
+                    new_hashes.pop(file_path, None)
+                else:
+                    new_hashes[file_path] = previous_hash
 
     # Save updated hashes
     if new_hashes:
@@ -1892,11 +2085,32 @@ def _add_app_ids_to_free_subscription(blob_dict, app_ids, source_label="custom X
             sub_zero_app_ids[app_id] = b""
             added_count += 1
 
-    if added_count:
-        readable_ids = ", ".join(str(int.from_bytes(app_id, "little")) for app_id in sorted(app_ids))
-        log.info(f"Added clashing subscription app/depot ids to subscription 0 from {source_label}: {readable_ids}")
-
     return added_count
+
+
+def _format_integer_ranges(values):
+    """Format sorted integers as comma-separated values and consecutive ranges."""
+    sorted_values = sorted(set(values))
+    if not sorted_values:
+        return ""
+
+    ranges = []
+    range_start = range_end = sorted_values[0]
+
+    for value in sorted_values[1:]:
+        if value == range_end + 1:
+            range_end = value
+            continue
+
+        ranges.append(
+            str(range_start) if range_start == range_end else f"{range_start}-{range_end}"
+        )
+        range_start = range_end = value
+
+    ranges.append(
+        str(range_start) if range_start == range_end else f"{range_start}-{range_end}"
+    )
+    return ", ".join(ranges)
 
 
 def _merge_subscription_records_with_free_fallback(main_blob, new_data, source_label="custom XML"):
@@ -1924,22 +2138,32 @@ def _merge_subscription_records_with_free_fallback(main_blob, new_data, source_l
     if clashing_sub_ids:
         app_ids = _collect_app_ids_from_cdr_data(new_data)
         _add_app_ids_to_free_subscription(main_blob, app_ids, source_label)
-        readable_subs = ", ".join(str(int.from_bytes(sub_id, "little")) for sub_id in clashing_sub_ids)
+        readable_subs = _format_integer_ranges(
+            int.from_bytes(sub_id, "little") for sub_id in clashing_sub_ids
+        )
+        readable_apps = _format_integer_ranges(
+            int.from_bytes(app_id, "little") for app_id in app_ids
+        )
         log.warning(
-            f"Skipped clashing subscription id(s) from {source_label}: {readable_subs}; "
-            "added uploaded app/depot ids to subscription 0 instead"
+            f"Clashing subscription id(s) {readable_subs} in {source_label}; "
+            f"added app/depot id(s) {readable_apps} to subscription 0"
         )
 
     return bool(clashing_sub_ids)
 
 
-def _merge_cdr_data(main_blob, new_data):
+def _merge_cdr_data(
+        main_blob, new_data, replace_existing_subscriptions=False,
+        source_label="custom blob"):
     """
     Merge new CDR data into existing blob dictionary.
 
     Args:
         main_blob: The existing blob dictionary to update
-        new_data: The new data to merge (from XML)
+        new_data: The new data to merge (from XML, Python, or binary input)
+        replace_existing_subscriptions: Replace matching subscription records
+            instead of treating them as unrelated clashes.
+        source_label: Filename or description used in collision logs.
     """
     # Key mappings
     VERSION_KEY = b"\x00\x00\x00\x00"  # CDR version - ignore during merge
@@ -1970,7 +2194,13 @@ def _merge_cdr_data(main_blob, new_data):
                 main_blob[key][entry_id] = entry_data
 
         elif key == SUBS_KEY:
-            _merge_subscription_records_with_free_fallback(main_blob, new_data)
+            if replace_existing_subscriptions:
+                for entry_id, entry_data in value.items():
+                    main_blob[key][entry_id] = entry_data
+            else:
+                _merge_subscription_records_with_free_fallback(
+                    main_blob, new_data, source_label
+                )
 
         elif key in [PUBLIC_KEYS_KEY, PRIVATE_KEYS_KEY]:
             # For encryption keys, merge entries
